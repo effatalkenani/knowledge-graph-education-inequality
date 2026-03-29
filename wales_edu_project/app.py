@@ -392,8 +392,185 @@ Respond ONLY with valid JSON in this exact format:
 }"""
 
 
+def rule_based_parse(query: str) -> dict:
+    """Smart rule-based parser — works without an LLM API key."""
+    q = query.lower()
+    filters = {}
+    steps = []
+    relations = []
+
+    # School type
+    if any(w in q for w in ["secondary", "uwchradd", "high school"]):
+        filters["school_type"] = "Secondary"
+        steps.append("Step 1: Identify schools of type 'Secondary'.")
+    elif any(w in q for w in ["primary", "gynradd", "cynradd"]):
+        filters["school_type"] = "Primary"
+        steps.append("Step 1: Identify schools of type 'Primary'.")
+    else:
+        steps.append("Step 1: Consider all school types.")
+
+    # Deprivation
+    if any(w in q for w in ["high-deprivation", "high deprivation", "deprived",
+                             "amddifadedd uchel", "tlodi uchel", "contained_in high"]):
+        filters["deprivation"] = "high_deprivation"
+        steps.append("Step 2: Filter schools contained_in high-deprivation areas (deprivation == 'high_deprivation').")
+        relations.append("contained_in(HighDeprivation)")
+    elif any(w in q for w in ["low-deprivation", "low deprivation", "amddifadedd isel"]):
+        filters["deprivation"] = "low_deprivation"
+        steps.append("Step 2: Filter schools in low-deprivation areas.")
+        relations.append("contained_in(LowDeprivation)")
+
+    # Transport
+    if any(w in q for w in ["near transport", "near_transport", "agos at drafnidiaeth",
+                             "agos at orsafoedd", "agos at drafnidiaeth", "yn agos at",
+                             "close to transport", "transport_stops", "transport stop"]):
+        filters["near_transport"] = True
+        steps.append("Step 3: Filter schools near(TransportStop) — near_transport == True.")
+        relations.append("near(TransportStop)")
+    elif any(w in q for w in ["far from transport", "far_from transport", "ymhell o drafnidiaeth"]):
+        filters["near_transport"] = False
+        steps.append("Step 3: Filter schools far_from(TransportStop) — near_transport == False.")
+        relations.append("far_from(TransportStop)")
+
+    # FSM rate (English and Welsh patterns)
+    import re
+    # Welsh: "prydau ysgol am ddim dros 25" or "cyfradd prydau ysgol am ddim dros 25"
+    welsh_fsm_gt = re.search(r"prydau.*?dros\s*(\d+)", q)
+    welsh_fsm_lt = re.search(r"prydau.*?o dan\s*(\d+)", q)
+    if welsh_fsm_gt:
+        val = float(welsh_fsm_gt.group(1))
+        filters["fsm_pct_gt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with FSM rate > {val}% (Welsh query).")
+        relations.append(f"has_fsm_rate(>{val}%)")
+    if welsh_fsm_lt:
+        val = float(welsh_fsm_lt.group(1))
+        filters["fsm_pct_lt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with FSM rate < {val}% (Welsh query).")
+    fsm_gt = re.search(r"fsm.*?(above|over|>|greater than)\s*(\d+)", q)
+    fsm_lt = re.search(r"fsm.*?(below|under|<|less than)\s*(\d+)", q)
+    if fsm_gt:
+        val = float(fsm_gt.group(2))
+        filters["fsm_pct_gt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with FSM rate > {val}%.")
+        relations.append(f"has_fsm_rate(>{val}%)")
+    if fsm_lt:
+        val = float(fsm_lt.group(2))
+        filters["fsm_pct_lt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with FSM rate < {val}%.")
+
+    # Attendance
+    att_lt = re.search(r"attendance.*?(below|under|<|less than)\s*(\d+)", q)
+    att_gt = re.search(r"attendance.*?(above|over|>|greater than)\s*(\d+)", q)
+    if att_lt:
+        val = float(att_lt.group(2))
+        filters["attendance_lt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with attendance < {val}%.")
+        relations.append(f"has_attendance(<{val}%)")
+    if att_gt:
+        val = float(att_gt.group(2))
+        filters["attendance_gt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with attendance > {val}%.")
+
+    # GCSE
+    gcse_lt = re.search(r"gcse.*?(below|under|<|less than)\s*(\d+)", q)
+    gcse_gt = re.search(r"gcse.*?(above|over|>|greater than)\s*(\d+)", q)
+    if gcse_lt:
+        val = float(gcse_lt.group(2))
+        filters["gcse_lt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with GCSE pass rate < {val}%.")
+        relations.append(f"has_gcse_rate(<{val}%)")
+    if gcse_gt:
+        val = float(gcse_gt.group(2))
+        filters["gcse_gt"] = val
+        steps.append(f"Step {len(steps)+1}: Filter schools with GCSE pass rate > {val}%.")
+
+    # Local authority
+    for la in ["cardiff", "caerdydd", "swansea", "abertawe", "newport", "casnewydd",
+               "rhondda", "merthyr", "bridgend", "pen-y-bont", "neath", "castell-nedd",
+               "wrexham", "wrecsam", "flintshire", "fflint", "gwynedd", "ceredigion",
+               "pembrokeshire", "sir benfro", "carmarthenshire", "sir gar",
+               "rhondda cynon taf", "cynon taf"]:
+        if la in q:
+            filters["local_authority"] = la.title()
+            steps.append(f"Step {len(steps)+1}: Filter schools in {la.title()} local authority.")
+            break
+
+    if not steps:
+        steps.append("Step 1: Apply general filter to all schools.")
+
+    # Build understood query
+    parts = []
+    if filters.get("school_type"):
+        parts.append(f"{filters['school_type']} schools")
+    else:
+        parts.append("Schools")
+    if filters.get("deprivation") == "high_deprivation":
+        parts.append("in high-deprivation areas")
+    elif filters.get("deprivation") == "low_deprivation":
+        parts.append("in low-deprivation areas")
+    if filters.get("near_transport") is True:
+        parts.append("near transport stops")
+    elif filters.get("near_transport") is False:
+        parts.append("far from transport stops")
+    if filters.get("fsm_pct_gt"):
+        parts.append(f"with FSM rate above {filters['fsm_pct_gt']}%")
+    if filters.get("attendance_lt"):
+        parts.append(f"with attendance below {filters['attendance_lt']}%")
+    if filters.get("gcse_lt"):
+        parts.append(f"with GCSE pass rate below {filters['gcse_lt']}%")
+    if filters.get("local_authority"):
+        parts.append(f"in {filters['local_authority']}")
+    understood = " ".join(parts) + "."
+
+    # Welsh summary
+    welsh_parts = []
+    if filters.get("school_type") == "Secondary":
+        welsh_parts.append("Ysgolion uwchradd")
+    elif filters.get("school_type") == "Primary":
+        welsh_parts.append("Ysgolion cynradd")
+    else:
+        welsh_parts.append("Ysgolion")
+    if filters.get("deprivation") == "high_deprivation":
+        welsh_parts.append("mewn ardaloedd amddifadedd uchel")
+    if filters.get("near_transport") is True:
+        welsh_parts.append("ac yn agos at orsafoedd trafnidiaeth")
+    elif filters.get("near_transport") is False:
+        welsh_parts.append("ymhell o drafnidiaeth")
+    welsh_summary = " ".join(welsh_parts) + "."
+
+    # KG query
+    conditions = []
+    if filters.get("school_type"):
+        conditions.append(f"s.school_type = '{filters['school_type']}'")
+    if filters.get("deprivation"):
+        conditions.append(f"s.deprivation = '{filters['deprivation']}'")
+    if filters.get("near_transport") is not None:
+        conditions.append(f"s.near_transport = {'true' if filters['near_transport'] else 'false'}")
+    if filters.get("fsm_pct_gt"):
+        conditions.append(f"s.fsm_pct > {filters['fsm_pct_gt']}")
+    if filters.get("attendance_lt"):
+        conditions.append(f"s.attendance_pct < {filters['attendance_lt']}")
+    if filters.get("gcse_lt"):
+        conditions.append(f"s.gcse_pass_pct < {filters['gcse_lt']}")
+    where_clause = " AND ".join(conditions) if conditions else "true"
+    kg_query = f"MATCH (s:School) WHERE {where_clause} RETURN s"
+
+    return {
+        "understood_query": understood,
+        "welsh_summary": welsh_summary,
+        "reasoning_steps": steps,
+        "qpm_relations": relations,
+        "kg_query": kg_query,
+        "filters": filters,
+        "confidence": "high" if filters else "low",
+        "query_logic": f"Rule-based QPM parser: {understood}",
+        "mode": "rule_based"
+    }
+
+
 def call_llm(user_query: str) -> dict:
-    """Call GPT-4.1 to parse natural language into a structured KG query."""
+    """Call GPT-4.1 to parse natural language into a structured KG query.
+    Falls back to rule-based parser if LLM is unavailable."""
     try:
         from openai import OpenAI
         import os
@@ -402,8 +579,11 @@ def call_llm(user_query: str) -> dict:
             api_key = st.secrets["OPENAI_API_KEY"]
         except Exception:
             api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            return {"error": "OpenAI API key not configured. Add OPENAI_API_KEY to Streamlit secrets."}
+
+        # If no valid key, use rule-based fallback immediately
+        if not api_key or len(api_key) < 20:
+            return rule_based_parse(user_query)
+
         # On Streamlit Cloud use standard OpenAI; locally use proxy if set
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         client = OpenAI(
@@ -421,9 +601,12 @@ def call_llm(user_query: str) -> dict:
             response_format={"type": "json_object"}
         )
         raw = response.choices[0].message.content
-        return json.loads(raw)
-    except Exception as e:
-        return {"error": str(e)}
+        result = json.loads(raw)
+        result["mode"] = "llm"
+        return result
+    except Exception:
+        # Any failure → fall back to rule-based
+        return rule_based_parse(user_query)
 
 
 def apply_nl_filters(enriched: pd.DataFrame, filters: dict) -> pd.DataFrame:
@@ -488,11 +671,11 @@ def render_nl_query_tab(enriched, G):
       🤖 Natural Language Spatial Query Interface
     </h3>
     <p style='margin:0.4rem 0 0;opacity:0.88;font-size:0.9rem;'>
-      Ask questions in <b>English or Welsh (Cymraeg)</b> — the system uses an LLM to parse your query
+      Ask questions in <b>English or Welsh (Cymraeg)</b> — the system parses your query
       into a <b>Qualitative Place Knowledge Graph</b> spatial query, then executes it live.
     </p>
     <p style='margin:0.3rem 0 0;opacity:0.7;font-size:0.82rem;'>
-      Powered by GPT-4.1 · Knowledge Graph: NetworkX · QPM Relations: contained_in, near, far_from
+      QPM Parser (LLM or Rule-Based) · Knowledge Graph: NetworkX · QPM Relations: contained_in, near, far_from
     </p>
     </div>""", unsafe_allow_html=True)
 
@@ -555,7 +738,7 @@ def render_nl_query_tab(enriched, G):
 
     # ── Execute ───────────────────────────────────────────────────────────────
     if run_query and user_query.strip():
-        with st.spinner("🧠 LLM parsing query and building Knowledge Graph filter..."):
+        with st.spinner("🧠 Parsing query and building Knowledge Graph filter..."):
             result = call_llm(user_query.strip())
         if "error" not in result:
             st.session_state.nl_result = result
@@ -615,8 +798,15 @@ def render_nl_query_tab(enriched, G):
                 )
 
         # ── KG Query Display ──────────────────────────────────────────────────
+        # Show mode badge
+        mode = result.get("mode", "rule_based")
+        if mode == "llm":
+            st.markdown("<span style='background:#0055AA;color:white;padding:3px 10px;border-radius:12px;font-size:0.8rem;'>🤖 GPT-4.1 LLM Mode</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("<span style='background:#006633;color:white;padding:3px 10px;border-radius:12px;font-size:0.8rem;'>⚙️ Rule-Based QPM Parser (no API key required)</span>", unsafe_allow_html=True)
+
         st.markdown("**🕸️ Generated Knowledge Graph Query:**")
-        kg_q = result.get("kg_query_text", "")
+        kg_q = result.get("kg_query", result.get("kg_query_text", ""))
         # Syntax-highlight the KG query
         kg_q_html = kg_q
         for kw in ["MATCH", "WHERE", "AND", "OR", "NOT", "RETURN", "WITH"]:
@@ -654,7 +844,7 @@ def render_nl_query_tab(enriched, G):
         st.markdown(
             f"<div style='background:#f0fff4;border:2px solid #009900;border-radius:10px;"
             f"padding:0.8rem 1.1rem;margin:0.5rem 0;'>"
-            f"<b>💡 Query Logic:</b> {result.get('explanation','')}"
+            f"<b>💡 Query Logic:</b> {result.get('explanation', result.get('query_logic', ''))}"
             f"</div>",
             unsafe_allow_html=True
         )
