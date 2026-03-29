@@ -203,6 +203,56 @@ def apply_preset(preset, enriched):
     return df
 
 
+def qualitative_place_label(deprivation, near_transport):
+    """Convert numeric data to qualitative place descriptions (QPM-style)."""
+    dep_label = {
+        "high_deprivation":   "Highly Deprived",
+        "medium_deprivation": "Moderately Deprived",
+        "low_deprivation":    "Low Deprivation",
+        "unknown":            "Unknown",
+    }.get(deprivation, "Unknown")
+
+    transport_label = "Good Transport Access" if near_transport else "Poor Transport Access"
+
+    # Qualitative risk classification
+    if deprivation == "high_deprivation" and not near_transport:
+        risk = "Critical"
+        risk_color = "#CC0000"
+    elif deprivation == "high_deprivation" and near_transport:
+        risk = "High"
+        risk_color = "#FF4444"
+    elif deprivation == "medium_deprivation" and not near_transport:
+        risk = "Elevated"
+        risk_color = "#FF8800"
+    elif deprivation == "medium_deprivation" and near_transport:
+        risk = "Moderate"
+        risk_color = "#FFAA00"
+    elif deprivation == "low_deprivation" and not near_transport:
+        risk = "Low-Moderate"
+        risk_color = "#88BB00"
+    else:
+        risk = "Low"
+        risk_color = "#009900"
+
+    return dep_label, transport_label, risk, risk_color
+
+
+def build_qpm_analysis(enriched):
+    """Build QPM-style qualitative place analysis from enriched schools data."""
+    df = enriched.copy()
+
+    # Apply qualitative labels
+    labels = df.apply(
+        lambda r: qualitative_place_label(r["deprivation"], r["near_transport"]), axis=1
+    )
+    df["dep_label"]       = [l[0] for l in labels]
+    df["transport_label"] = [l[1] for l in labels]
+    df["risk_level"]      = [l[2] for l in labels]
+    df["risk_color"]      = [l[3] for l in labels]
+
+    return df
+
+
 def build_map(filtered, G):
     """Build a Folium map from the filtered schools dataframe."""
     if len(filtered) == 0:
@@ -387,10 +437,11 @@ def main():
         st.metric("Total Pupils", f"{total_pupils:,}")
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
-    tab_map, tab_table, tab_kg, tab_about = st.tabs([
+    tab_map, tab_table, tab_kg, tab_qpm, tab_about = st.tabs([
         "Interactive Map",
         "Data Table",
         "Knowledge Graph",
+        "Qualitative Place Analysis",
         "About",
     ])
 
@@ -478,12 +529,257 @@ def main():
         la_counts = enriched["local_authority"].value_counts().head(15)
         st.bar_chart(la_counts)
 
+    # ── Qualitative Place Analysis Tab (QPM) ─────────────────────────────────
+    with tab_qpm:
+
+        qpm_df = build_qpm_analysis(enriched)
+        total  = len(qpm_df)
+
+        # ── Pre-compute stats ─────────────────────────────────────────────────
+        high_dep_total   = len(qpm_df[qpm_df["deprivation"] == "high_deprivation"])
+        med_dep_total    = len(qpm_df[qpm_df["deprivation"] == "medium_deprivation"])
+        low_dep_total    = len(qpm_df[qpm_df["deprivation"] == "low_deprivation"])
+        near_t_total     = int(qpm_df["near_transport"].sum())
+        far_t_total      = total - near_t_total
+
+        high_near = len(qpm_df[(qpm_df["deprivation"]=="high_deprivation") & (qpm_df["near_transport"]==True)])
+        high_far  = len(qpm_df[(qpm_df["deprivation"]=="high_deprivation") & (qpm_df["near_transport"]==False)])
+        med_near  = len(qpm_df[(qpm_df["deprivation"]=="medium_deprivation") & (qpm_df["near_transport"]==True)])
+        med_far   = len(qpm_df[(qpm_df["deprivation"]=="medium_deprivation") & (qpm_df["near_transport"]==False)])
+        low_near  = len(qpm_df[(qpm_df["deprivation"]=="low_deprivation") & (qpm_df["near_transport"]==True)])
+        low_far   = len(qpm_df[(qpm_df["deprivation"]=="low_deprivation") & (qpm_df["near_transport"]==False)])
+
+        pct_high_dep_poor = round(high_far  / high_dep_total * 100, 1) if high_dep_total > 0 else 0
+        pct_low_dep_poor  = round(low_far   / low_dep_total  * 100, 1) if low_dep_total  > 0 else 0
+
+        if len(qpm_df[qpm_df["risk_level"]=="Critical"]) > 0:
+            top_la_critical = qpm_df[qpm_df["risk_level"]=="Critical"]["local_authority"].value_counts().idxmax()
+        else:
+            top_la_critical = "N/A"
+
+        # ── Header ────────────────────────────────────────────────────────────
+        st.markdown("""
+        <div style='background:linear-gradient(135deg,#003366,#0066CC);padding:1.2rem 1.5rem;
+        border-radius:12px;color:white;margin-bottom:1rem;'>
+        <h3 style='margin:0;color:white;'>🗺️ Qualitative Place Analysis</h3>
+        <p style='margin:0.3rem 0 0;opacity:0.9;font-size:0.9rem;'>
+        Based on the <b>Qualitative Place Model (QPM)</b> — Satoti &amp; Abdelmoty (2025).<br>
+        Each school is described by <b>qualitative spatial relations</b> instead of raw numbers.
+        </p></div>""", unsafe_allow_html=True)
+
+        # ── STEP 1 : What are the QPM Relations? ─────────────────────────────
+        st.markdown("### Step 1 — What are the QPM Relations?")
+        st.markdown(
+            "Instead of saying *'WIMD Decile = 2'*, QPM says **'School is located\_in a Highly Deprived area'**. "
+            "Instead of *'distance = 650 m'*, QPM says **'School is near a Transport Stop'**. "
+            "These qualitative labels make spatial reasoning human-readable."
+        )
+
+        rel_html = """
+        <div style='display:flex;gap:1rem;flex-wrap:wrap;margin:0.8rem 0 1.2rem;'>
+          <div style='flex:1;min-width:200px;background:#fff8e1;border:2px solid #f59e0b;
+               border-radius:10px;padding:1rem;text-align:center;'>
+            <div style='font-size:1.8rem;'>🏫</div>
+            <b>School</b>
+            <div style='color:#666;font-size:0.85rem;margin-top:0.3rem;'>Node in the Knowledge Graph</div>
+          </div>
+          <div style='flex:0.4;display:flex;align-items:center;justify-content:center;
+               font-size:1.1rem;font-weight:bold;color:#0066CC;'>
+            ──[located_in]──▶
+          </div>
+          <div style='flex:1;min-width:200px;background:#fce7f3;border:2px solid #ec4899;
+               border-radius:10px;padding:1rem;text-align:center;'>
+            <div style='font-size:1.8rem;'>📍</div>
+            <b>Deprived / Moderate / Low Area</b>
+            <div style='color:#666;font-size:0.85rem;margin-top:0.3rem;'>WIMD Decile → Qualitative Label</div>
+          </div>
+          <div style='flex:0.4;display:flex;align-items:center;justify-content:center;
+               font-size:1.1rem;font-weight:bold;color:#0066CC;'>
+            ──[near / far_from]──▶
+          </div>
+          <div style='flex:1;min-width:200px;background:#e0f2fe;border:2px solid #0ea5e9;
+               border-radius:10px;padding:1rem;text-align:center;'>
+            <div style='font-size:1.8rem;'>🚌</div>
+            <b>Transport Stop</b>
+            <div style='color:#666;font-size:0.85rem;margin-top:0.3rem;'>≤800 m = near | >800 m = far_from</div>
+          </div>
+        </div>
+        """
+        st.markdown(rel_html, unsafe_allow_html=True)
+
+        # ── STEP 2 : How are schools distributed? ────────────────────────────
+        st.markdown("### Step 2 — How are schools distributed across qualitative labels?")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Deprivation Level (located\_in)**")
+            dep_data = pd.DataFrame({
+                "Deprivation": ["High (Deciles 1-3)", "Medium (Deciles 4-7)", "Low (Deciles 8-10)"],
+                "Schools":     [high_dep_total, med_dep_total, low_dep_total],
+                "Color":       ["#CC0000", "#FF8800", "#009900"],
+            })
+            for _, r in dep_data.iterrows():
+                pct = round(r["Schools"]/total*100,1)
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:0.6rem;margin:0.4rem 0;'>"
+                    f"<div style='width:14px;height:14px;border-radius:50%;background:{r['Color']};flex-shrink:0;'></div>"
+                    f"<div style='flex:1;'><b>{r['Deprivation']}</b></div>"
+                    f"<div style='background:{r['Color']}22;border:1px solid {r['Color']};"
+                    f"border-radius:6px;padding:2px 10px;font-weight:bold;color:{r['Color']};'>"
+                    f"{r['Schools']:,} schools ({pct}%)</div></div>",
+                    unsafe_allow_html=True
+                )
+
+        with c2:
+            st.markdown("**Transport Access (near / far\_from)**")
+            for label, count, color, icon in [
+                ("near Transport Stop",    near_t_total, "#0066CC", "🚌"),
+                ("far\_from Transport Stop", far_t_total,  "#888888", "🚶"),
+            ]:
+                pct = round(count/total*100,1)
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:0.6rem;margin:0.4rem 0;'>"
+                    f"<div style='font-size:1.3rem;'>{icon}</div>"
+                    f"<div style='flex:1;'><b>{label}</b></div>"
+                    f"<div style='background:{color}22;border:1px solid {color};"
+                    f"border-radius:6px;padding:2px 10px;font-weight:bold;color:{color};'>"
+                    f"{count:,} schools ({pct}%)</div></div>",
+                    unsafe_allow_html=True
+                )
+
+        # ── STEP 3 : Relationship Matrix ─────────────────────────────────────
+        st.markdown("### Step 3 — What is the relationship between Deprivation and Transport?")
+        st.markdown(
+            "This matrix shows how many schools fall into each **combination** of "
+            "deprivation level and transport access — revealing whether the two factors co-occur."
+        )
+
+        matrix_html = f"""
+        <table style='width:100%;border-collapse:collapse;font-size:0.95rem;margin:0.8rem 0;'>
+          <thead>
+            <tr style='background:#003366;color:white;'>
+              <th style='padding:0.7rem;text-align:left;border-radius:8px 0 0 0;'>Deprivation Level</th>
+              <th style='padding:0.7rem;text-align:center;'>🚌 near Transport</th>
+              <th style='padding:0.7rem;text-align:center;'>🚶 far_from Transport</th>
+              <th style='padding:0.7rem;text-align:center;border-radius:0 8px 0 0;'>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style='background:#fff0f0;'>
+              <td style='padding:0.7rem;font-weight:bold;color:#CC0000;'>🔴 Highly Deprived</td>
+              <td style='padding:0.7rem;text-align:center;'><b>{high_near:,}</b><br><small style='color:#666;'>{round(high_near/total*100,1)}% of all schools</small></td>
+              <td style='padding:0.7rem;text-align:center;background:#ffdddd;'><b style='color:#CC0000;'>{high_far:,}</b><br><small style='color:#CC0000;'>⚠️ Critical Risk</small></td>
+              <td style='padding:0.7rem;text-align:center;font-weight:bold;'>{high_dep_total:,}</td>
+            </tr>
+            <tr style='background:#fff8f0;'>
+              <td style='padding:0.7rem;font-weight:bold;color:#FF8800;'>🟠 Moderately Deprived</td>
+              <td style='padding:0.7rem;text-align:center;'><b>{med_near:,}</b><br><small style='color:#666;'>{round(med_near/total*100,1)}% of all schools</small></td>
+              <td style='padding:0.7rem;text-align:center;background:#ffe8cc;'><b style='color:#FF8800;'>{med_far:,}</b><br><small style='color:#FF8800;'>Elevated Risk</small></td>
+              <td style='padding:0.7rem;text-align:center;font-weight:bold;'>{med_dep_total:,}</td>
+            </tr>
+            <tr style='background:#f0fff0;'>
+              <td style='padding:0.7rem;font-weight:bold;color:#009900;'>🟢 Low Deprivation</td>
+              <td style='padding:0.7rem;text-align:center;'><b>{low_near:,}</b><br><small style='color:#666;'>{round(low_near/total*100,1)}% of all schools</small></td>
+              <td style='padding:0.7rem;text-align:center;'><b>{low_far:,}</b><br><small style='color:#666;'>Low-Moderate Risk</small></td>
+              <td style='padding:0.7rem;text-align:center;font-weight:bold;'>{low_dep_total:,}</td>
+            </tr>
+            <tr style='background:#f0f4ff;font-weight:bold;'>
+              <td style='padding:0.7rem;'>Total</td>
+              <td style='padding:0.7rem;text-align:center;'>{near_t_total:,}</td>
+              <td style='padding:0.7rem;text-align:center;'>{far_t_total:,}</td>
+              <td style='padding:0.7rem;text-align:center;'>{total:,}</td>
+            </tr>
+          </tbody>
+        </table>
+        """
+        st.markdown(matrix_html, unsafe_allow_html=True)
+
+        # ── STEP 4 : Key Findings ─────────────────────────────────────────────
+        st.markdown("### Step 4 — Key Qualitative Findings")
+
+        if pct_high_dep_poor > pct_low_dep_poor:
+            correlation_emoji = "⚠️"
+            correlation_text  = (
+                f"Highly deprived areas have **more** poor transport access ({pct_high_dep_poor}%) "
+                f"than low-deprivation areas ({pct_low_dep_poor}%) — deprivation and transport barriers **compound** each other."
+            )
+            correlation_bg = "#fff0f0"; correlation_border = "#CC0000"
+        else:
+            correlation_emoji = "💡"
+            correlation_text  = (
+                f"Interestingly, highly deprived areas actually have **better** transport access ({pct_high_dep_poor}% poor) "
+                f"than low-deprivation areas ({pct_low_dep_poor}% poor). "
+                "This suggests deprived areas in Wales tend to be **urban** (good bus networks), "
+                "while wealthier areas are often **rural** (limited transport)."
+            )
+            correlation_bg = "#f0f8ff"; correlation_border = "#0066CC"
+
+        findings = [
+            ("🔴", "#fff0f0", "#CC0000",
+             f"{high_far:,} schools ({round(high_far/total*100,1)}%) are in areas that are <b>Highly Deprived</b> AND <b>far from</b> transport — classified as <b>Critical Risk</b>.",
+             f"These schools face a double disadvantage: economic deprivation + transport isolation."),
+            ("🟠", "#fff8f0", "#FF8800",
+             f"{high_dep_total:,} schools ({round(high_dep_total/total*100,1)}%) are <b>located_in</b> Highly Deprived areas.",
+             "Relation: School ──[located_in]──▶ Highly Deprived Area"),
+            ("🚌", "#f0f8ff", "#0066CC",
+             f"{near_t_total:,} schools ({round(near_t_total/total*100,1)}%) are <b>near</b> a transport stop (≤800m).",
+             "Relation: School ──[near]──▶ Transport Stop"),
+            (correlation_emoji, correlation_bg, correlation_border,
+             correlation_text,
+             f"Most critical-risk local authority: <b>{top_la_critical}</b>"),
+        ]
+
+        for emoji, bg, border, title, subtitle in findings:
+            st.markdown(
+                f"<div style='background:{bg};border-left:5px solid {border};"
+                f"padding:0.9rem 1.1rem;border-radius:8px;margin:0.5rem 0;'>"
+                f"<span style='font-size:1.2rem;'>{emoji}</span> {title}<br>"
+                f"<small style='color:#555;'>{subtitle}</small></div>",
+                unsafe_allow_html=True
+            )
+
+        # ── STEP 5 : Local Authority Table ───────────────────────────────────
+        st.markdown("### Step 5 — Qualitative Summary by Local Authority")
+        st.markdown(
+            "Select a local authority to explore its qualitative place profile:"
+        )
+
+        la_summary = qpm_df.groupby("local_authority").agg(
+            Total=("school_name", "count"),
+            Critical=("risk_level", lambda x: (x=="Critical").sum()),
+            High=("risk_level",    lambda x: (x=="High").sum()),
+            Moderate=("risk_level",lambda x: (x=="Moderate").sum()),
+            Low=("risk_level",     lambda x: (x=="Low").sum()),
+            Pct_HighDep=("deprivation",    lambda x: round((x=="high_deprivation").sum()/len(x)*100,1)),
+            Pct_NearTransport=("near_transport", lambda x: round(x.sum()/len(x)*100,1)),
+        ).reset_index().rename(columns={
+            "local_authority":  "Local Authority",
+            "Total":            "Total Schools",
+            "Pct_HighDep":      "% High Deprivation",
+            "Pct_NearTransport":"% Near Transport",
+        }).sort_values("Critical", ascending=False)
+
+        st.dataframe(
+            la_summary.reset_index(drop=True),
+            use_container_width=True,
+            height=380,
+            column_config={
+                "Critical":          st.column_config.NumberColumn("🔴 Critical",  help="Highly deprived + poor transport"),
+                "High":              st.column_config.NumberColumn("🟠 High",       help="Highly deprived + near transport"),
+                "Moderate":          st.column_config.NumberColumn("🟡 Moderate",   help="Medium deprivation + near transport"),
+                "Low":               st.column_config.NumberColumn("🟢 Low",        help="Low deprivation + good transport"),
+                "% High Deprivation":st.column_config.ProgressColumn("% High Dep",  min_value=0, max_value=100, format="%.1f%%"),
+                "% Near Transport":  st.column_config.ProgressColumn("% Near Transport", min_value=0, max_value=100, format="%.1f%%"),
+            }
+        )
+
     # ── About Tab ─────────────────────────────────────────────────────────────
     with tab_about:
         st.markdown("""
 ## About This Project
 
-**Wales Education Inequality Spatial Analyser is a prototype based on a project proposed by Prof. Alia Abdelmoty as part of an MSc dissertation at Cardiff University.
+**Wales Education Inequality Spatial Analyser** is a prototype developed as part of an
+MSc dissertation at Cardiff University, supervised by Prof. Alia Abdelmoty.
 
 ### Research Question
 *How can spatial knowledge graphs be used to analyse and visualise educational
