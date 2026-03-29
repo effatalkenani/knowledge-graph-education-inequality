@@ -396,7 +396,18 @@ def call_llm(user_query: str) -> dict:
     """Call GPT-4.1 to parse natural language into a structured KG query."""
     try:
         from openai import OpenAI
-        client = OpenAI()
+        import os
+        # Try Streamlit secrets first, then environment variable
+        try:
+            api_key = st.secrets["OPENAI_API_KEY"]
+        except Exception:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            return {"error": "OpenAI API key not configured. Add OPENAI_API_KEY to Streamlit secrets."}
+        client = OpenAI(
+            api_key=api_key,
+            base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        )
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
