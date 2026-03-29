@@ -8,3 +8,4 @@ streamlit-folium>=0.15.0
 openai>=1.12.0
 plotly>=5.18.0
 scipy>=1.11.0
+# Force rebuild 1774815139
