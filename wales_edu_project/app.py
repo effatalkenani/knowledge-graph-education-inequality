@@ -483,8 +483,7 @@ def main():
         st.markdown("""
 ## About This Project
 
-**Wales Education Inequality Spatial Analyser** is a prototype developed as part of an
-MSc dissertation at Cardiff University, supervised by Prof. Alia Abdelmoty.
+**Wales Education Inequality Spatial Analyser is a prototype based on a project proposed by Prof. Alia Abdelmoty as part of an MSc dissertation at Cardiff University.
 
 ### Research Question
 *How can spatial knowledge graphs be used to analyse and visualise educational
