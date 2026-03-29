@@ -1,7 +1,0 @@
-streamlit
-pandas
-networkx
-folium
-streamlit-folium
-numpy
-odfpy
