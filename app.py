@@ -344,7 +344,7 @@ def build_map(filtered, G):
 
 SYSTEM_PROMPT = """You are a spatial query engine for a Qualitative Place Knowledge Graph about education inequality in Wales.
 
-Your job is to parse a natural language question (Arabic or English) into a structured spatial query.
+Your job is to parse a natural language question (English or Welsh) into a structured spatial query.
 
 The Knowledge Graph has these node types and properties:
 - School: school_type (Primary/Secondary/Special/Nursery/Middle), local_authority, deprivation (high_deprivation/medium_deprivation/low_deprivation), near_transport (true/false), fsm_pct (0-50), attendance_pct (86-99), gcse_pass_pct (40-76, secondary only), pupils
@@ -366,7 +366,7 @@ Local authorities in Wales: Cardiff, Swansea, Newport, Rhondda Cynon Taf, Caerph
 Respond ONLY with valid JSON in this exact format:
 {
   "understood_query": "English restatement of what was asked",
-  "arabic_summary": "ملخص عربي لما فهمه النظام",
+  "welsh_summary": "Welsh translation of what was understood (Cymraeg)",
   "reasoning_steps": [
     "Step 1: ...",
     "Step 2: ...",
@@ -458,6 +458,14 @@ def apply_nl_filters(enriched: pd.DataFrame, filters: dict) -> pd.DataFrame:
 def render_nl_query_tab(enriched, G):
     """Render the NLP Query Interface tab."""
 
+    # ── Session state init ────────────────────────────────────────────────────
+    if "nl_query_text" not in st.session_state:
+        st.session_state.nl_query_text = ""
+    if "nl_result" not in st.session_state:
+        st.session_state.nl_result = None
+    if "nl_matched" not in st.session_state:
+        st.session_state.nl_matched = None
+
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown("""
     <div style='background:linear-gradient(135deg,#0f172a,#1e3a5f,#0055AA);
@@ -467,7 +475,7 @@ def render_nl_query_tab(enriched, G):
       🤖 Natural Language Spatial Query Interface
     </h3>
     <p style='margin:0.4rem 0 0;opacity:0.88;font-size:0.9rem;'>
-      Ask questions in <b>Arabic or English</b> — the system uses an LLM to parse your query
+      Ask questions in <b>English or Welsh (Cymraeg)</b> — the system uses an LLM to parse your query
       into a <b>Qualitative Place Knowledge Graph</b> spatial query, then executes it live.
     </p>
     <p style='margin:0.3rem 0 0;opacity:0.7;font-size:0.82rem;'>
@@ -479,44 +487,55 @@ def render_nl_query_tab(enriched, G):
     st.markdown("#### 💡 Example Queries — Click to use")
 
     examples = [
-        ("🇸🇦 Arabic", "مدارس ثانوية داخل مناطق عالية الحرمان وقريبة من محطات النقل"),
-        ("🇸🇦 Arabic", "مدارس ابتدائية بعيدة عن وسائل النقل في مناطق محرومة"),
-        ("🇸🇦 Arabic", "مدارس في كارديف بنسبة وجبات مجانية أكثر من 30 بالمئة"),
-        ("🇸🇦 Arabic", "مدارس ثانوية بنسبة حضور أقل من 90% في مناطق الحرمان الشديد"),
+        ("🏴󠁧󠁢󠁷󠁬󠁳󠁿 Welsh",   "ysgolion uwchradd mewn ardaloedd amddifadedd uchel ac yn agos at orsafoedd trafnidiaeth"),
+        ("🏴󠁧󠁢󠁷󠁬󠁳󠁿 Welsh",   "ysgolion cynradd ymhell o drafnidiaeth gyda chyfradd prydau ysgol am ddim dros 25%"),
         ("🇬🇧 English", "secondary schools contained_in high-deprivation areas AND near transport_stops"),
         ("🇬🇧 English", "primary schools far_from transport with FSM rate above 25%"),
         ("🇬🇧 English", "schools in Rhondda Cynon Taf with high deprivation and poor attendance"),
         ("🇬🇧 English", "secondary schools with GCSE pass rate below 50% in deprived areas"),
+        ("🇬🇧 English", "schools in Cardiff with FSM rate above 30%"),
+        ("🇬🇧 English", "secondary schools with attendance below 90% in high-deprivation areas"),
     ]
 
     cols = st.columns(4)
-    selected_example = None
     for i, (lang, q) in enumerate(examples):
         with cols[i % 4]:
-            label = f"{lang}\n{q[:45]}..." if len(q) > 45 else f"{lang}\n{q}"
+            label = f"{lang}\n{q[:50]}..." if len(q) > 50 else f"{lang}\n{q}"
             if st.button(label, key=f"ex_{i}", use_container_width=True):
-                selected_example = q
+                st.session_state.nl_query_text = q
+                st.rerun()
 
     st.markdown("---")
 
     # ── Query input ───────────────────────────────────────────────────────────
     st.markdown("#### ✏️ Enter Your Query")
-
-    default_q = selected_example if selected_example else ""
-    user_query = st.text_area(
-        "Type your question in Arabic or English:",
-        value=default_q,
-        height=90,
-        placeholder='e.g. "مدارس ثانوية في مناطق عالية الحرمان وقريبة من النقل"  or  "secondary schools in high-deprivation areas near transport"',
-        key="nl_query_input"
+    st.markdown(
+        "<small style='color:#555;'>Type a question in <b>English</b> or <b>Welsh</b> "
+        "and press <b>Run Query</b>. Examples:</small>",
+        unsafe_allow_html=True
+    )
+    st.code(
+        'English: "secondary schools contained_in high-deprivation areas AND near transport_stops"\n'
+        'Welsh:   "ysgolion uwchradd mewn ardaloedd amddifadedd uchel ac yn agos at drafnidiaeth"',
+        language=None
     )
 
-    col_btn, col_clear = st.columns([1, 4])
+    user_query = st.text_area(
+        "Your query:",
+        value=st.session_state.nl_query_text,
+        height=80,
+        placeholder='e.g.  secondary schools in high-deprivation areas near transport',
+        key="nl_query_input"
+    )
+    # keep session state in sync
+    st.session_state.nl_query_text = user_query
+
+    col_btn, col_info = st.columns([1, 4])
     with col_btn:
         run_query = st.button("🔍 Run Query", type="primary", use_container_width=True)
-    with col_clear:
+    with col_info:
         st.markdown(
-            "<small style='color:#888;'>The LLM parses your query → extracts QPM relations → "
+            "<small style='color:#888;'>LLM parses your query → extracts QPM relations → "
             "executes on the Knowledge Graph → returns matching schools</small>",
             unsafe_allow_html=True
         )
@@ -525,10 +544,19 @@ def render_nl_query_tab(enriched, G):
     if run_query and user_query.strip():
         with st.spinner("🧠 LLM parsing query and building Knowledge Graph filter..."):
             result = call_llm(user_query.strip())
+        if "error" not in result:
+            st.session_state.nl_result = result
+            st.session_state.nl_matched = apply_nl_filters(enriched, result.get("filters", {}))
+
+    if st.session_state.nl_result and st.session_state.nl_matched is not None:
+        result  = st.session_state.nl_result
+        matched = st.session_state.nl_matched
 
         if "error" in result:
             st.error(f"LLM Error: {result['error']}")
             return
+        with st.spinner("🧠 LLM parsing query and building Knowledge Graph filter..."):
+            result = call_llm(user_query.strip())
 
         # ── Reasoning Chain ───────────────────────────────────────────────────
         st.markdown("---")
@@ -538,14 +566,15 @@ def render_nl_query_tab(enriched, G):
 
         with col_l:
             st.markdown("**📖 What the system understood:**")
+            welsh_sum = result.get('welsh_summary', result.get('arabic_summary', '—'))
             st.markdown(
                 f"<div style='background:#f0f7ff;border:2px solid #0066CC;border-radius:10px;"
                 f"padding:1rem 1.2rem;'>"
                 f"<div style='font-size:0.95rem;color:#003366;font-weight:600;'>"
                 f"{result.get('understood_query','—')}</div>"
                 f"<hr style='margin:0.6rem 0;border-color:#cce0ff;'>"
-                f"<div style='font-size:0.9rem;color:#444;direction:rtl;text-align:right;'>"
-                f"{result.get('arabic_summary','—')}</div>"
+                f"<div style='font-size:0.88rem;color:#444;font-style:italic;'>"
+                f"🏴󠁧󠁢󠁷󠁬󠁳󠁿 {welsh_sum}</div>"
                 f"</div>",
                 unsafe_allow_html=True
             )
@@ -587,10 +616,6 @@ def render_nl_query_tab(enriched, G):
             f"<div class='kg-query'>{kg_q_html}</div>",
             unsafe_allow_html=True
         )
-
-        # ── Apply filters & show results ──────────────────────────────────────
-        filters = result.get("filters", {})
-        matched = apply_nl_filters(enriched, filters)
 
         st.markdown("---")
         st.markdown("### 📊 Query Results")
@@ -647,7 +672,7 @@ def render_nl_query_tab(enriched, G):
             st.download_button("⬇️ Download CSV", csv, "nl_query_results.csv", "text/csv")
 
     elif run_query and not user_query.strip():
-        st.warning("Please enter a query first.")
+        st.warning("⚠️ Please enter a query first — see the examples above for inspiration.")
 
     # ── How it works ──────────────────────────────────────────────────────────
     with st.expander("⚙️ How does this work? (Technical Details)"):
@@ -655,7 +680,7 @@ def render_nl_query_tab(enriched, G):
 **Architecture: LLM + Knowledge Graph**
 
 ```
-User Query (Arabic/English)
+User Query (English / Welsh)
         ↓
    GPT-4.1-mini (NLU)
         ↓  parses into structured JSON
@@ -671,11 +696,11 @@ User Query (Arabic/English)
 
 | Natural Language | QPM Relation | Graph Predicate |
 |---|---|---|
-| "في مناطق عالية الحرمان" / "in high-deprivation areas" | `contained_in(HighDeprivation)` | `deprivation == "high_deprivation"` |
-| "قريبة من النقل" / "near transport" | `near(TransportStop)` | `near_transport == True` |
-| "بعيدة عن النقل" / "far from transport" | `far_from(TransportStop)` | `near_transport == False` |
-| "نسبة وجبات > 30%" / "FSM rate above 30%" | `has_fsm_rate > 30` | `fsm_pct > 30` |
-| "حضور أقل من 90%" / "attendance below 90%" | `has_attendance < 90` | `attendance_pct < 90` |
+| "in high-deprivation areas" / "mewn ardaloedd amddifadedd uchel" | `contained_in(HighDeprivation)` | `deprivation == "high_deprivation"` |
+| "near transport" / "yn agos at drafnidiaeth" | `near(TransportStop)` | `near_transport == True` |
+| "far from transport" / "ymhell o drafnidiaeth" | `far_from(TransportStop)` | `near_transport == False` |
+| "FSM rate above 30%" / "cyfradd prydau ysgol am ddim dros 30%" | `has_fsm_rate > 30` | `fsm_pct > 30` |
+| "attendance below 90%" / "presenoldeb o dan 90%" | `has_attendance < 90` | `attendance_pct < 90` |
 
 **Why Knowledge Graph over SQL?**
 A KG enables *qualitative spatial reasoning* — instead of `WHERE wimd_decile <= 3`, 
@@ -1358,7 +1383,7 @@ Python · Streamlit · Folium · NetworkX · Pandas · GPT-4.1 (NL Query)
 - Interactive map with colour-coded deprivation markers
 - Qualitative Place Analysis (QPM relations: `contained_in`, `near`, `far_from`)
 - Multi-Factor Analysis: FSM, attendance, GCSE, compound disadvantage
-- **🤖 AI-powered NL Query Interface** — Arabic/English → Knowledge Graph query
+- **🤖 AI-powered NL Query Interface** — English/Welsh → Knowledge Graph query
 - Filtering by school type, deprivation level, transport access, local authority
 - Data export to CSV
 
