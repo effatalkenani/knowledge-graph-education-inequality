@@ -1488,7 +1488,7 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     m = folium.Map(
         location=center,
         zoom_start=7,
-        tiles="CartoDB positron",
+        tiles="OpenStreetMap",
         control_scale=True,
         prefer_canvas=True,
     )
@@ -1611,7 +1611,7 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend_html))
-    components.html(m.get_root().render(), height=760, scrolling=False)
+    components.html(m._repr_html_(), height=790, scrolling=False)
 
     if selected_school[0] != "All" and not chart_df.empty:
         r = chart_df.iloc[0]
@@ -2869,43 +2869,83 @@ def page_map(cfg: Dict[str, str]) -> None:
     with st.sidebar.expander("More filters: school metrics", expanded=False):
         fsm_min_text = st.text_input(
             "FSM minimum %",
-            value="",
+            value="All",
             placeholder="All, or e.g. 30",
-            help="Leave blank for all. Enter 30 to show schools with FSM >= 30%.",
+            help=(
+                "Available FSM values in the loaded school data range from "
+                "0.0% to 71.8%. Keep All for no FSM filter."
+            ),
         )
+        st.caption("Loaded range: 0.0%–71.8%. Use All for no FSM filter.")
         attendance_max_text = st.text_input(
             "Attendance maximum %",
-            value="",
+            value="All",
             placeholder="All, or e.g. 90",
-            help="Leave blank for all. Enter 90 to show schools with attendance <= 90%.",
+            help=(
+                "Available attendance values in the loaded school data range "
+                "from 79.1% to 98.1%. Keep All for no attendance filter."
+            ),
         )
+        st.caption("Loaded range: 79.1%–98.1%. Use All for no attendance filter.")
         capped9_max_text = st.text_input(
             "Capped 9 points maximum",
-            value="",
+            value="All",
             placeholder="All, or e.g. 350",
             help=(
                 "Capped 9 is a secondary-school points score, not a "
-                "0-100 percentage. Lower values can be used to explore "
-                "lower attainment; leave blank for all."
+                "0-100 percentage. Available values range from 245.1 "
+                "to 453.1. Keep All for no Capped 9 filter."
             ),
         )
+        st.caption("Loaded range: 245.1–453.1 points. Use All for no Capped 9 filter.")
 
-    def parse_optional_float(raw_value: str, field_name: str) -> float | None:
+    def parse_optional_float(
+        raw_value: str,
+        field_name: str,
+        minimum: float,
+        maximum: float,
+        unit: str,
+    ) -> Tuple[float | None, bool]:
         text = str(raw_value).strip()
         if not text or text.lower() == "all":
-            return None
+            return None, True
         try:
-            return float(text)
+            value = float(text)
         except ValueError:
-            st.sidebar.warning(f"{field_name} must be a number or blank.")
-            return None
+            st.sidebar.error(f"{field_name}: enter a number or leave it blank for All.")
+            return None, False
+        if value < minimum or value > maximum:
+            st.sidebar.error(
+                f"{field_name}: {value:g}{unit} is outside the loaded data range "
+                f"({minimum:g}{unit}–{maximum:g}{unit})."
+            )
+            return None, False
+        return value, True
 
-    fsm_min = parse_optional_float(fsm_min_text, "FSM minimum")
-    attendance_max = parse_optional_float(
+    fsm_min, fsm_ok = parse_optional_float(
+        fsm_min_text,
+        "FSM minimum",
+        0.0,
+        71.8,
+        "%",
+    )
+    attendance_max, attendance_ok = parse_optional_float(
         attendance_max_text,
         "Attendance maximum",
+        79.1,
+        98.1,
+        "%",
     )
-    capped9_max = parse_optional_float(capped9_max_text, "Capped 9 points maximum")
+    capped9_max, capped9_ok = parse_optional_float(
+        capped9_max_text,
+        "Capped 9 points maximum",
+        245.1,
+        453.1,
+        "",
+    )
+    if not (fsm_ok and attendance_ok and capped9_ok):
+        st.info("Fix the red metric filter message in the sidebar, or type All to remove that filter.")
+        return
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
