@@ -13,11 +13,13 @@ Task 6  Cross-hierarchy seam
 Task 7  Dissertation writing (not implemented in the app)
 """
 
+import base64
 import json
 from html import escape
 from typing import Any, Dict, List, Tuple
 
 import folium
+import pydeck as pdk
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -1120,19 +1122,29 @@ div[data-testid="stCodeBlock"] code {{
         unsafe_allow_html=True,
     )
 
+# PERFORMANCE NOTE
+# The previous version opened a brand-new Neo4j driver for every single query
+# and closed it again in a finally block. Each page render fires several
+# queries, so the app paid a full connection handshake many times per click,
+# which is the main reason the interface felt sluggish. The driver is designed
+# to be created once and reused, so it is cached as a Streamlit resource and
+# the per-query close is removed. Sessions are still opened and closed per
+# query, which is the correct unit of work.
+@st.cache_resource(show_spinner=False)
+def _cached_driver(uri: str, user: str, password: str):
+    return GraphDatabase.driver(uri, auth=(user, password))
+
+
 def get_driver(cfg: Dict[str, str]):
-    return GraphDatabase.driver(cfg["uri"], auth=(cfg["user"], cfg["password"]))
+    return _cached_driver(cfg["uri"], cfg["user"], cfg["password"])
 
 
 def run_cypher(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None) -> pd.DataFrame:
     params = params or {}
     driver = get_driver(cfg)
-    try:
-        with driver.session(database=cfg["database"]) as session:
-            rows = [dict(r) for r in session.run(cypher, params)]
-        return pd.DataFrame(rows)
-    finally:
-        driver.close()
+    with driver.session(database=cfg["database"]) as session:
+        rows = [dict(r) for r in session.run(cypher, params)]
+    return pd.DataFrame(rows)
 
 
 def scalar(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None, default: Any = 0) -> Any:
@@ -1427,8 +1439,103 @@ def school_outline_points(df: pd.DataFrame, bins: int = 34) -> List[Dict[str, fl
     return outline
 
 
+# ---------------------------------------------------------------------------
+# Map pins
+# ---------------------------------------------------------------------------
+# REJECTED ALTERNATIVE — icon atlas
+# The obvious optimisation is a single sprite sheet passed as the layer's
+# iconAtlas prop, with one short key per row. It was implemented and had to be
+# reverted: Streamlit passes layer props through a deck.gl expression parser,
+# which tries to evaluate the atlas string and fails on the data URI with
+# "Unexpected ':' at character 4" (the colon in "data:image/..."). Row DATA is
+# not passed through that parser, so the icon object must travel per row.
+# The four SVGs are therefore minified and built once at import time; the
+# repeated strings compress well over the websocket, and the real cause of the
+# earlier sluggishness was the per-query Neo4j driver, fixed separately above.
+#
+# Pin design: a filled teardrop with a darker outline of the same hue, and a
+# hollow white centre carrying the same darker ring, so the marker reads as a
+# real location pin. mask=False is required: a mask would flatten the outline
+# and fill the hollow centre.
+def _pin_icon(fill: str, stroke: str) -> Dict[str, Any]:
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='60' height='80' "
+        "viewBox='0 0 60 80'>"
+        "<path d='M30 4C18.4 4 9 13.4 9 25c0 15.1 21 47 21 47s21-31.9 21-47"
+        f"C51 13.4 41.6 4 30 4z' fill='{fill}' stroke='{stroke}' "
+        "stroke-width='4' stroke-linejoin='round'/>"
+        f"<circle cx='30' cy='25' r='9' fill='#fff' stroke='{stroke}' "
+        "stroke-width='3.4'/></svg>"
+    )
+    return {
+        "url": "data:image/svg+xml;base64,"
+               + base64.b64encode(svg.encode("utf-8")).decode("ascii"),
+        "width": 60,
+        "height": 80,
+        "anchorY": 80,
+        "mask": False,
+    }
+
+
+PIN_ICONS = {
+    "high_deprivation": _pin_icon("#ff4f79", "#a10f38"),
+    "medium_deprivation": _pin_icon("#ff8a00", "#a34f00"),
+    "low_deprivation": _pin_icon("#20c6d7", "#0a6b78"),
+    "unknown": _pin_icon("#94a3b8", "#475569"),
+}
+
+
+# The deck.gl tooltip is absolutely positioned inside the chart wrapper, so a
+# pin near the bottom edge would have its card clipped. Two things are needed:
+# the wrapper must be allowed to overflow, AND the chart's element container
+# must sit above the elements that follow it (legend, Map Cypher expander),
+# otherwise the escaped card renders behind them.
+PYDECK_TOOLTIP_CSS = """
+<style>
+div[data-testid="stElementContainer"]:has(div[data-testid="stDeckGlJsonChart"]) {
+  position: relative !important;
+  z-index: 9990 !important;
+}
+div[data-testid="stDeckGlJsonChart"],
+div[data-testid="stDeckGlJsonChart"] > div,
+div[data-testid="stDeckGlJsonChart"] #deckgl-wrapper,
+div[data-testid="stDeckGlJsonChart"] #view-default-view,
+div[data-testid="stDeckGlJsonChart"] canvas + div {
+  overflow: visible !important;
+}
+.deck-tooltip {
+  overflow: visible !important;
+  z-index: 9999 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  pointer-events: none !important;
+}
+</style>
+"""
+
+
 def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) -> None:
-    """Render the Wales school map with Folium and click-to-open school cards."""
+    """Render the Wales school map with pydeck (deck.gl).
+
+    Why pydeck and not Folium: pydeck ships inside Streamlit itself, so no
+    third-party JavaScript is fetched from an external CDN at render time.
+    Folium and streamlit-folium both failed silently on this machine, which
+    is the signature of a locked-down network blocking the map assets.
+
+    Design notes:
+      * Schools are drawn as location pins (IconLayer), one pin image per
+        deprivation category, each with a darker outline and hollow centre.
+      * Pin images are base64 data URIs, so no icon CDN is required either.
+      * The deck canvas is cleared to a light colour instead of the deck.gl
+        default black, so the map reads as a light dashboard surface even
+        when background tiles are switched off.
+      * No outline polygon is drawn: the approximate hull around the points
+        looked like a false administrative boundary and was removed.
+      * The hover card is laid out in two compact columns and the chart
+        wrapper is allowed to overflow, so the card is never clipped by the
+        bottom edge of the map box.
+    """
     chart_df = map_df.copy()
     dep_labels = {
         "high_deprivation": "High",
@@ -1438,15 +1545,20 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     }
     chart_df["deprivation"] = chart_df["deprivation"].fillna("unknown").astype(str)
     chart_df["deprivation_label"] = chart_df["deprivation"].map(dep_labels).fillna("Unknown")
-    chart_df["fsm_label"] = chart_df["fsm_pct"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}%"
-    )
-    chart_df["attendance_label"] = chart_df["attendance_pct"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}%"
-    )
-    chart_df["capped9_label"] = chart_df["capped9_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
+
+    def pct(v: Any) -> str:
+        return "N/A" if pd.isna(v) else f"{float(v):.1f}%"
+
+    def num(v: Any) -> str:
+        return "N/A" if pd.isna(v) else f"{float(v):.1f}"
+
+    chart_df["fsm_label"] = chart_df["fsm_pct"].apply(pct)
+    chart_df["attendance_label"] = chart_df["attendance_pct"].apply(pct)
+    chart_df["capped9_label"] = chart_df["capped9_score"].apply(num)
+    chart_df["literacy_label"] = chart_df["literacy_score"].apply(num)
+    chart_df["numeracy_label"] = chart_df["numeracy_score"].apply(num)
+    chart_df["science_label"] = chart_df["science_score"].apply(num)
+    chart_df["welsh_bacc_label"] = chart_df["welsh_bacc_score"].apply(num)
     chart_df["nearest_stop_label"] = chart_df["nearest_stop_distance_m"].apply(
         lambda v: "No stop within 800m" if pd.isna(v) else f"{float(v):.0f}m"
     )
@@ -1456,162 +1568,160 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     chart_df["pupils_label"] = chart_df["pupils"].apply(
         lambda v: "N/A" if pd.isna(v) else f"{int(float(v)):,}"
     )
-    chart_df["ptr_label"] = chart_df["pupil_teacher_ratio"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
+    chart_df["ptr_label"] = chart_df["pupil_teacher_ratio"].apply(num)
     chart_df["budget_label"] = chart_df["budget_per_pupil_gbp"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"£{float(v):,.0f}"
+        lambda v: "N/A" if pd.isna(v) else f"GBP {float(v):,.0f}"
     )
-    chart_df["literacy_label"] = chart_df["literacy_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
-    chart_df["numeracy_label"] = chart_df["numeracy_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
-    chart_df["science_label"] = chart_df["science_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
-    chart_df["welsh_bacc_label"] = chart_df["welsh_bacc_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
+    for col in ["school", "local_authority", "school_type", "language_medium",
+                "gender_mix", "address", "postcode"]:
+        chart_df[col] = chart_df[col].fillna("N/A").astype(str)
 
+    st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
     st.markdown(
         "<div class='map-note'>"
-        "School locations map over Wales. Click a school point to open its metrics card."
+        "School locations across Wales. Hover a pin to open its metrics card."
         "</div>",
         unsafe_allow_html=True,
     )
 
-    lat_min, lat_max = chart_df["latitude"].min(), chart_df["latitude"].max()
-    lon_min, lon_max = chart_df["longitude"].min(), chart_df["longitude"].max()
-    center = [float(chart_df["latitude"].mean()), float(chart_df["longitude"].mean())]
-    m = folium.Map(
-        location=center,
-        zoom_start=7,
-        tiles="OpenStreetMap",
-        control_scale=True,
-        prefer_canvas=True,
+    chart_df["icon"] = chart_df["deprivation"].apply(
+        lambda d: PIN_ICONS.get(str(d), PIN_ICONS["unknown"])
     )
-    if float(lat_min) == float(lat_max) and float(lon_min) == float(lon_max):
-        # A single selected school has identical min/max coordinates.
-        # Give Folium a small local envelope so the map still opens cleanly.
-        m.fit_bounds(
-            [
-                [float(lat_min) - 0.015, float(lon_min) - 0.015],
-                [float(lat_max) + 0.015, float(lon_max) + 0.015],
-            ],
-            padding=(28, 28),
-        )
-    else:
-        m.fit_bounds(
-            [[float(lat_min), float(lon_min)], [float(lat_max), float(lon_max)]],
-            padding=(28, 28),
-        )
 
-    colour_lookup = {
-        "high_deprivation": "#ff4f79",
-        "medium_deprivation": "#ff8a00",
-        "low_deprivation": "#20c6d7",
-        "unknown": "#94a3b8",
-    }
+    focused = selected_school[0] != "All"
+    show_basemap = st.checkbox(
+        "Show background map tiles",
+        value=False,
+        help=(
+            "Tiles are loaded from an external service. Leave this off if the "
+            "network blocks them; the pins do not depend on it."
+        ),
+        key="map_basemap_toggle",
+    )
 
-    def card_row(label: str, value: Any) -> str:
-        clean_value = "N/A" if pd.isna(value) or str(value).strip() in {"", "None", "nan"} else str(value)
+    icon_cols = [
+        "longitude", "latitude", "icon", "school", "local_authority",
+        "school_type", "language_medium", "gender_mix", "address", "postcode",
+        "deprivation_label", "wimd_label", "fsm_label", "attendance_label",
+        "capped9_label", "literacy_label", "numeracy_label", "science_label",
+        "welsh_bacc_label", "pupils_label", "ptr_label", "budget_label",
+        "nearest_stop_label",
+    ]
+    pin_layer = pdk.Layer(
+        "IconLayer",
+        data=chart_df[icon_cols],
+        get_icon="icon",
+        get_position=["longitude", "latitude"],
+        get_size=5.2 if focused else 3.4,
+        size_scale=10,
+        size_min_pixels=18 if focused else 13,
+        size_max_pixels=74,
+        pickable=True,
+        # alphaCutoff = -1 turns off alpha-based picking, so the whole pin
+        # rectangle is hoverable instead of only the opaque middle of the
+        # teardrop. Without this, the card only appeared near the centre.
+        alpha_cutoff=-1,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=float(chart_df["latitude"].mean()),
+        longitude=float(chart_df["longitude"].mean()),
+        zoom=12 if focused else 6.9,
+        pitch=0,
+        bearing=0,
+    )
+
+    # Colour key: each label keeps its own accent colour and the value
+    # inherits the same colour, so the card is scannable at a glance.
+    C_HEAD = "#0b2a5b"
+    C_MUTED = "#64748b"
+    C_DEP = "#ff4f79"
+    C_WIMD = "#7c3aed"
+    C_FSM = "#ea580c"
+    C_ATT = "#0891b2"
+    C_PUP = "#0f766e"
+    C_PTR = "#b45309"
+    C_BUD = "#15803d"
+    C_PERF = "#2563eb"
+    C_TRAN = "#db2777"
+
+    def cell(label: str, value_key: str, colour: str) -> str:
         return (
-            "<div style='background:#f8fafc;border:1px solid #e5e7eb;"
-            "border-radius:12px;padding:8px 10px;'>"
-            f"<div style='font-size:10px;color:#64748b;font-weight:800;"
-            f"text-transform:uppercase;letter-spacing:.03em;'>{escape(label)}</div>"
-            f"<div style='font-size:14px;color:#111827;font-weight:900;"
-            f"margin-top:2px;'>{escape(clean_value)}</div>"
+            "<div style='background:#f8fafc;border:1px solid #eef2f7;"
+            "border-radius:9px;padding:5px 7px;'>"
+            f"<div style='color:{colour};font-weight:800;font-size:9.5px;"
+            "text-transform:uppercase;letter-spacing:.04em;'>"
+            f"{label}</div>"
+            f"<div style='color:{colour};font-weight:900;font-size:12.5px;"
+            "margin-top:1px;'>{" + value_key + "}</div>"
             "</div>"
         )
 
-    focused = selected_school[0] != "All"
-    def clean_text_value(value: Any) -> str:
-        if pd.isna(value) or str(value).strip() in {"", "None", "nan"}:
-            return "N/A"
-        return str(value)
+    grid_open = (
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:5px;'>"
+    )
+    tooltip = {
+        "html": (
+            "<div style='font-family:Segoe UI,Arial,sans-serif;width:310px;"
+            "background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;"
+            "padding:11px 12px;box-shadow:0 12px 30px rgba(15,23,42,.18);'>"
+            f"<div style='font-size:14px;font-weight:900;color:{C_HEAD};"
+            "line-height:1.25;'>{school}</div>"
+            f"<div style='font-size:11px;color:{C_MUTED};margin:2px 0 8px;'>"
+            "{local_authority} &middot; {school_type} &middot; "
+            "{language_medium}</div>"
+            + grid_open
+            + cell("Deprivation", "deprivation_label", C_DEP)
+            + cell("WIMD decile", "wimd_label", C_WIMD)
+            + cell("FSM", "fsm_label", C_FSM)
+            + cell("Attendance", "attendance_label", C_ATT)
+            + cell("Pupils", "pupils_label", C_PUP)
+            + cell("PTR", "ptr_label", C_PTR)
+            + cell("Budget / pupil", "budget_label", C_BUD)
+            + cell("Transport", "nearest_stop_label", C_TRAN)
+            + "</div>"
+            + f"<div style='font-size:9.5px;font-weight:800;color:{C_PERF};"
+              "text-transform:uppercase;letter-spacing:.04em;"
+              "margin:8px 0 4px;'>Secondary performance</div>"
+            + grid_open
+            + cell("Capped 9", "capped9_label", C_PERF)
+            + cell("Literacy", "literacy_label", C_PERF)
+            + cell("Numeracy", "numeracy_label", C_PERF)
+            + cell("Science", "science_label", C_PERF)
+            + "</div>"
+            + f"<div style='margin-top:8px;font-size:10px;color:{C_MUTED};"
+              "line-height:1.35;'>{address} &mdash; {postcode}</div>"
+            "</div>"
+        ),
+        "style": {
+            "backgroundColor": "transparent",
+            "color": "#0f172a",
+            "boxShadow": "none",
+            "padding": "0",
+            "zIndex": "9999",
+        },
+    }
 
-    for _, r in chart_df.iterrows():
-        dep_val = str(r.get("deprivation", "unknown"))
-        marker_colour = colour_lookup.get(dep_val, "#94a3b8")
-        school_name = escape(clean_text_value(r.get("school", "Unknown school")))
-        local_authority = escape(clean_text_value(r.get("local_authority", "N/A")))
-        school_type = escape(clean_text_value(r.get("school_type", "N/A")))
-        gender_mix = escape(clean_text_value(r.get("gender_mix", "N/A")))
-        language_medium = escape(clean_text_value(r.get("language_medium", "N/A")))
-        address = escape(clean_text_value(r.get("address", "N/A")))
-        postcode = escape(clean_text_value(r.get("postcode", "N/A")))
-        popup_html = f"""
-        <div style="font-family:Segoe UI,Arial,sans-serif;width:310px;color:#111827;">
-          <div style="background:linear-gradient(135deg,#ff4f79,#ff8a00);
-                      color:white;border-radius:16px 16px 10px 10px;
-                      padding:14px 15px;margin:-1px -1px 12px -1px;">
-            <div style="font-size:18px;font-weight:900;line-height:1.2;">{school_name}</div>
-            <div style="font-size:12px;opacity:.95;margin-top:4px;">{local_authority}</div>
-          </div>
-          <div style="font-size:12px;color:#475569;margin-bottom:10px;">
-            <b>Type:</b> {school_type}<br>
-            <b>Language:</b> {language_medium}<br>
-            <b>Gender:</b> {gender_mix}
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
-            {card_row("Deprivation", r.get("deprivation_label", "N/A"))}
-            {card_row("WIMD decile", r.get("wimd_label", "N/A"))}
-            {card_row("FSM", r.get("fsm_label", "N/A"))}
-            {card_row("Attendance", r.get("attendance_label", "N/A"))}
-            {card_row("Pupils", r.get("pupils_label", "N/A"))}
-            {card_row("PTR", r.get("ptr_label", "N/A"))}
-            {card_row("Budget / pupil", r.get("budget_label", "N/A"))}
-            {card_row("Transport", r.get("nearest_stop_label", "N/A"))}
-          </div>
-          <div style="margin-top:11px;padding-top:10px;border-top:1px solid #e5e7eb;">
-            <div style="font-size:12px;font-weight:900;color:#334155;margin-bottom:7px;">
-              Secondary performance
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
-              {card_row("Capped 9", r.get("capped9_label", "N/A"))}
-              {card_row("Literacy", r.get("literacy_label", "N/A"))}
-              {card_row("Numeracy", r.get("numeracy_label", "N/A"))}
-              {card_row("Science", r.get("science_label", "N/A"))}
-              {card_row("Welsh Bac", r.get("welsh_bacc_label", "N/A"))}
-            </div>
-          </div>
-          <div style="margin-top:11px;font-size:11px;line-height:1.35;color:#64748b;">
-            <b>Address:</b> {address}<br>
-            <b>Postcode:</b> {postcode}
-          </div>
-        </div>
-        """
-        folium.CircleMarker(
-            location=[float(r["latitude"]), float(r["longitude"])],
-            radius=8 if focused else 5.5,
-            color="#ffffff",
-            weight=1.6,
-            fill=True,
-            fill_color=marker_colour,
-            fill_opacity=0.86,
-            tooltip=folium.Tooltip(str(r.get("school", "")), sticky=True),
-            popup=folium.Popup(popup_html, max_width=350),
-        ).add_to(m)
+    deck = pdk.Deck(
+        layers=[pin_layer],
+        initial_view_state=view_state,
+        map_style="light" if show_basemap else None,
+        tooltip=tooltip,
+        # Light canvas instead of the deck.gl default black background.
+        parameters={"clearColor": [0.972, 0.980, 0.992, 1]},
+    )
+    st.pydeck_chart(deck, use_container_width=True)
 
-    legend_html = """
-    <div style="
-      position: fixed; bottom: 24px; left: 24px; z-index: 9999;
-      background: rgba(255,255,255,.94); border: 1px solid #d1d5db;
-      border-radius: 12px; padding: 10px 13px; color: #1f2937;
-      font-family: Segoe UI, Arial, sans-serif; font-size: 13px;
-      box-shadow: 0 6px 18px rgba(15,23,42,.18);">
-      <div style="font-weight:900;margin-bottom:6px;">Deprivation</div>
-      <div><span style="color:#ff4f79;font-size:18px;">●</span> High</div>
-      <div><span style="color:#ff8a00;font-size:18px;">●</span> Medium</div>
-      <div><span style="color:#20c6d7;font-size:18px;">●</span> Low</div>
-      <div><span style="color:#94a3b8;font-size:18px;">●</span> Unknown</div>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(legend_html))
-    components.html(m._repr_html_(), height=790, scrolling=False)
+    st.markdown(
+        "<div class='map-note'>"
+        "<b>Deprivation legend:</b> "
+        "<span style='color:#ff4f79;font-size:16px;'>&#9679;</span> High &nbsp; "
+        "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
+        "<span style='color:#20c6d7;font-size:16px;'>&#9679;</span> Low &nbsp; "
+        "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     if selected_school[0] != "All" and not chart_df.empty:
         r = chart_df.iloc[0]
