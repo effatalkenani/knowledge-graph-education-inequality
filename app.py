@@ -1589,15 +1589,6 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     )
 
     focused = selected_school[0] != "All"
-    show_basemap = st.checkbox(
-        "Show background map tiles",
-        value=False,
-        help=(
-            "Tiles are loaded from an external service. Leave this off if the "
-            "network blocks them; the pins do not depend on it."
-        ),
-        key="map_basemap_toggle",
-    )
 
     icon_cols = [
         "longitude", "latitude", "icon", "school", "local_authority",
@@ -1705,7 +1696,10 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     deck = pdk.Deck(
         layers=[pin_layer],
         initial_view_state=view_state,
-        map_style="light" if show_basemap else None,
+        # No external basemap: tiles are fetched from a third-party service
+        # and are blocked on this network. The pins carry the information, and
+        # the light clearColor below keeps the canvas readable without them.
+        map_style=None,
         tooltip=tooltip,
         # Light canvas instead of the deck.gl default black background.
         parameters={"clearColor": [0.972, 0.980, 0.992, 1]},
