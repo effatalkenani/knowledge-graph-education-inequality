@@ -13,11 +13,13 @@ Task 6  Cross-hierarchy seam
 Task 7  Dissertation writing (not implemented in the app)
 """
 
+import base64
 import json
 from html import escape
 from typing import Any, Dict, List, Tuple
 
 import folium
+import pydeck as pdk
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -161,10 +163,19 @@ div[data-testid="stSidebar"] button[kind="primary"] {background:linear-gradient(
     unsafe_allow_html=True,
 )
 
-DEFAULT_URI = "neo4j://127.0.0.1:7687"
-DEFAULT_USER = "neo4j"
-DEFAULT_PASSWORD = "UTHT5389utht@"
-DEFAULT_DATABASE = "wales-education-kg"
+# Try to load from Streamlit Secrets first (for Cloud deployment)
+if "neo4j" in st.secrets:
+    DEFAULT_URI = st.secrets.neo4j.uri
+    DEFAULT_USER = st.secrets.neo4j.user
+    DEFAULT_PASSWORD = st.secrets.neo4j.password
+    DEFAULT_DATABASE = st.secrets.neo4j.get("database", "wales-education-kg")
+else:
+    # Fallback to local defaults
+    DEFAULT_URI = "neo4j://127.0.0.1:7687"
+    DEFAULT_USER = "neo4j"
+    DEFAULT_PASSWORD = "UTHT5389utht@"
+    DEFAULT_DATABASE = "wales-education-kg"
+
 
 
 # =============================================================================
@@ -331,6 +342,415 @@ TASK_SOLUTIONS = {
 # 4. SCQ5 and SCQ6 remain native administrative-hierarchy comparisons only.
 #    They are not counted as independent Education Use Case answers because
 #    Ward-LSOA containment-style questions were reclassified to SCQ7/SCQ8.
+
+# =============================================================================
+# BILINGUAL UI LABELS (English / Cymraeg)
+# =============================================================================
+# Coverage: sidebar controls, the SCQ7/SCQ8 direction toggle, and the labels
+# of the Cross-hierarchy and SCQ Demonstrator tabs. Extend by adding keys to
+# both dictionaries below; t() falls back to English for any missing key.
+UI_TEXT: Dict[str, Dict[str, str]] = {
+    "English": {
+        "language": "Language / Iaith",
+        "dark_theme": "Dark theme",
+        "start_from": "Start comparison from",
+        "dir_lsoa": "LSOA \u2192 results are Wards / Communities",
+        "dir_admin": "Ward / Community \u2192 results are LSOAs",
+        "direction_caption": (
+            "The stored INTERSECTS relation is symmetric: both directions "
+            "read the same facts, only the fixed side changes."
+        ),
+        "scq7_select_lsoa": "Select LSOA \u2014 returns intersecting wards/communities",
+        "scq8_select_lsoa": "Select LSOA \u2014 returns nearby wards/communities",
+        "scq7_select_admin": "Select Ward or Community \u2014 returns intersecting LSOAs",
+        "scq8_select_admin": "Select Ward or Community \u2014 returns nearby LSOAs",
+        "scq7_metric_admin": "Intersecting administrative units found",
+        "scq8_metric_admin": "Nearby administrative units found",
+        "scq7_metric_lsoa": "Intersecting LSOAs found",
+        "scq8_metric_lsoa": "Nearby LSOAs found",
+        "scq8_caption": (
+            "Units that directly intersect the selected LSOA are "
+            "excluded: near requires disjoint regions "
+            "(IJGI 2024 definition)."
+        ),
+        "scq8_caption_admin": (
+            "LSOAs that the selected unit directly intersects are "
+            "excluded: near requires disjoint regions "
+            "(IJGI 2024 definition)."
+        ),
+        "select_scq": "Select SCQ",
+        "result_limit": "Result limit",
+        "run_query": "Run SCQ query",
+        "cypher_used": "Cypher used",
+        "parameters": "Parameters",
+        "admin_unit_label": "Administrative unit",
+        "lsoa_label": "LSOA",
+        "no_results_7": "No directly intersecting results were returned.",
+        "no_results_8": "No cross-hierarchy proximity results were returned.",
+        "tab_answer": "Answer \u2014 official result",
+        "tab_evidence": "Evidence \u2014 pairs",
+        "metric_pairs": "Evidence pairs found",
+        "lsoa_a": "LSOA A",
+        "lsoa_b": "LSOA B",
+        "max_hops": "Maximum hops",
+        "max_hops_note": (
+            "Tractability bound chosen for this implementation \u2014 "
+            "the paper sets no numeric limit."
+        ),
+        "scq3_interp": (
+            "Between is implemented as bounded cycle-free simple paths "
+            "over LSOA_TOUCHES (a documented relaxation); 'between "
+            "clusters' has no formal definition here, so the "
+            "education-policy fit is reported as weak / optional."
+        ),
+        "no_path_note": (
+            "No cycle-free path was found within the chosen hop bound "
+            "\u2014 try two closer LSOAs."
+        ),
+        "guaranteed_example": "Guaranteed example:",
+        "results_h": "Results",
+        "relation_used": "Relation used",
+        "provenance_h": "Provenance",
+        "task_link": "Task link",
+        "implemented_answer": "Implemented answer",
+        "eval_status": "Evaluation status",
+        "evidence_h": "Evidence",
+        "eval_interp": "Evaluation interpretation",
+        "show_query": "Show Cypher query",
+        "q_SCQ1": "Which neighbouring LSOAs directly border the selected LSOA, and what school FSM / attendance / performance evidence is visible in those neighbouring areas?",
+        "q_SCQ2": "Which LSOAs are qualitatively near the selected LSOA, and do nearby school indicators show FSM / attendance / secondary-performance pressure?",
+        "q_SCQ3": "Which LSOAs lie between two selected LSOAs?",
+        "q_SCQ4": "Which non-adjacent LSOAs show school FSM / attendance / secondary-performance pressure compared with the selected LSOA?",
+        "q_SCQ5": "Which administrative parent units contain the selected administrative unit?",
+        "q_SCQ6": "Which administrative units are contained inside the selected administrative unit?",
+        "q_SCQ7": "Which wards or communities intersect the selected LSOA, and what school FSM / attendance / performance evidence is located in that LSOA?",
+        "q_SCQ8": "Which wards or communities intersect LSOAs that are graph-near the selected LSOA, and what school indicators are visible in those nearby LSOAs?",
+    },
+    "Cymraeg": {
+        "language": "Language / Iaith",
+        "dark_theme": "Thema dywyll",
+        "start_from": "Dechrau'r gymhariaeth o",
+        "dir_lsoa": "LSOA \u2192 y canlyniadau yw Wardiau / Cymunedau",
+        "dir_admin": "Ward / Cymuned \u2192 y canlyniadau yw LSOAs",
+        "direction_caption": (
+            "Mae'r berthynas INTERSECTS sydd wedi'i storio yn gymesur: "
+            "mae'r ddau gyfeiriad yn darllen yr un ffeithiau."
+        ),
+        "scq7_select_lsoa": "Dewiswch LSOA \u2014 yn dychwelyd wardiau/cymunedau sy'n croestorri",
+        "scq8_select_lsoa": "Dewiswch LSOA \u2014 yn dychwelyd wardiau/cymunedau cyfagos",
+        "scq7_select_admin": "Dewiswch Ward neu Gymuned \u2014 yn dychwelyd LSOAs sy'n croestorri",
+        "scq8_select_admin": "Dewiswch Ward neu Gymuned \u2014 yn dychwelyd LSOAs cyfagos",
+        "scq7_metric_admin": "Unedau gweinyddol sy'n croestorri a ganfuwyd",
+        "scq8_metric_admin": "Unedau gweinyddol cyfagos a ganfuwyd",
+        "scq7_metric_lsoa": "LSOAs sy'n croestorri a ganfuwyd",
+        "scq8_metric_lsoa": "LSOAs cyfagos a ganfuwyd",
+        "scq8_caption": (
+            "Mae unedau sy'n croestorri'n uniongyrchol \u00e2'r LSOA a "
+            "ddewiswyd wedi'u heithrio: mae 'agos' yn gofyn am ranbarthau "
+            "ar wah\u00e2n (diffiniad IJGI 2024)."
+        ),
+        "scq8_caption_admin": (
+            "Mae LSOAs y mae'r uned a ddewiswyd yn croestorri \u00e2 nhw'n "
+            "uniongyrchol wedi'u heithrio: mae 'agos' yn gofyn am "
+            "ranbarthau ar wah\u00e2n (diffiniad IJGI 2024)."
+        ),
+        "select_scq": "Dewiswch SCQ",
+        "result_limit": "Terfyn canlyniadau",
+        "run_query": "Rhedeg ymholiad SCQ",
+        "cypher_used": "Cypher a ddefnyddiwyd",
+        "parameters": "Paramedrau",
+        "admin_unit_label": "Uned weinyddol",
+        "lsoa_label": "LSOA",
+        "no_results_7": "Ni ddychwelwyd unrhyw ganlyniadau croestorri uniongyrchol.",
+        "no_results_8": "Ni ddychwelwyd unrhyw ganlyniadau agosrwydd traws-hierarchaeth.",
+        "tab_answer": "Ateb \u2014 y canlyniad swyddogol",
+        "tab_evidence": "Tystiolaeth \u2014 parau",
+        "metric_pairs": "Parau tystiolaeth a ganfuwyd",
+        "lsoa_a": "LSOA A",
+        "lsoa_b": "LSOA B",
+        "max_hops": "Uchafswm naid",
+        "max_hops_note": (
+            "Ffin hydrinedd a ddewiswyd ar gyfer y gweithrediad hwn \u2014 "
+            "nid yw'r papur yn gosod terfyn rhifiadol."
+        ),
+        "scq3_interp": (
+            "Gweithredir 'rhwng' fel llwybrau syml di-gylch wedi'u ffinio "
+            "dros LSOA_TOUCHES (llacio wedi'i ddogfennu); nid oes "
+            "diffiniad ffurfiol o 'rhwng clystyrau' yma, felly adroddir "
+            "bod y ffit polisi addysg yn wan / dewisol."
+        ),
+        "no_path_note": (
+            "Ni chanfuwyd llwybr di-gylch o fewn y ffin naid a ddewiswyd "
+            "\u2014 rhowch gynnig ar ddwy LSOA agosach."
+        ),
+        "guaranteed_example": "Enghraifft warantedig:",
+        "results_h": "Canlyniadau",
+        "relation_used": "Y berthynas a ddefnyddiwyd",
+        "provenance_h": "Tarddiad",
+        "task_link": "Cyswllt tasg",
+        "implemented_answer": "Ateb a weithredwyd",
+        "eval_status": "Statws gwerthuso",
+        "evidence_h": "Tystiolaeth",
+        "eval_interp": "Dehongliad gwerthuso",
+        "show_query": "Dangos ymholiad Cypher",
+        "q_SCQ1": "Pa LSOAs cyfagos sy'n ffinio'n uniongyrchol \u00e2'r LSOA a ddewiswyd, a pha dystiolaeth ysgolion (FSM / presenoldeb / perfformiad) sydd i'w gweld yn yr ardaloedd cyfagos hynny?",
+        "q_SCQ2": "Pa LSOAs sy'n ansoddol agos at yr LSOA a ddewiswyd, ac a yw dangosyddion ysgolion cyfagos yn dangos pwysau FSM / presenoldeb / perfformiad uwchradd?",
+        "q_SCQ3": "Pa LSOAs sy'n gorwedd rhwng dwy LSOA a ddewiswyd?",
+        "q_SCQ4": "Pa LSOAs nad ydynt yn gyfagos sy'n dangos pwysau FSM / presenoldeb / perfformiad uwchradd o'u cymharu \u00e2'r LSOA a ddewiswyd?",
+        "q_SCQ5": "Pa unedau gweinyddol rhiant sy'n cynnwys yr uned weinyddol a ddewiswyd?",
+        "q_SCQ6": "Pa unedau gweinyddol sydd wedi'u cynnwys y tu mewn i'r uned weinyddol a ddewiswyd?",
+        "q_SCQ7": "Pa wardiau neu gymunedau sy'n croestorri \u00e2'r LSOA a ddewiswyd, a pha dystiolaeth ysgolion sydd wedi'i lleoli yn yr LSOA honno?",
+        "q_SCQ8": "Pa wardiau neu gymunedau sy'n croestorri ag LSOAs sy'n graff-agos at yr LSOA a ddewiswyd, a pha ddangosyddion ysgolion sydd i'w gweld yn yr LSOAs cyfagos hynny?",
+    },
+}
+
+def t(key: str) -> str:
+    """Return the UI label for the active language, falling back to English."""
+    lang = st.session_state.get("ui_lang", "English")
+    table = UI_TEXT.get(lang, UI_TEXT["English"])
+    return table.get(key, UI_TEXT["English"].get(key, key))
+
+def scq_question(scq_key: str, meta: Dict[str, Any]) -> str:
+    """Return the SCQ question in the active language."""
+    if st.session_state.get("ui_lang") == "Cymraeg":
+        return UI_TEXT["Cymraeg"].get(f"q_{scq_key}", meta["question"])
+    return meta["question"]
+
+# Segmented-pill styling shared by the language switch and direction toggle.
+_SEGMENTED_CSS = """
+<style>
+div[data-testid="stRadio"] > div[role="radiogroup"]{
+    display:inline-flex; gap:4px;
+    background:rgba(120,113,108,.14);
+    border:1px solid rgba(120,113,108,.20);
+    border-radius:999px; padding:4px 6px;
+}
+div[data-testid="stRadio"] label{
+    border-radius:999px; padding:.28rem 1rem; margin:0 !important;
+    transition:background .25s ease, box-shadow .25s ease;
+    cursor:pointer;
+}
+div[data-testid="stRadio"] label > div:first-child{ display:none; }
+div[data-testid="stRadio"] label:has(input:checked){
+    background:linear-gradient(135deg,#9a3412,#c2410c);
+    box-shadow:0 2px 8px rgba(154,52,18,.35);
+}
+div[data-testid="stRadio"] label:has(input:checked) p{
+    color:#ffffff !important; font-weight:700;
+}
+</style>
+"""
+
+def inject_segmented_css() -> None:
+    st.markdown(_SEGMENTED_CSS, unsafe_allow_html=True)
+
+def direction_toggle(widget_key: str) -> str:
+    """
+    Sleek two-option segmented control for SCQ7/SCQ8.
+    Returns "lsoa" (default) or "admin". Both directions read the same
+    stored INTERSECTS facts; only the fixed side of the pair changes.
+    """
+    inject_segmented_css()
+    return st.radio(
+        t("start_from"),
+        options=["lsoa", "admin"],
+        format_func=lambda v: t("dir_lsoa") if v == "lsoa" else t("dir_admin"),
+        horizontal=True,
+        key=widget_key,
+    )
+
+# =============================================================================
+# CROSS-HIERARCHY REVERSED QUERIES (single source of truth for BOTH tabs)
+# =============================================================================
+SCQ7_REVERSE_CYPHER = """
+MATCH (admin:AdminUnit {uri:$admin})-[:INTERSECTS]->(l:LSOA)
+OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
+WITH
+    admin,
+    l,
+    count(DISTINCT s) AS school_count,
+    avg(s.fsm_pct) AS avg_fsm_pct,
+    avg(s.attendance_pct) AS avg_attendance_pct,
+    avg(s.capped9_score) AS avg_capped9_score
+RETURN
+    l.code AS lsoa_code,
+    coalesce(l.name, l.LSOA_Name, l.code) AS lsoa_name,
+    l.wimd_decile AS wimd_decile,
+    l.deprivation AS deprivation,
+    coalesce(admin.name, admin.uri) AS administrative_unit,
+    admin.type AS administrative_type,
+    school_count,
+    round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
+    round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
+    round(avg_capped9_score, 1) AS avg_secondary_capped9_score
+ORDER BY lsoa_code
+LIMIT $limit
+"""
+
+SCQ8_REVERSE_CYPHER = """
+MATCH (admin:AdminUnit {uri:$admin})-[:INTERSECTS]->(base:LSOA)
+MATCH (base)-[:GRAPH_NEAR]-(near_lsoa:LSOA)
+// Near requires disjoint regions (IJGI 2024 definition):
+// exclude LSOAs that the selected unit directly intersects.
+WHERE NOT (admin)-[:INTERSECTS]->(near_lsoa)
+OPTIONAL MATCH (near_lsoa)<-[:LOCATED_IN]-(s:School)
+WITH
+    near_lsoa,
+    collect(DISTINCT base.code) AS via_base_lsoas,
+    count(DISTINCT s) AS school_count,
+    avg(s.fsm_pct) AS avg_fsm_pct,
+    avg(s.attendance_pct) AS avg_attendance_pct,
+    avg(s.capped9_score) AS avg_capped9_score
+RETURN
+    near_lsoa.code AS lsoa_code,
+    coalesce(near_lsoa.name, near_lsoa.LSOA_Name, near_lsoa.code)
+        AS lsoa_name,
+    near_lsoa.wimd_decile AS wimd_decile,
+    near_lsoa.deprivation AS deprivation,
+    via_base_lsoas,
+    size(via_base_lsoas) AS supporting_lsoas,
+    school_count,
+    round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
+    round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
+    round(avg_capped9_score, 1) AS avg_secondary_capped9_score
+ORDER BY avg_school_fsm_pct DESC, lsoa_code
+LIMIT $limit
+"""
+
+# SCQ3: bounded cycle-free simple paths. __MAXHOPS__ is substituted at
+# runtime from the UI control; the paper sets no numeric bound, so the
+# bound is documented as a tractability parameter.
+SCQ3_CYPHER_TEMPLATE = """
+MATCH
+    (a:LSOA {code:$lsoa_a}),
+    (b:LSOA {code:$lsoa_b})
+
+MATCH p = (a)-[:LSOA_TOUCHES*2..__MAXHOPS__]-(b)
+
+WHERE all(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
+
+RETURN
+    length(p) AS hops,
+    [
+        n IN nodes(p)[1..-1] |
+        {
+            code: n.code,
+            name: coalesce(
+                n.name,
+                n.LSOA_Name,
+                n.code
+            ),
+            deprivation: n.deprivation,
+            wimd_decile: n.wimd_decile
+        }
+    ] AS between_lsoas
+ORDER BY hops
+LIMIT $limit
+"""
+
+# SCQ8 official ANSWER (grouped per administrative unit) and its
+# pair-level EVIDENCE, in both directions. Single source of truth for
+# the Cross-hierarchy page AND the SCQ Demonstrator.
+SCQ8_ANSWER_CYPHER = """
+MATCH (x:LSOA {code:$lsoa})
+    -[:GRAPH_NEAR]-(near_lsoa:LSOA)
+
+MATCH (admin:AdminUnit)-[:INTERSECTS]->(near_lsoa)
+WHERE admin.type IN ['Ward', 'Community']
+  // Near requires disjoint regions (IJGI 2024 definition):
+  // exclude units that directly intersect the selected LSOA.
+  AND NOT (admin)-[:INTERSECTS]->(x)
+OPTIONAL MATCH (near_lsoa)<-[:LOCATED_IN]-(s:School)
+
+WITH
+    admin,
+    collect(DISTINCT near_lsoa.code) AS via_near_lsoas,
+    collect(DISTINCT near_lsoa.name) AS via_near_lsoa_names,
+    count(DISTINCT s) AS school_count,
+    avg(s.fsm_pct) AS avg_fsm_pct,
+    avg(s.attendance_pct) AS avg_attendance_pct,
+    avg(s.capped9_score) AS avg_capped9_score
+
+RETURN
+    coalesce(admin.name, admin.uri) AS administrative_unit,
+    admin.type AS administrative_type,
+    admin.uri AS administrative_uri,
+    via_near_lsoas,
+    via_near_lsoa_names,
+    size(via_near_lsoas) AS supporting_lsoas,
+    school_count,
+    round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
+    round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
+    round(avg_capped9_score, 1) AS avg_secondary_capped9_score
+
+ORDER BY avg_school_fsm_pct DESC, administrative_type, administrative_unit
+LIMIT $limit
+"""
+
+SCQ8_EVIDENCE_CYPHER = """
+MATCH (x:LSOA {code:$lsoa})-[:GRAPH_NEAR]-(near_lsoa:LSOA)
+MATCH (admin:AdminUnit)-[:INTERSECTS]->(near_lsoa)
+WHERE admin.type IN ['Ward', 'Community']
+  // Near requires disjoint regions (IJGI 2024 definition):
+  // exclude units that directly intersect the selected LSOA.
+  AND NOT (admin)-[:INTERSECTS]->(x)
+OPTIONAL MATCH (near_lsoa)<-[:LOCATED_IN]-(s:School)
+WITH
+    near_lsoa,
+    admin,
+    count(DISTINCT s) AS school_count,
+    avg(s.fsm_pct) AS avg_fsm_pct,
+    avg(s.attendance_pct) AS avg_attendance_pct,
+    avg(s.capped9_score) AS avg_capped9_score,
+    count(CASE WHEN s.capped9_score IS NOT NULL THEN s END)
+        AS secondary_performance_school_count
+RETURN DISTINCT
+    coalesce(admin.name, admin.uri) AS administrative_unit,
+    admin.type AS administrative_type,
+    near_lsoa.code AS nearby_lsoa_code,
+    coalesce(near_lsoa.name, near_lsoa.LSOA_Name, near_lsoa.code)
+        AS nearby_lsoa_name,
+    near_lsoa.wimd_decile AS nearby_wimd_decile,
+    near_lsoa.deprivation AS nearby_deprivation,
+    school_count,
+    round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
+    round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
+    round(avg_capped9_score, 1) AS avg_secondary_capped9_score,
+    secondary_performance_school_count
+ORDER BY avg_school_fsm_pct DESC, administrative_type, administrative_unit
+LIMIT $limit
+"""
+
+SCQ8_REVERSE_EVIDENCE_CYPHER = """
+MATCH (admin:AdminUnit {uri:$admin})-[:INTERSECTS]->(base:LSOA)
+MATCH (base)-[:GRAPH_NEAR]-(near_lsoa:LSOA)
+// Near requires disjoint regions (IJGI 2024 definition):
+// exclude LSOAs that the selected unit directly intersects.
+WHERE NOT (admin)-[:INTERSECTS]->(near_lsoa)
+OPTIONAL MATCH (near_lsoa)<-[:LOCATED_IN]-(s:School)
+WITH
+    base,
+    near_lsoa,
+    count(DISTINCT s) AS school_count,
+    avg(s.fsm_pct) AS avg_fsm_pct,
+    avg(s.attendance_pct) AS avg_attendance_pct,
+    avg(s.capped9_score) AS avg_capped9_score
+RETURN DISTINCT
+    near_lsoa.code AS lsoa_code,
+    coalesce(near_lsoa.name, near_lsoa.LSOA_Name, near_lsoa.code)
+        AS lsoa_name,
+    near_lsoa.wimd_decile AS wimd_decile,
+    near_lsoa.deprivation AS deprivation,
+    base.code AS via_lsoa_code,
+    coalesce(base.name, base.LSOA_Name, base.code) AS via_lsoa_name,
+    school_count,
+    round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
+    round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
+    round(avg_capped9_score, 1) AS avg_secondary_capped9_score
+ORDER BY avg_school_fsm_pct DESC, lsoa_code
+LIMIT $limit
+"""
+
 SCQ_META = {
     "SCQ1": {
         "label": "SCQ1 — LSOA borders / touches",
@@ -445,33 +865,7 @@ LIMIT $limit
             "Demonstrator reasoning pattern: Implemented. "
             "Education-policy fit: Weak / optional."
         ),
-        "cypher": """
-MATCH
-    (a:LSOA {code:$lsoa_a}),
-    (b:LSOA {code:$lsoa_b})
-
-MATCH p = (a)-[:LSOA_TOUCHES*2..6]-(b)
-
-WHERE all(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
-
-RETURN
-    length(p) AS hops,
-    [
-        n IN nodes(p)[1..-1] |
-        {
-            code: n.code,
-            name: coalesce(
-                n.name,
-                n.LSOA_Name,
-                n.code
-            ),
-            deprivation: n.deprivation,
-            wimd_decile: n.wimd_decile
-        }
-    ] AS between_lsoas
-ORDER BY hops
-LIMIT $limit
-""",
+        "cypher": SCQ3_CYPHER_TEMPLATE.replace("__MAXHOPS__", "6"),
     },
 
     "SCQ4": {
@@ -615,6 +1009,8 @@ LIMIT $limit
         "relation": "INTERSECTS",
         "provenance": "Geometry-origin",
         "param_type": "lsoa_intersects",
+        "param_type_reverse": "admin_intersects",
+        "cypher_reverse": SCQ7_REVERSE_CYPHER,
         "result_label": "Intersecting administrative units found",
         "evaluation_note": (
             "Demonstrator answer: Yes. "
@@ -668,41 +1064,16 @@ LIMIT $limit
         "relation": "INTERSECTS + GRAPH_NEAR",
         "provenance": "Geometry-origin + Derived",
         "param_type": "lsoa_near_intersects",
+        "param_type_reverse": "admin_intersects",
+        "cypher_reverse": SCQ8_REVERSE_CYPHER,
         "result_label": "Nearby cross-hierarchy units found",
         "evaluation_note": (
             "Demonstrator answer: Yes. "
             "Native education-use-case model answer: No."
         ),
-        "cypher": """
-MATCH (x:LSOA {code:$lsoa})-[:GRAPH_NEAR]-(near_lsoa:LSOA)
-MATCH (admin:AdminUnit)-[:INTERSECTS]->(near_lsoa)
-WHERE admin.type IN ['Ward', 'Community']
-OPTIONAL MATCH (near_lsoa)<-[:LOCATED_IN]-(s:School)
-WITH
-    near_lsoa,
-    admin,
-    count(DISTINCT s) AS school_count,
-    avg(s.fsm_pct) AS avg_fsm_pct,
-    avg(s.attendance_pct) AS avg_attendance_pct,
-    avg(s.capped9_score) AS avg_capped9_score,
-    count(CASE WHEN s.capped9_score IS NOT NULL THEN s END)
-        AS secondary_performance_school_count
-RETURN DISTINCT
-    coalesce(admin.name, admin.uri) AS administrative_unit,
-    admin.type AS administrative_type,
-    near_lsoa.code AS nearby_lsoa_code,
-    coalesce(near_lsoa.name, near_lsoa.LSOA_Name, near_lsoa.code)
-        AS nearby_lsoa_name,
-    near_lsoa.wimd_decile AS nearby_wimd_decile,
-    near_lsoa.deprivation AS nearby_deprivation,
-    school_count,
-    round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
-    round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
-    round(avg_capped9_score, 1) AS avg_secondary_capped9_score,
-    secondary_performance_school_count
-ORDER BY avg_school_fsm_pct DESC, administrative_type, administrative_unit
-LIMIT $limit
-""",
+        "cypher": SCQ8_ANSWER_CYPHER,
+        "cypher_evidence": SCQ8_EVIDENCE_CYPHER,
+        "cypher_reverse_evidence": SCQ8_REVERSE_EVIDENCE_CYPHER,
     },
 }
 
@@ -784,8 +1155,17 @@ def sidebar_config() -> Dict[str, str]:
       <div style="font-size:.82rem;color:#64748b;margin-top:.25rem;">Task-aligned demonstrator</div>
     </div>
     """, unsafe_allow_html=True)
+    with st.sidebar:
+        inject_segmented_css()
+        st.radio(
+            t("language"),
+            options=["English", "Cymraeg"],
+            horizontal=True,
+            key="ui_lang",
+        )
+
     cfg["dark_theme"] = st.sidebar.toggle(
-        "Dark theme",
+        t("dark_theme"),
         value=st.session_state.get("dark_theme", False),
         help="Switch the dashboard background and map tiles between light and deep-blue themes.",
     )
@@ -1120,19 +1500,29 @@ div[data-testid="stCodeBlock"] code {{
         unsafe_allow_html=True,
     )
 
+# PERFORMANCE NOTE
+# The previous version opened a brand-new Neo4j driver for every single query
+# and closed it again in a finally block. Each page render fires several
+# queries, so the app paid a full connection handshake many times per click,
+# which is the main reason the interface felt sluggish. The driver is designed
+# to be created once and reused, so it is cached as a Streamlit resource and
+# the per-query close is removed. Sessions are still opened and closed per
+# query, which is the correct unit of work.
+@st.cache_resource(show_spinner=False)
+def _cached_driver(uri: str, user: str, password: str):
+    return GraphDatabase.driver(uri, auth=(user, password))
+
+
 def get_driver(cfg: Dict[str, str]):
-    return GraphDatabase.driver(cfg["uri"], auth=(cfg["user"], cfg["password"]))
+    return _cached_driver(cfg["uri"], cfg["user"], cfg["password"])
 
 
 def run_cypher(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None) -> pd.DataFrame:
     params = params or {}
     driver = get_driver(cfg)
-    try:
-        with driver.session(database=cfg["database"]) as session:
-            rows = [dict(r) for r in session.run(cypher, params)]
-        return pd.DataFrame(rows)
-    finally:
-        driver.close()
+    with driver.session(database=cfg["database"]) as session:
+        rows = [dict(r) for r in session.run(cypher, params)]
+    return pd.DataFrame(rows)
 
 
 def scalar(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None, default: Any = 0) -> Any:
@@ -1269,6 +1659,20 @@ def admin_options(
     Return administrative units that can answer SCQ5 or SCQ6.
     """
 
+    if mode == "admin_intersects":
+        query = """
+        MATCH (a:AdminUnit)
+        WHERE a.type IN ['Ward', 'Community']
+          AND EXISTS {
+              MATCH (a)-[:INTERSECTS]->(:LSOA)
+          }
+        RETURN DISTINCT
+            a.uri AS value,
+            coalesce(a.name, a.uri) + ' | ' + a.type AS label
+        ORDER BY label
+        """
+        return safe_options(cfg, query)
+
     if mode == "admin_child":
         relationship_filter = """
         WHERE (a)-[:WITHIN]->(:AdminUnit)
@@ -1294,7 +1698,6 @@ def admin_options(
         name + coalesce(' | ' + type, '') AS label
 
     ORDER BY label
-    LIMIT 500
     """
 
     return safe_options(cfg, query)
@@ -1314,7 +1717,6 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
            b.code AS b_code,
            b.code + ' | ' + coalesce(b.name, b.LSOA_Name, '') AS b_label
     ORDER BY a_code, b_code
-    LIMIT 200
     """)
     if df.empty:
         return []
@@ -1380,7 +1782,32 @@ def provenance_badge(provenance: str) -> str:
     return f"<span class='badge {cls}'>{provenance}</span>"
 
 
+def _readable_regions(value: Any) -> Any:
+    """Flatten a list of region dicts into a readable arrow-joined string."""
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        parts = []
+        for item in value:
+            name = item.get("name") or item.get("code") or "?"
+            code = item.get("code", "")
+            decile = item.get("wimd_decile")
+            label = f"{name} [{code}]"
+            if decile is not None:
+                label = f"{label} (D{decile})"
+            parts.append(label)
+        return "  \u2192  ".join(parts)
+    return value
+
+
 def display_df(df: pd.DataFrame) -> None:
+    if not df.empty:
+        df = df.copy()
+        for col in df.columns:
+            if df[col].map(
+                lambda v: isinstance(v, list)
+                and len(v) > 0
+                and isinstance(v[0], dict)
+            ).any():
+                df[col] = df[col].map(_readable_regions)
     if df.empty:
         st.info("No rows returned for the selected parameter. Try another LSOA/AdminUnit from the dropdown.")
     else:
@@ -1427,8 +1854,103 @@ def school_outline_points(df: pd.DataFrame, bins: int = 34) -> List[Dict[str, fl
     return outline
 
 
+# ---------------------------------------------------------------------------
+# Map pins
+# ---------------------------------------------------------------------------
+# REJECTED ALTERNATIVE — icon atlas
+# The obvious optimisation is a single sprite sheet passed as the layer's
+# iconAtlas prop, with one short key per row. It was implemented and had to be
+# reverted: Streamlit passes layer props through a deck.gl expression parser,
+# which tries to evaluate the atlas string and fails on the data URI with
+# "Unexpected ':' at character 4" (the colon in "data:image/..."). Row DATA is
+# not passed through that parser, so the icon object must travel per row.
+# The four SVGs are therefore minified and built once at import time; the
+# repeated strings compress well over the websocket, and the real cause of the
+# earlier sluggishness was the per-query Neo4j driver, fixed separately above.
+#
+# Pin design: a filled teardrop with a darker outline of the same hue, and a
+# hollow white centre carrying the same darker ring, so the marker reads as a
+# real location pin. mask=False is required: a mask would flatten the outline
+# and fill the hollow centre.
+def _pin_icon(fill: str, stroke: str) -> Dict[str, Any]:
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='60' height='80' "
+        "viewBox='0 0 60 80'>"
+        "<path d='M30 4C18.4 4 9 13.4 9 25c0 15.1 21 47 21 47s21-31.9 21-47"
+        f"C51 13.4 41.6 4 30 4z' fill='{fill}' stroke='{stroke}' "
+        "stroke-width='4' stroke-linejoin='round'/>"
+        f"<circle cx='30' cy='25' r='9' fill='#fff' stroke='{stroke}' "
+        "stroke-width='3.4'/></svg>"
+    )
+    return {
+        "url": "data:image/svg+xml;base64,"
+               + base64.b64encode(svg.encode("utf-8")).decode("ascii"),
+        "width": 60,
+        "height": 80,
+        "anchorY": 80,
+        "mask": False,
+    }
+
+
+PIN_ICONS = {
+    "high_deprivation": _pin_icon("#ff4f79", "#a10f38"),
+    "medium_deprivation": _pin_icon("#ff8a00", "#a34f00"),
+    "low_deprivation": _pin_icon("#20c6d7", "#0a6b78"),
+    "unknown": _pin_icon("#94a3b8", "#475569"),
+}
+
+
+# The deck.gl tooltip is absolutely positioned inside the chart wrapper, so a
+# pin near the bottom edge would have its card clipped. Two things are needed:
+# the wrapper must be allowed to overflow, AND the chart's element container
+# must sit above the elements that follow it (legend, Map Cypher expander),
+# otherwise the escaped card renders behind them.
+PYDECK_TOOLTIP_CSS = """
+<style>
+div[data-testid="stElementContainer"]:has(div[data-testid="stDeckGlJsonChart"]) {
+  position: relative !important;
+  z-index: 9990 !important;
+}
+div[data-testid="stDeckGlJsonChart"],
+div[data-testid="stDeckGlJsonChart"] > div,
+div[data-testid="stDeckGlJsonChart"] #deckgl-wrapper,
+div[data-testid="stDeckGlJsonChart"] #view-default-view,
+div[data-testid="stDeckGlJsonChart"] canvas + div {
+  overflow: visible !important;
+}
+.deck-tooltip {
+  overflow: visible !important;
+  z-index: 9999 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  pointer-events: none !important;
+}
+</style>
+"""
+
+
 def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) -> None:
-    """Render the Wales school map with Folium and click-to-open school cards."""
+    """Render the Wales school map with pydeck (deck.gl).
+
+    Why pydeck and not Folium: pydeck ships inside Streamlit itself, so no
+    third-party JavaScript is fetched from an external CDN at render time.
+    Folium and streamlit-folium both failed silently on this machine, which
+    is the signature of a locked-down network blocking the map assets.
+
+    Design notes:
+      * Schools are drawn as location pins (IconLayer), one pin image per
+        deprivation category, each with a darker outline and hollow centre.
+      * Pin images are base64 data URIs, so no icon CDN is required either.
+      * The deck canvas is cleared to a light colour instead of the deck.gl
+        default black, so the map reads as a light dashboard surface even
+        when background tiles are switched off.
+      * No outline polygon is drawn: the approximate hull around the points
+        looked like a false administrative boundary and was removed.
+      * The hover card is laid out in two compact columns and the chart
+        wrapper is allowed to overflow, so the card is never clipped by the
+        bottom edge of the map box.
+    """
     chart_df = map_df.copy()
     dep_labels = {
         "high_deprivation": "High",
@@ -1438,15 +1960,20 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     }
     chart_df["deprivation"] = chart_df["deprivation"].fillna("unknown").astype(str)
     chart_df["deprivation_label"] = chart_df["deprivation"].map(dep_labels).fillna("Unknown")
-    chart_df["fsm_label"] = chart_df["fsm_pct"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}%"
-    )
-    chart_df["attendance_label"] = chart_df["attendance_pct"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}%"
-    )
-    chart_df["capped9_label"] = chart_df["capped9_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
+
+    def pct(v: Any) -> str:
+        return "N/A" if pd.isna(v) else f"{float(v):.1f}%"
+
+    def num(v: Any) -> str:
+        return "N/A" if pd.isna(v) else f"{float(v):.1f}"
+
+    chart_df["fsm_label"] = chart_df["fsm_pct"].apply(pct)
+    chart_df["attendance_label"] = chart_df["attendance_pct"].apply(pct)
+    chart_df["capped9_label"] = chart_df["capped9_score"].apply(num)
+    chart_df["literacy_label"] = chart_df["literacy_score"].apply(num)
+    chart_df["numeracy_label"] = chart_df["numeracy_score"].apply(num)
+    chart_df["science_label"] = chart_df["science_score"].apply(num)
+    chart_df["welsh_bacc_label"] = chart_df["welsh_bacc_score"].apply(num)
     chart_df["nearest_stop_label"] = chart_df["nearest_stop_distance_m"].apply(
         lambda v: "No stop within 800m" if pd.isna(v) else f"{float(v):.0f}m"
     )
@@ -1456,162 +1983,154 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     chart_df["pupils_label"] = chart_df["pupils"].apply(
         lambda v: "N/A" if pd.isna(v) else f"{int(float(v)):,}"
     )
-    chart_df["ptr_label"] = chart_df["pupil_teacher_ratio"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
+    chart_df["ptr_label"] = chart_df["pupil_teacher_ratio"].apply(num)
     chart_df["budget_label"] = chart_df["budget_per_pupil_gbp"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"£{float(v):,.0f}"
+        lambda v: "N/A" if pd.isna(v) else f"GBP {float(v):,.0f}"
     )
-    chart_df["literacy_label"] = chart_df["literacy_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
-    chart_df["numeracy_label"] = chart_df["numeracy_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
-    chart_df["science_label"] = chart_df["science_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
-    chart_df["welsh_bacc_label"] = chart_df["welsh_bacc_score"].apply(
-        lambda v: "N/A" if pd.isna(v) else f"{float(v):.1f}"
-    )
+    for col in ["school", "local_authority", "school_type", "language_medium",
+                "gender_mix", "address", "postcode"]:
+        chart_df[col] = chart_df[col].fillna("N/A").astype(str)
 
+    st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
     st.markdown(
         "<div class='map-note'>"
-        "School locations map over Wales. Click a school point to open its metrics card."
+        "School locations across Wales. Hover a pin to open its metrics card."
         "</div>",
         unsafe_allow_html=True,
     )
 
-    lat_min, lat_max = chart_df["latitude"].min(), chart_df["latitude"].max()
-    lon_min, lon_max = chart_df["longitude"].min(), chart_df["longitude"].max()
-    center = [float(chart_df["latitude"].mean()), float(chart_df["longitude"].mean())]
-    m = folium.Map(
-        location=center,
-        zoom_start=7,
-        tiles="CartoDB positron",
-        control_scale=True,
-        prefer_canvas=True,
+    chart_df["icon"] = chart_df["deprivation"].apply(
+        lambda d: PIN_ICONS.get(str(d), PIN_ICONS["unknown"])
     )
-    if float(lat_min) == float(lat_max) and float(lon_min) == float(lon_max):
-        # A single selected school has identical min/max coordinates.
-        # Give Folium a small local envelope so the map still opens cleanly.
-        m.fit_bounds(
-            [
-                [float(lat_min) - 0.015, float(lon_min) - 0.015],
-                [float(lat_max) + 0.015, float(lon_max) + 0.015],
-            ],
-            padding=(28, 28),
-        )
-    else:
-        m.fit_bounds(
-            [[float(lat_min), float(lon_min)], [float(lat_max), float(lon_max)]],
-            padding=(28, 28),
-        )
 
-    colour_lookup = {
-        "high_deprivation": "#ff4f79",
-        "medium_deprivation": "#ff8a00",
-        "low_deprivation": "#20c6d7",
-        "unknown": "#94a3b8",
-    }
+    focused = selected_school[0] != "All"
 
-    def card_row(label: str, value: Any) -> str:
-        clean_value = "N/A" if pd.isna(value) or str(value).strip() in {"", "None", "nan"} else str(value)
+    icon_cols = [
+        "longitude", "latitude", "icon", "school", "local_authority",
+        "school_type", "language_medium", "gender_mix", "address", "postcode",
+        "deprivation_label", "wimd_label", "fsm_label", "attendance_label",
+        "capped9_label", "literacy_label", "numeracy_label", "science_label",
+        "welsh_bacc_label", "pupils_label", "ptr_label", "budget_label",
+        "nearest_stop_label",
+    ]
+    pin_layer = pdk.Layer(
+        "IconLayer",
+        data=chart_df[icon_cols],
+        get_icon="icon",
+        get_position=["longitude", "latitude"],
+        get_size=5.2 if focused else 3.4,
+        size_scale=10,
+        size_min_pixels=18 if focused else 13,
+        size_max_pixels=74,
+        pickable=True,
+        # alphaCutoff = -1 turns off alpha-based picking, so the whole pin
+        # rectangle is hoverable instead of only the opaque middle of the
+        # teardrop. Without this, the card only appeared near the centre.
+        alpha_cutoff=-1,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=float(chart_df["latitude"].mean()),
+        longitude=float(chart_df["longitude"].mean()),
+        zoom=12 if focused else 6.9,
+        pitch=0,
+        bearing=0,
+    )
+
+    # Colour key: each label keeps its own accent colour and the value
+    # inherits the same colour, so the card is scannable at a glance.
+    C_HEAD = "#0b2a5b"
+    C_MUTED = "#64748b"
+    C_DEP = "#ff4f79"
+    C_WIMD = "#7c3aed"
+    C_FSM = "#ea580c"
+    C_ATT = "#0891b2"
+    C_PUP = "#0f766e"
+    C_PTR = "#b45309"
+    C_BUD = "#15803d"
+    C_PERF = "#2563eb"
+    C_TRAN = "#db2777"
+
+    def cell(label: str, value_key: str, colour: str) -> str:
         return (
-            "<div style='background:#f8fafc;border:1px solid #e5e7eb;"
-            "border-radius:12px;padding:8px 10px;'>"
-            f"<div style='font-size:10px;color:#64748b;font-weight:800;"
-            f"text-transform:uppercase;letter-spacing:.03em;'>{escape(label)}</div>"
-            f"<div style='font-size:14px;color:#111827;font-weight:900;"
-            f"margin-top:2px;'>{escape(clean_value)}</div>"
+            "<div style='background:#f8fafc;border:1px solid #eef2f7;"
+            "border-radius:9px;padding:5px 7px;'>"
+            f"<div style='color:{colour};font-weight:800;font-size:9.5px;"
+            "text-transform:uppercase;letter-spacing:.04em;'>"
+            f"{label}</div>"
+            f"<div style='color:{colour};font-weight:900;font-size:12.5px;"
+            "margin-top:1px;'>{" + value_key + "}</div>"
             "</div>"
         )
 
-    focused = selected_school[0] != "All"
-    def clean_text_value(value: Any) -> str:
-        if pd.isna(value) or str(value).strip() in {"", "None", "nan"}:
-            return "N/A"
-        return str(value)
+    grid_open = (
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:5px;'>"
+    )
+    tooltip = {
+        "html": (
+            "<div style='font-family:Segoe UI,Arial,sans-serif;width:310px;"
+            "background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;"
+            "padding:11px 12px;box-shadow:0 12px 30px rgba(15,23,42,.18);'>"
+            f"<div style='font-size:14px;font-weight:900;color:{C_HEAD};"
+            "line-height:1.25;'>{school}</div>"
+            f"<div style='font-size:11px;color:{C_MUTED};margin:2px 0 8px;'>"
+            "{local_authority} &middot; {school_type} &middot; "
+            "{language_medium}</div>"
+            + grid_open
+            + cell("Deprivation", "deprivation_label", C_DEP)
+            + cell("WIMD decile", "wimd_label", C_WIMD)
+            + cell("FSM", "fsm_label", C_FSM)
+            + cell("Attendance", "attendance_label", C_ATT)
+            + cell("Pupils", "pupils_label", C_PUP)
+            + cell("PTR", "ptr_label", C_PTR)
+            + cell("Budget / pupil", "budget_label", C_BUD)
+            + cell("Transport", "nearest_stop_label", C_TRAN)
+            + "</div>"
+            + f"<div style='font-size:9.5px;font-weight:800;color:{C_PERF};"
+              "text-transform:uppercase;letter-spacing:.04em;"
+              "margin:8px 0 4px;'>Secondary performance</div>"
+            + grid_open
+            + cell("Capped 9", "capped9_label", C_PERF)
+            + cell("Literacy", "literacy_label", C_PERF)
+            + cell("Numeracy", "numeracy_label", C_PERF)
+            + cell("Science", "science_label", C_PERF)
+            + "</div>"
+            + f"<div style='margin-top:8px;font-size:10px;color:{C_MUTED};"
+              "line-height:1.35;'>{address} &mdash; {postcode}</div>"
+            "</div>"
+        ),
+        "style": {
+            "backgroundColor": "transparent",
+            "color": "#0f172a",
+            "boxShadow": "none",
+            "padding": "0",
+            "zIndex": "9999",
+        },
+    }
 
-    for _, r in chart_df.iterrows():
-        dep_val = str(r.get("deprivation", "unknown"))
-        marker_colour = colour_lookup.get(dep_val, "#94a3b8")
-        school_name = escape(clean_text_value(r.get("school", "Unknown school")))
-        local_authority = escape(clean_text_value(r.get("local_authority", "N/A")))
-        school_type = escape(clean_text_value(r.get("school_type", "N/A")))
-        gender_mix = escape(clean_text_value(r.get("gender_mix", "N/A")))
-        language_medium = escape(clean_text_value(r.get("language_medium", "N/A")))
-        address = escape(clean_text_value(r.get("address", "N/A")))
-        postcode = escape(clean_text_value(r.get("postcode", "N/A")))
-        popup_html = f"""
-        <div style="font-family:Segoe UI,Arial,sans-serif;width:310px;color:#111827;">
-          <div style="background:linear-gradient(135deg,#ff4f79,#ff8a00);
-                      color:white;border-radius:16px 16px 10px 10px;
-                      padding:14px 15px;margin:-1px -1px 12px -1px;">
-            <div style="font-size:18px;font-weight:900;line-height:1.2;">{school_name}</div>
-            <div style="font-size:12px;opacity:.95;margin-top:4px;">{local_authority}</div>
-          </div>
-          <div style="font-size:12px;color:#475569;margin-bottom:10px;">
-            <b>Type:</b> {school_type}<br>
-            <b>Language:</b> {language_medium}<br>
-            <b>Gender:</b> {gender_mix}
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
-            {card_row("Deprivation", r.get("deprivation_label", "N/A"))}
-            {card_row("WIMD decile", r.get("wimd_label", "N/A"))}
-            {card_row("FSM", r.get("fsm_label", "N/A"))}
-            {card_row("Attendance", r.get("attendance_label", "N/A"))}
-            {card_row("Pupils", r.get("pupils_label", "N/A"))}
-            {card_row("PTR", r.get("ptr_label", "N/A"))}
-            {card_row("Budget / pupil", r.get("budget_label", "N/A"))}
-            {card_row("Transport", r.get("nearest_stop_label", "N/A"))}
-          </div>
-          <div style="margin-top:11px;padding-top:10px;border-top:1px solid #e5e7eb;">
-            <div style="font-size:12px;font-weight:900;color:#334155;margin-bottom:7px;">
-              Secondary performance
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
-              {card_row("Capped 9", r.get("capped9_label", "N/A"))}
-              {card_row("Literacy", r.get("literacy_label", "N/A"))}
-              {card_row("Numeracy", r.get("numeracy_label", "N/A"))}
-              {card_row("Science", r.get("science_label", "N/A"))}
-              {card_row("Welsh Bac", r.get("welsh_bacc_label", "N/A"))}
-            </div>
-          </div>
-          <div style="margin-top:11px;font-size:11px;line-height:1.35;color:#64748b;">
-            <b>Address:</b> {address}<br>
-            <b>Postcode:</b> {postcode}
-          </div>
-        </div>
-        """
-        folium.CircleMarker(
-            location=[float(r["latitude"]), float(r["longitude"])],
-            radius=8 if focused else 5.5,
-            color="#ffffff",
-            weight=1.6,
-            fill=True,
-            fill_color=marker_colour,
-            fill_opacity=0.86,
-            tooltip=folium.Tooltip(str(r.get("school", "")), sticky=True),
-            popup=folium.Popup(popup_html, max_width=350),
-        ).add_to(m)
+    deck = pdk.Deck(
+        layers=[pin_layer],
+        initial_view_state=view_state,
+        # No external basemap: tiles are fetched from a third-party service
+        # and are blocked on this network. The pins carry the information, and
+        # the light clearColor below keeps the canvas readable without them.
+        map_style=None,
+        tooltip=tooltip,
+        # Light canvas instead of the deck.gl default black background.
+        parameters={"clearColor": [0.972, 0.980, 0.992, 1]},
+    )
+    st.pydeck_chart(deck, use_container_width=True)
 
-    legend_html = """
-    <div style="
-      position: fixed; bottom: 24px; left: 24px; z-index: 9999;
-      background: rgba(255,255,255,.94); border: 1px solid #d1d5db;
-      border-radius: 12px; padding: 10px 13px; color: #1f2937;
-      font-family: Segoe UI, Arial, sans-serif; font-size: 13px;
-      box-shadow: 0 6px 18px rgba(15,23,42,.18);">
-      <div style="font-weight:900;margin-bottom:6px;">Deprivation</div>
-      <div><span style="color:#ff4f79;font-size:18px;">●</span> High</div>
-      <div><span style="color:#ff8a00;font-size:18px;">●</span> Medium</div>
-      <div><span style="color:#20c6d7;font-size:18px;">●</span> Low</div>
-      <div><span style="color:#94a3b8;font-size:18px;">●</span> Unknown</div>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(legend_html))
-    components.html(m.get_root().render(), height=760, scrolling=False)
+    st.markdown(
+        "<div class='map-note'>"
+        "<b>Deprivation legend:</b> "
+        "<span style='color:#ff4f79;font-size:16px;'>&#9679;</span> High &nbsp; "
+        "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
+        "<span style='color:#20c6d7;font-size:16px;'>&#9679;</span> Low &nbsp; "
+        "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     if selected_school[0] != "All" and not chart_df.empty:
         r = chart_df.iloc[0]
@@ -1953,34 +2472,40 @@ def page_scq_demonstrator(
     visual_scq_runner_flow()
 
     scq_key = st.selectbox(
-        "Select SCQ",
+        t("select_scq"),
         list(SCQ_META.keys()),
         format_func=lambda key: SCQ_META[key]["label"],
     )
 
     meta = SCQ_META[scq_key]
 
+    # SCQ7/SCQ8 support both starting points over the same stored facts.
+    direction = "lsoa"
+    if scq_key in ("SCQ7", "SCQ8"):
+        direction = direction_toggle(f"{scq_key}_direction")
+        st.caption(t("direction_caption"))
+
     left, right = st.columns([2.2, 1])
 
     with left:
-        st.subheader(meta["question"])
+        st.subheader(scq_question(scq_key, meta))
         st.write(meta["keyword_sentence"])
-        st.caption(f"Task link: {meta['task']}")
+        st.caption(f"{t('task_link')}: {meta['task']}")
 
     with right:
         st.markdown(
-            f"**Relation used**\n\n`{meta['relation']}`"
+            f"**{t('relation_used')}**\n\n`{meta['relation']}`"
         )
         st.markdown(
             (
-                "**Provenance**\n\n"
+                f"**{t('provenance_h')}**\n\n"
                 f"{provenance_badge(meta['provenance'])}"
             ),
             unsafe_allow_html=True,
         )
 
     limit = st.slider(
-        "Result limit",
+        t("result_limit"),
         min_value=1,
         max_value=200,
         value=30,
@@ -1990,7 +2515,11 @@ def page_scq_demonstrator(
         "limit": limit,
     }
 
+    scq3_hops = 6
+
     param_type = meta["param_type"]
+    if scq_key in ("SCQ7", "SCQ8") and direction == "admin":
+        param_type = meta["param_type_reverse"]
 
     if (
         param_type.startswith("lsoa")
@@ -2014,7 +2543,7 @@ def page_scq_demonstrator(
             return
 
         selected_lsoa = st.selectbox(
-            "LSOA",
+            t("lsoa_label"),
             options,
             format_func=lambda option: option[1],
             key=f"{scq_key}_lsoa",
@@ -2023,51 +2552,45 @@ def page_scq_demonstrator(
         params["lsoa"] = selected_lsoa[0]
 
     elif param_type == "lsoa_pair":
-        pair_options = scq3_pair_options(cfg)
+        pair_lsoas = lsoa_options(cfg, "lsoa_touch")
 
-        if pair_options:
-            selected_pair = st.selectbox(
-                (
-                    "Connected LSOA pair with at least one "
-                    "intermediate region"
-                ),
-                pair_options,
-                format_func=lambda option: option[1],
-                key="scq3_pair",
+        if len(pair_lsoas) < 2:
+            st.error(
+                "Not enough connected LSOAs were found for SCQ3."
             )
+            return
 
-            (
-                params["lsoa_a"],
-                params["lsoa_b"],
-            ) = selected_pair[0]
+        col_a, col_b = st.columns(2)
 
-        else:
-            options_a, options_b = choose_lsoa_pair(cfg)
-
-            if len(options_a) < 2:
-                st.error(
-                    "Not enough connected LSOAs were found for SCQ3."
-                )
-                return
-
+        with col_a:
             selected_a = st.selectbox(
-                "LSOA A",
-                options_a,
-                format_func=lambda option: option[1],
+                t("lsoa_a"),
+                pair_lsoas,
                 index=0,
+                format_func=lambda option: option[1],
                 key="scq3_lsoa_a",
             )
 
+        with col_b:
             selected_b = st.selectbox(
-                "LSOA B",
-                options_b,
+                t("lsoa_b"),
+                pair_lsoas,
+                index=1,
                 format_func=lambda option: option[1],
-                index=1 if len(options_b) > 1 else 0,
                 key="scq3_lsoa_b",
             )
 
-            params["lsoa_a"] = selected_a[0]
-            params["lsoa_b"] = selected_b[0]
+        params["lsoa_a"] = selected_a[0]
+        params["lsoa_b"] = selected_b[0]
+
+        scq3_hops = st.select_slider(
+            t("max_hops"),
+            options=[2, 3, 4, 5, 6, 7, 8],
+            value=6,
+            key="scq3_hops",
+        )
+        st.caption(t("max_hops_note"))
+        st.caption(t("scq3_interp"))
 
     elif param_type.startswith("admin"):
         admin_units = admin_options(
@@ -2083,7 +2606,7 @@ def page_scq_demonstrator(
             return
 
         selected_admin = st.selectbox(
-            "Administrative unit",
+            t("admin_unit_label"),
             admin_units,
             format_func=lambda option: option[1],
             key=f"{scq_key}_admin",
@@ -2092,17 +2615,29 @@ def page_scq_demonstrator(
         params["admin"] = selected_admin[0]
 
     run_query = st.button(
-        "Run SCQ query",
+        t("run_query"),
         type="primary",
     )
 
-    st.markdown("### Cypher used")
+    active_cypher = (
+        meta["cypher_reverse"]
+        if (scq_key in ("SCQ7", "SCQ8") and direction == "admin")
+        else meta["cypher"]
+    )
+
+    if scq_key == "SCQ3":
+        active_cypher = SCQ3_CYPHER_TEMPLATE.replace(
+            "__MAXHOPS__",
+            str(scq3_hops),
+        )
+
+    st.markdown(f"### {t('cypher_used')}")
     st.code(
-        meta["cypher"].strip(),
+        active_cypher.strip(),
         language="cypher",
     )
 
-    st.markdown("### Parameters")
+    st.markdown(f"### {t('parameters')}")
     st.json(params)
 
     if not run_query:
@@ -2111,7 +2646,7 @@ def page_scq_demonstrator(
     try:
         result_df = run_cypher(
             cfg,
-            meta["cypher"],
+            active_cypher,
             params,
         )
 
@@ -2179,18 +2714,18 @@ def page_scq_demonstrator(
             ),
         }
 
-        st.markdown("### Implemented answer")
+        st.markdown(f"### {t('implemented_answer')}")
 
         st.markdown(
             (
                 "<div class='solutionbox'>"
-                f"<b>Implemented answer:</b> "
+                f"<b>{t('implemented_answer')}:</b> "
                 f"{strong_answers[scq_key]}"
                 "<br><br>"
-                f"<b>Evaluation status:</b> "
+                f"<b>{t('eval_status')}:</b> "
                 f"{meta.get('evaluation_note', 'See provenance above.')}"
                 "<br>"
-                f"<b>Evidence:</b> The query returned "
+                f"<b>{t('evidence_h')}:</b> The query returned "
                 f"<b>{len(result_df)}</b> result row(s) for the "
                 "selected parameter."
                 "</div>"
@@ -2198,19 +2733,64 @@ def page_scq_demonstrator(
             unsafe_allow_html=True,
         )
 
-        st.markdown("### Results")
+        st.markdown(f"### {t('results_h')}")
 
-        result_label = meta.get(
-            "result_label",
-            "Result rows returned",
-        )
+        if scq_key == "SCQ3" and result_df.empty:
+            st.info(t("no_path_note"))
+            example_pairs = scq3_pair_options(cfg)
+            if example_pairs:
+                st.caption(
+                    f"{t('guaranteed_example')} {example_pairs[0][1]}"
+                )
 
-        st.metric(
-            result_label,
-            len(result_df),
-        )
+        if scq_key == "SCQ8":
+            evidence_cypher = (
+                meta["cypher_reverse_evidence"]
+                if direction == "admin"
+                else meta["cypher_evidence"]
+            )
+            evidence_df = run_cypher(cfg, evidence_cypher, params)
 
-        display_df(result_df)
+            answer_metric = (
+                t("scq8_metric_lsoa")
+                if direction == "admin"
+                else t("scq8_metric_admin")
+            )
+            answer_caption = (
+                t("scq8_caption_admin")
+                if direction == "admin"
+                else t("scq8_caption")
+            )
+
+            tab_answer, tab_evidence = st.tabs(
+                [t("tab_answer"), t("tab_evidence")]
+            )
+
+            with tab_answer:
+                st.metric(answer_metric, len(result_df))
+                st.caption(answer_caption)
+                display_df(result_df)
+                with st.expander(t("show_query")):
+                    st.code(active_cypher.strip(), language="cypher")
+
+            with tab_evidence:
+                st.metric(t("metric_pairs"), len(evidence_df))
+                display_df(evidence_df)
+                with st.expander(t("show_query")):
+                    st.code(evidence_cypher.strip(), language="cypher")
+
+        else:
+            result_label = meta.get(
+                "result_label",
+                "Result rows returned",
+            )
+
+            st.metric(
+                result_label,
+                len(result_df),
+            )
+
+            display_df(result_df)
 
         if scq_key in {
             "SCQ1",
@@ -2223,7 +2803,7 @@ def page_scq_demonstrator(
             st.markdown(
                 (
                     "<div class='warningbox'>"
-                    "<b>Evaluation interpretation:</b> "
+                    f"<b>{t('eval_interp')}:</b> "
                     "This answer is available in the demonstrator, "
                     "but it does not increase native YAGO2geo model "
                     "completeness because its spatial basis is computed "
@@ -2238,7 +2818,7 @@ def page_scq_demonstrator(
             st.markdown(
                 (
                     "<div class='successbox'>"
-                    "<b>Evaluation interpretation:</b> "
+                    f"<b>{t('eval_interp')}:</b> "
                     "This query demonstrates the equivalent SCQ form "
                     "inside the native administrative hierarchy. "
                     "For the LSOA-based education-use-case scorecard, "
@@ -2579,170 +3159,303 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
     # ------------------------------------------------------------------
 
 
-    scq8_query = """
-    MATCH (x:LSOA {code:$lsoa})
-        -[:GRAPH_NEAR]-(near_lsoa:LSOA)
-
-    MATCH (admin:AdminUnit)-[:INTERSECTS]->(near_lsoa)
-    WHERE admin.type IN ['Ward', 'Community']
-    OPTIONAL MATCH (near_lsoa)<-[:LOCATED_IN]-(s:School)
-
-    WITH
-        admin,
-        collect(DISTINCT near_lsoa.code) AS via_near_lsoas,
-        collect(DISTINCT near_lsoa.name) AS via_near_lsoa_names,
-        count(DISTINCT s) AS school_count,
-        avg(s.fsm_pct) AS avg_fsm_pct,
-        avg(s.attendance_pct) AS avg_attendance_pct,
-        avg(s.capped9_score) AS avg_capped9_score
-
-    RETURN
-        coalesce(admin.name, admin.uri) AS administrative_unit,
-        admin.type AS administrative_type,
-        admin.uri AS administrative_uri,
-        via_near_lsoas,
-        via_near_lsoa_names,
-        size(via_near_lsoas) AS supporting_lsoas,
-        school_count,
-        round(avg_fsm_pct, 1) AS avg_school_fsm_pct,
-        round(avg_attendance_pct, 1) AS avg_school_attendance_pct,
-        round(avg_capped9_score, 1) AS avg_secondary_capped9_score
-
-    ORDER BY avg_school_fsm_pct DESC, administrative_type, administrative_unit
-    LIMIT $limit
-    """ 
-
-    opts7 = lsoa_options(cfg, "lsoa_intersects")
-    opts8 = lsoa_options(cfg, "lsoa_near_intersects")
-
-    # Use Cardiff 018B as the default documented example when available.
-    example_code = "W01001770"
-
-    default7 = next(
-        (
-            index
-            for index, option in enumerate(opts7)
-            if option[0] == example_code
-        ),
-        0,
-    )
-
-    default8 = next(
-        (
-            index
-            for index, option in enumerate(opts8)
-            if option[0] == example_code
-        ),
-        0,
-    )
-
-    c7, c8 = st.columns(2)
+    scq8_query = SCQ8_ANSWER_CYPHER
 
     # ------------------------------------------------------------------
-    # SCQ7
+    # Direction toggle: the stored INTERSECTS relation is symmetric, so
+    # both starting points read the same facts. Default = LSOA-first,
+    # matching the education use case (deprivation and school data live
+    # on LSOAs) and the supervisor's own example question.
     # ------------------------------------------------------------------
-    with c7:
-        st.subheader(
-            "6.2 SCQ7 — Cross-hierarchy intersects"
+    direction = direction_toggle("cross_direction")
+    st.caption(t("direction_caption"))
+
+    if direction == "lsoa":
+        opts7 = lsoa_options(cfg, "lsoa_intersects")
+        opts8 = lsoa_options(cfg, "lsoa_near_intersects")
+
+        # Use Cardiff 018B as the default documented example when available.
+        example_code = "W01001770"
+
+        default7 = next(
+            (
+                index
+                for index, option in enumerate(opts7)
+                if option[0] == example_code
+            ),
+            0,
         )
 
-        if opts7:
-            selected7 = st.selectbox(
-                "LSOA for SCQ7",
-                opts7,
-                index=default7,
-                format_func=lambda option: option[1],
-                key="cross7",
-            )
-
-            df7 = run_cypher(
-                cfg,
-                scq7_query,
-                {
-                    "lsoa": selected7[0],
-                    "limit": 30,
-                },
-            )
-
-            st.metric(
-                "Intersecting administrative units found",
-
-                len(df7),
-            )
-
-            if df7.empty:
-                st.info(
-                    "No directly intersecting administrative units were returned "
-                    "for this LSOA."
-                )               
-            else:
-                display_df(df7)
-
-        else:
-            st.warning(
-                "No LSOAs are currently available for SCQ7."
-            )
-
-        with st.expander(
-            "Show SCQ7 Cypher query"
-        ):
-            st.code(
-                scq7_query.strip(),
-                language="cypher",
-            )
-
-    # ------------------------------------------------------------------
-    # SCQ8
-    # ------------------------------------------------------------------
-    with c8:
-        st.subheader(
-            "6.3 SCQ8 — Cross-hierarchy near"
+        default8 = next(
+            (
+                index
+                for index, option in enumerate(opts8)
+                if option[0] == example_code
+            ),
+            0,
         )
 
-        if opts8:
-            selected8 = st.selectbox(
-                "LSOA for SCQ8",
-                opts8,
-                index=default8,
-                format_func=lambda option: option[1],
-                key="cross8",
+        c7, c8 = st.columns(2)
+
+        # ------------------------------------------------------------------
+        # SCQ7
+        # ------------------------------------------------------------------
+        with c7:
+            st.subheader(
+                "6.2 SCQ7 — Cross-hierarchy intersects"
             )
 
-            df8 = run_cypher(
-                cfg,
-                scq8_query,
-                {
-                    "lsoa": selected8[0],
-                    "limit": 30,
-                },
-            )
-
-            st.metric(
-                "Nearby administrative units found",
-
-                len(df8),
-            )
-
-            if df8.empty:
-                st.info(
-                    "No cross-hierarchy proximity results were "
-                    "returned for this LSOA."
+            if opts7:
+                selected7 = st.selectbox(
+                    t("scq7_select_lsoa"),
+                    opts7,
+                    index=default7,
+                    format_func=lambda option: option[1],
+                    key="cross7",
                 )
+
+                df7 = run_cypher(
+                    cfg,
+                    scq7_query,
+                    {
+                        "lsoa": selected7[0],
+                        "limit": 30,
+                    },
+                )
+
+                st.metric(
+                    t("scq7_metric_admin"),
+
+                    len(df7),
+                )
+
+                if df7.empty:
+                    st.info(
+                        "No directly intersecting administrative units were returned "
+                        "for this LSOA."
+                    )               
+                else:
+                    display_df(df7)
+
             else:
-                display_df(df8)
+                st.warning(
+                    "No LSOAs are currently available for SCQ7."
+                )
 
-        else:
+            with st.expander(
+                "Show SCQ7 Cypher query"
+            ):
+                st.code(
+                    scq7_query.strip(),
+                    language="cypher",
+                )
+
+        # ------------------------------------------------------------------
+        # SCQ8
+        # ------------------------------------------------------------------
+        with c8:
+            st.subheader(
+                "6.3 SCQ8 — Cross-hierarchy near"
+            )
+
+            if opts8:
+                selected8 = st.selectbox(
+                    t("scq8_select_lsoa"),
+                    opts8,
+                    index=default8,
+                    format_func=lambda option: option[1],
+                    key="cross8",
+                )
+
+                df8 = run_cypher(
+                    cfg,
+                    scq8_query,
+                    {
+                        "lsoa": selected8[0],
+                        "limit": 30,
+                    },
+                )
+
+                tab_a8, tab_e8 = st.tabs(
+                    [t("tab_answer"), t("tab_evidence")]
+                )
+
+                with tab_a8:
+                    st.metric(
+                        t("scq8_metric_admin"),
+                        len(df8),
+                    )
+                    st.caption(t("scq8_caption"))
+                    if df8.empty:
+                        st.info(t("no_results_8"))
+                    else:
+                        display_df(df8)
+                    with st.expander(t("show_query")):
+                        st.code(
+                            scq8_query.strip(),
+                            language="cypher",
+                        )
+
+                with tab_e8:
+                    df8_pairs = run_cypher(
+                        cfg,
+                        SCQ8_EVIDENCE_CYPHER,
+                        {
+                            "lsoa": selected8[0],
+                            "limit": 30,
+                        },
+                    )
+                    st.metric(
+                        t("metric_pairs"),
+                        len(df8_pairs),
+                    )
+                    if df8_pairs.empty:
+                        st.info(t("no_results_8"))
+                    else:
+                        display_df(df8_pairs)
+                    with st.expander(t("show_query")):
+                        st.code(
+                            SCQ8_EVIDENCE_CYPHER.strip(),
+                            language="cypher",
+                        )
+
+            else:
+                st.warning(
+                    "No LSOAs are currently available for SCQ8."
+                )
+
+    else:
+        admin_units = admin_options(cfg, "admin_intersects")
+
+        if not admin_units:
             st.warning(
-                "No LSOAs are currently available for SCQ8."
+                "No wards or communities with stored INTERSECTS "
+                "relations were found in Neo4j."
+            )
+        else:
+            # Default documented example: Cathays (Community), if present.
+            default_admin = next(
+                (
+                    index
+                    for index, option in enumerate(admin_units)
+                    if "Cathays" in option[1]
+                ),
+                0,
             )
 
-        with st.expander(
-            "Show SCQ8 Cypher query"
-        ):
-            st.code(
-                scq8_query.strip(),
-                language="cypher",
-            )
+            ca7, ca8 = st.columns(2)
+
+            # ----------------------------------------------------------
+            # SCQ7 (reversed): Ward/Community -> intersecting LSOAs
+            # ----------------------------------------------------------
+            with ca7:
+                st.subheader(
+                    "6.2 SCQ7 \u2014 Cross-hierarchy intersects"
+                )
+
+                selected_a7 = st.selectbox(
+                    t("scq7_select_admin"),
+                    admin_units,
+                    index=default_admin,
+                    format_func=lambda option: option[1],
+                    key="cross7_admin",
+                )
+
+                df7r = run_cypher(
+                    cfg,
+                    SCQ7_REVERSE_CYPHER,
+                    {
+                        "admin": selected_a7[0],
+                        "limit": 30,
+                    },
+                )
+
+                st.metric(
+                    t("scq7_metric_lsoa"),
+                    len(df7r),
+                )
+
+                if df7r.empty:
+                    st.info(t("no_results_7"))
+                else:
+                    display_df(df7r)
+
+                with st.expander(
+                    "Show SCQ7 Cypher query (reversed direction)"
+                ):
+                    st.code(
+                        SCQ7_REVERSE_CYPHER.strip(),
+                        language="cypher",
+                    )
+
+            # ----------------------------------------------------------
+            # SCQ8 (reversed): Ward/Community -> nearby LSOAs (disjoint)
+            # ----------------------------------------------------------
+            with ca8:
+                st.subheader(
+                    "6.3 SCQ8 \u2014 Cross-hierarchy near"
+                )
+
+                selected_a8 = st.selectbox(
+                    t("scq8_select_admin"),
+                    admin_units,
+                    index=default_admin,
+                    format_func=lambda option: option[1],
+                    key="cross8_admin",
+                )
+
+                df8r = run_cypher(
+                    cfg,
+                    SCQ8_REVERSE_CYPHER,
+                    {
+                        "admin": selected_a8[0],
+                        "limit": 30,
+                    },
+                )
+
+                tab_ra8, tab_re8 = st.tabs(
+                    [t("tab_answer"), t("tab_evidence")]
+                )
+
+                with tab_ra8:
+                    st.metric(
+                        t("scq8_metric_lsoa"),
+                        len(df8r),
+                    )
+                    st.caption(t("scq8_caption_admin"))
+                    if df8r.empty:
+                        st.info(t("no_results_8"))
+                    else:
+                        display_df(df8r)
+                    with st.expander(t("show_query")):
+                        st.code(
+                            SCQ8_REVERSE_CYPHER.strip(),
+                            language="cypher",
+                        )
+
+                with tab_re8:
+                    df8r_pairs = run_cypher(
+                        cfg,
+                        SCQ8_REVERSE_EVIDENCE_CYPHER,
+                        {
+                            "admin": selected_a8[0],
+                            "limit": 30,
+                        },
+                    )
+                    st.metric(
+                        t("metric_pairs"),
+                        len(df8r_pairs),
+                    )
+                    if df8r_pairs.empty:
+                        st.info(t("no_results_8"))
+                    else:
+                        display_df(df8r_pairs)
+                    with st.expander(t("show_query")):
+                        st.code(
+                            SCQ8_REVERSE_EVIDENCE_CYPHER.strip(),
+                            language="cypher",
+                        )
+
 
     st.markdown(
         (
@@ -2780,7 +3493,6 @@ def page_map(cfg: Dict[str, str]) -> None:
     WHERE la IS NOT NULL AND la <> ''
     RETURN la AS value, la AS label
     ORDER BY label
-    LIMIT 100
     """)
     phase_opts = safe_options(cfg, """
     MATCH (s:School)
@@ -2788,7 +3500,6 @@ def page_map(cfg: Dict[str, str]) -> None:
     WHERE phase IS NOT NULL AND phase <> ''
     RETURN phase AS value, phase AS label
     ORDER BY label
-    LIMIT 100
     """)
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
@@ -2853,7 +3564,6 @@ def page_map(cfg: Dict[str, str]) -> None:
             coalesce(s.name, s.school_name, s.code)
             + coalesce(" | " + s.local_authority_name, "") AS label
         ORDER BY label
-        LIMIT 1600
         """,
         school_option_params,
     )
@@ -2869,43 +3579,83 @@ def page_map(cfg: Dict[str, str]) -> None:
     with st.sidebar.expander("More filters: school metrics", expanded=False):
         fsm_min_text = st.text_input(
             "FSM minimum %",
-            value="",
+            value="All",
             placeholder="All, or e.g. 30",
-            help="Leave blank for all. Enter 30 to show schools with FSM >= 30%.",
+            help=(
+                "Available FSM values in the loaded school data range from "
+                "0.0% to 71.8%. Keep All for no FSM filter."
+            ),
         )
+        st.caption("Loaded range: 0.0%–71.8%. Use All for no FSM filter.")
         attendance_max_text = st.text_input(
             "Attendance maximum %",
-            value="",
+            value="All",
             placeholder="All, or e.g. 90",
-            help="Leave blank for all. Enter 90 to show schools with attendance <= 90%.",
+            help=(
+                "Available attendance values in the loaded school data range "
+                "from 79.1% to 98.1%. Keep All for no attendance filter."
+            ),
         )
+        st.caption("Loaded range: 79.1%–98.1%. Use All for no attendance filter.")
         capped9_max_text = st.text_input(
             "Capped 9 points maximum",
-            value="",
+            value="All",
             placeholder="All, or e.g. 350",
             help=(
                 "Capped 9 is a secondary-school points score, not a "
-                "0-100 percentage. Lower values can be used to explore "
-                "lower attainment; leave blank for all."
+                "0-100 percentage. Available values range from 245.1 "
+                "to 453.1. Keep All for no Capped 9 filter."
             ),
         )
+        st.caption("Loaded range: 245.1–453.1 points. Use All for no Capped 9 filter.")
 
-    def parse_optional_float(raw_value: str, field_name: str) -> float | None:
+    def parse_optional_float(
+        raw_value: str,
+        field_name: str,
+        minimum: float,
+        maximum: float,
+        unit: str,
+    ) -> Tuple[float | None, bool]:
         text = str(raw_value).strip()
         if not text or text.lower() == "all":
-            return None
+            return None, True
         try:
-            return float(text)
+            value = float(text)
         except ValueError:
-            st.sidebar.warning(f"{field_name} must be a number or blank.")
-            return None
+            st.sidebar.error(f"{field_name}: enter a number or leave it blank for All.")
+            return None, False
+        if value < minimum or value > maximum:
+            st.sidebar.error(
+                f"{field_name}: {value:g}{unit} is outside the loaded data range "
+                f"({minimum:g}{unit}–{maximum:g}{unit})."
+            )
+            return None, False
+        return value, True
 
-    fsm_min = parse_optional_float(fsm_min_text, "FSM minimum")
-    attendance_max = parse_optional_float(
+    fsm_min, fsm_ok = parse_optional_float(
+        fsm_min_text,
+        "FSM minimum",
+        0.0,
+        71.8,
+        "%",
+    )
+    attendance_max, attendance_ok = parse_optional_float(
         attendance_max_text,
         "Attendance maximum",
+        79.1,
+        98.1,
+        "%",
     )
-    capped9_max = parse_optional_float(capped9_max_text, "Capped 9 points maximum")
+    capped9_max, capped9_ok = parse_optional_float(
+        capped9_max_text,
+        "Capped 9 points maximum",
+        245.1,
+        453.1,
+        "",
+    )
+    if not (fsm_ok and attendance_ok and capped9_ok):
+        st.info("Fix the red metric filter message in the sidebar, or type All to remove that filter.")
+        return
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
