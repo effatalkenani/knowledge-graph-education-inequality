@@ -13,9 +13,9 @@ from shapely.validation import make_valid
 
 import geopandas as gpd
 
-URI = "bolt://localhost:7687"
-AUTH = ("neo4j", "UTHT5389utht@")
-DATABASE = "wales-education-kg"
+URI = "neo4j+s://1e982852.databases.neo4j.io"
+AUTH = ("neo4j", "4kbPrn_-FsWEKiZTsuCnu5xvotFjME8q6W0dLN7JD3k")
+DATABASE = "neo4j"
 DATA_DIR = "./data"
 
 
