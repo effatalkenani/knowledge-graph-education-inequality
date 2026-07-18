@@ -164,7 +164,7 @@ div[data-testid="stSidebar"] button[kind="primary"] {background:linear-gradient(
 )
 DEFAULT_URI = st.secrets.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
 DEFAULT_USER = st.secrets.get("NEO4J_USER", "neo4j")
-DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "UTHT5389utht@")
+DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "QWEasd1QWE")
 DEFAULT_DATABASE = st.secrets.get("NEO4J_DATABASE", "wales-education-kg")
 
 
