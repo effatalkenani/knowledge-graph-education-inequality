@@ -162,19 +162,10 @@ div[data-testid="stSidebar"] button[kind="primary"] {background:linear-gradient(
 """,
     unsafe_allow_html=True,
 )
-
-# Try to load from Streamlit Secrets first (for Cloud deployment)
-if "neo4j" in st.secrets:
-    DEFAULT_URI = st.secrets.neo4j.uri
-    DEFAULT_USER = st.secrets.neo4j.user
-    DEFAULT_PASSWORD = st.secrets.neo4j.password
-    DEFAULT_DATABASE = st.secrets.neo4j.get("database", "neo4j")
-else:
-    # Fallback to local defaults
-    DEFAULT_URI = "neo4j://127.0.0.1:7687"
-    DEFAULT_USER = "neo4j"
-    DEFAULT_PASSWORD = "UTHT5389utht@"
-    DEFAULT_DATABASE = "wales-education-kg"
+DEFAULT_URI = st.secrets.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
+DEFAULT_USER = st.secrets.get("NEO4J_USER", "neo4j")
+DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "UTHT5389utht@")
+DEFAULT_DATABASE = st.secrets.get("NEO4J_DATABASE", "wales-education-kg")
 
 
 
