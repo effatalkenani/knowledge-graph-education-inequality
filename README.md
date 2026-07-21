@@ -4,7 +4,7 @@ A Cardiff University MSc Project exploring the use of Qualitative Place Knowledg
 
 **Supervisor:** Prof. Alia Abdelmoty
 
----
+--- 
 
 ## 🚀 Live Demo
 
