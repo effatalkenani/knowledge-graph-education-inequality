@@ -18,6 +18,9 @@ import json
 from html import escape
 from typing import Any, Dict, List, Tuple
 
+import re
+from pathlib import Path
+
 import folium
 import pydeck as pdk
 import pandas as pd
@@ -162,11 +165,11 @@ div[data-testid="stSidebar"] button[kind="primary"] {background:linear-gradient(
 """,
     unsafe_allow_html=True,
 )
+
 DEFAULT_URI = st.secrets.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
 DEFAULT_USER = st.secrets.get("NEO4J_USER", "neo4j")
 DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "QWEasd1QWE")
 DEFAULT_DATABASE = st.secrets.get("NEO4J_DATABASE", "wales-education-kg")
-
 
 
 # =============================================================================
@@ -1090,9 +1093,9 @@ POLICY_LIBRARY = [
 # This table evaluates what the original YAGO2geo-style administrative model
 # can represent natively or by traversal over native administrative relations.
 MODEL_COMPLETENESS = pd.DataFrame([
-    ["Ward", "Ward", "Touches, near/far/between", "TOUCHES native; near/far/between by traversal", "Complete (model)"],
-    ["Community", "Community", "Touches, near/far/between", "TOUCHES native; rest by traversal", "Complete (model)"],
-    ["Unitary Authority", "Ward", "Contains, inside", "WITHIN native; contains by inverse", "Complete (model)"],
+    ["Ward", "Ward", "Touches, near/far/between", "TOUCHES native; near/far/between by traversal", "Complete (model) — instances verified: 100.00% Wales, 99.97% UK"],
+    ["Community", "Community", "Touches, near/far/between", "TOUCHES native; rest by traversal", "Complete (model) — instances verified: 100.00% Wales, 99.93% UK"],
+    ["Unitary Authority", "Ward", "Contains, inside", "WITHIN native; contains by inverse", "Complete (model) — instances verified: 100.00% Wales and UK"],
     ["LSOA", "LSOA", "Touches, near, far, between", "None native in YAGO2geo", "Missing — report"],
     ["Ward", "LSOA", "Intersect, near", "None native in YAGO2geo", "Missing — report"],
     ["Community", "LSOA", "Intersect, near", "None native in YAGO2geo", "Missing — report"],
@@ -1661,6 +1664,7 @@ def admin_options(
             a.uri AS value,
             coalesce(a.name, a.uri) + ' | ' + a.type AS label
         ORDER BY label
+        LIMIT 2000
         """
         return safe_options(cfg, query)
 
@@ -1689,6 +1693,7 @@ def admin_options(
         name + coalesce(' | ' + type, '') AS label
 
     ORDER BY label
+    LIMIT 500
     """
 
     return safe_options(cfg, query)
@@ -1708,6 +1713,7 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
            b.code AS b_code,
            b.code + ' | ' + coalesce(b.name, b.LSOA_Name, '') AS b_label
     ORDER BY a_code, b_code
+    LIMIT 200
     """)
     if df.empty:
         return []
@@ -1717,6 +1723,63 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
 # =============================================================================
 # UI COMPONENTS
 # =============================================================================
+# =============================================================================
+# NATIVE RELATION-INSTANCE COMPLETENESS AUDIT (static evidence file)
+# =============================================================================
+# The audit is produced offline by yago2geo_local_cloud_completeness_report.py
+# against the local Neo4j (the cloud app cannot reach it), and the resulting
+# HTML ships with the repo as read-only evidence. Sections are shown here in
+# expanders, without the report hero header.
+AUDIT_REPORT_FILE = Path(__file__).parent / "yago2geo_completeness_local.html"
+
+
+@st.cache_data(show_spinner=False)
+def load_audit_sections() -> tuple[str, list[tuple[str, str]]]:
+    if not AUDIT_REPORT_FILE.exists():
+        return "", []
+    raw = AUDIT_REPORT_FILE.read_text(encoding="utf-8", errors="replace")
+    style_match = re.search(r"<style>.*?</style>", raw, re.S)
+    style = style_match.group(0) if style_match else ""
+    sections = re.findall(
+        r'<section class="scope"[^>]*>.*?</section>', raw, re.S
+    )
+    titled: list[tuple[str, str]] = []
+    for section_html in sections:
+        h2 = re.search(r"<h2>(.*?)</h2>", section_html, re.S)
+        title = re.sub(r"<[^>]+>", "", h2.group(1)).strip() if h2 else "Section"
+        titled.append((title, section_html))
+    return style, titled
+
+
+def render_instance_audit() -> None:
+    style, sections = load_audit_sections()
+    st.subheader(
+        "5.1b Relation-instance completeness audit — instance-level evidence"
+    )
+    st.caption(
+        "Read-only audit computed offline against the local graph: "
+        "native asserted relations versus the geometry-derived reference. "
+        "Instance completeness is distinct from the model-level SpCom "
+        "scorecard over the eight SCQs."
+    )
+    if not sections:
+        st.info(
+            "Audit file yago2geo_completeness_local.html was not found "
+            "next to app.py. Add it to the repository to show the "
+            "instance-level evidence here."
+        )
+        return
+    for title, section_html in sections:
+        with st.expander(title, expanded=False):
+            components.html(
+                "<html><head>" + style + "</head>"
+                "<body style='background:#ffffff;margin:0'>"
+                + section_html + "</body></html>",
+                height=700,
+                scrolling=True,
+            )
+
+
 def hero() -> None:
     st.markdown(
         """
@@ -2946,6 +3009,8 @@ def page_evaluation() -> None:
             hide_index=True,
         )
 
+        render_instance_audit()
+
         st.subheader("5.2 SCQ scorecard for the education use case")
         st.dataframe(
             SCQ_SCORECARD,
@@ -3484,6 +3549,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     WHERE la IS NOT NULL AND la <> ''
     RETURN la AS value, la AS label
     ORDER BY label
+    LIMIT 100
     """)
     phase_opts = safe_options(cfg, """
     MATCH (s:School)
@@ -3491,6 +3557,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     WHERE phase IS NOT NULL AND phase <> ''
     RETURN phase AS value, phase AS label
     ORDER BY label
+    LIMIT 100
     """)
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
@@ -3555,6 +3622,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             coalesce(s.name, s.school_name, s.code)
             + coalesce(" | " + s.local_authority_name, "") AS label
         ORDER BY label
+        LIMIT 1600
         """,
         school_option_params,
     )
