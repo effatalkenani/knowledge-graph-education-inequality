@@ -2917,8 +2917,12 @@ def page_evaluation() -> None:
             "are therefore reclassified / n/a rather than counted as "
             "independent education answers. The demonstrator still runs "
             "the implemented SCQ forms using geometry-origin and derived "
-            "relations, while <b>SpCom = 3/6 = 0.50</b> records the "
-            "corrected native model baseline."
+            "relations. <b>Native SpCom is scored over the six "
+            "Domain–Range rows of Table 5.1</b> (three native, three "
+            "missing): 3/6 = 0.50. The annotated version scored "
+            "3/5 = 0.60; adding the requested LSOA–LSOA row makes it "
+            "0.50. CQCov over the eight SCQs is reported separately "
+            "in 5.2."
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -2935,7 +2939,7 @@ def page_evaluation() -> None:
 
     with m2:
         st.metric(
-            label="Native SpCom",
+            label="Native SpCom — six model-table rows",
             value="3/6 = 0.50",
         )
 
@@ -2951,6 +2955,17 @@ def page_evaluation() -> None:
         r"=\frac{SR_s}{Size_{R_s}(\Omega)}"
         r"=\frac{3}{6}"
         r"=0.50"
+    )
+
+    st.caption(
+        "Denominator = the six Domain–Range rows of Table 5.1 "
+        "(three native, three natively absent). The annotated table "
+        "scored 3/5 = 0.60 before the LSOA–LSOA row was added, as "
+        "requested in the supervisor's notes; with that row the "
+        "corrected figure is 3/6 = 0.50. This relation-row SpCom is "
+        "distinct from CQCov, which counts SCQ answers over the "
+        "eight-question scorecard in 5.2, and from the "
+        "relation-instance completeness audit in 5.1b."
     )
 
     st.markdown(
