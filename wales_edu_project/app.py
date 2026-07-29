@@ -2433,6 +2433,7 @@ def render_school_map(
                     filled=True,
                     pickable=polygons_only,
                     auto_highlight=polygons_only,
+                    highlight_color=[124, 58, 237, 190],
                 )
             )
     if not polygons_only:
@@ -2441,18 +2442,41 @@ def render_school_map(
     if polygons_only:
         tooltip = {
             "html": (
-                "<div class='pin-card'>"
-                "<div class='pin-title'>{name}</div>"
-                "<div class='pin-sub'>{code} &middot; cluster of {cluster_size} LSOAs</div>"
-                "<div class='pin-grid'>"
-                "<div class='pin-cell'><span class='pin-k'>SCHOOLS</span>"
-                "<span class='pin-v'>{schools_count}</span></div>"
-                "<div class='pin-cell'><span class='pin-k'>MEAN FSM</span>"
-                "<span class='pin-v'>{fsm_avg}</span></div>"
-                "<div class='pin-cell'><span class='pin-k'>MEAN ATTENDANCE</span>"
-                "<span class='pin-v'>{att_avg}</span></div>"
+                "<div style='font-family:Segoe UI,Arial,sans-serif;"
+                "width:250px;background:rgba(255,255,255,.82);"
+                "backdrop-filter:blur(3px);border:1px solid rgba(136,19,55,.35);"
+                "border-radius:14px;padding:10px 12px;"
+                "box-shadow:0 10px 26px rgba(15,23,42,.16);'>"
+                f"<div style='font-size:13.5px;font-weight:900;color:{C_HEAD};"
+                "line-height:1.3;'>{name}</div>"
+                f"<div style='font-size:10.5px;color:{C_MUTED};"
+                "margin:2px 0 8px;'>{code} &middot; cluster of "
+                "{cluster_size} LSOAs</div>"
+                "<div style='display:grid;grid-template-columns:1fr 1fr;"
+                "gap:5px;'>"
+                f"<div style='background:rgba(248,250,252,.75);"
+                "border-radius:8px;padding:5px 7px;'>"
+                f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+                "text-transform:uppercase;letter-spacing:.05em;'>Schools"
+                "</div><div style='font-size:13px;font-weight:800;'>"
+                "{schools_count}</div></div>"
+                f"<div style='background:rgba(248,250,252,.75);"
+                "border-radius:8px;padding:5px 7px;'>"
+                f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+                "text-transform:uppercase;letter-spacing:.05em;'>Mean FSM"
+                f"</div><div style='font-size:13px;font-weight:800;"
+                f"color:{C_FSM};'>{{fsm_avg}}</div></div>"
+                f"<div style='grid-column:1 / span 2;"
+                "background:rgba(248,250,252,.75);border-radius:8px;"
+                "padding:5px 7px;'>"
+                f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+                "text-transform:uppercase;letter-spacing:.05em;'>"
+                "Mean attendance</div>"
+                f"<div style='font-size:13px;font-weight:800;"
+                f"color:{C_ATT};'>{{att_avg}}</div></div>"
                 "</div>"
-                "<div class='pin-foot'>{schools_list}</div>"
+                f"<div style='font-size:10.5px;color:{C_MUTED};"
+                "margin-top:7px;line-height:1.45;'>{schools_list}</div>"
                 "</div>"
             ),
             "style": {
@@ -2475,7 +2499,16 @@ def render_school_map(
     )
     st.pydeck_chart(deck, use_container_width=True)
 
-    if band_mode:
+    if polygons_only:
+        st.markdown(
+            "<div class='map-note'>"
+            "<b>Cluster shading:</b> deeper red means a larger cluster "
+            "(more connected LSOAs). Shading does not show deprivation "
+            "intensity. Hover a region for its own figures."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    elif band_mode:
         st.markdown(
             "<div class='map-note'>"
             "<b>Severity bands on the clustered variable:</b> "
@@ -4111,21 +4144,25 @@ def page_map(cfg: Dict[str, str]) -> None:
         # proximity vocabulary instead of a raw hop count: touches = 1 hop,
         # graph-near = 2 hops (the paper's near), far = more than 2.
         CLUSTER_REACH = {
-            "Touching only (touches)": 1,
-            "Including near (2 steps)": 2,
-            "Including far (4 steps)": 4,
+            "1 step (partial: neighbours only)": 1,
+            "2 steps (partial)": 2,
+            "4 steps (recommended: closest to full clusters)": 4,
         }
         reach_label = st.sidebar.selectbox(
-            "How far the cluster reaches",
+            "Search depth for connected clusters",
             list(CLUSTER_REACH.keys()),
             index=2,
             help=(
-                "This uses the proximity vocabulary of the evaluation "
-                "instrument. Touching only groups LSOAs that share a "
-                "boundary. Including near adds units two touches-steps "
-                "away, which is the paper's definition of near. Including "
-                "far reaches beyond that. A wider reach merges nearby "
-                "patches into fewer, larger clusters."
+                "How many touches-steps the search walks while growing a "
+                "cluster. Every step must stay inside the pool, so this is "
+                "not a jump across non-qualifying areas: it is a limit on "
+                "how far the connected-component search reaches. 4 steps "
+                "comes closest to true connected clusters and is the "
+                "recommended setting. 1 and 2 steps under-merge and split "
+                "real patches — useful as a documented sensitivity check "
+                "(record how cluster counts and sizes change), not as the "
+                "headline figure. The bound exists because Cypher cannot "
+                "take a variable-length bound as a parameter without APOC."
             ),
         )
         cluster_depth = CLUSTER_REACH[reach_label]
