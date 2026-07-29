@@ -844,6 +844,42 @@ ORDER BY avg_school_fsm_pct DESC, lsoa_code
 LIMIT $limit
 """
 
+# Supervisor's baseline table applied per question: the answering MODE and its
+# geometric cost, kept separate from the provenance triad. Provenance answers
+# "where did the relation come from"; mode answers "how was it computed and
+# what did it cost". Only Native counts toward model completeness.
+SCQ_ANSWER_MODE = {
+    "SCQ1": ("Computed-then-stored", "Paid once", "No"),
+    "SCQ2": ("Computed-then-stored", "Paid once", "No"),
+    "SCQ3": ("Computed-then-stored", "Paid once", "No"),
+    "SCQ4": ("Computed-then-stored", "Paid once", "No"),
+    "SCQ5": ("Not applicable", "—", "n/a"),
+    "SCQ6": ("Not applicable", "—", "n/a"),
+    "SCQ7": ("Computed-then-stored", "Paid once", "No"),
+    "SCQ8": ("Computed-then-stored", "Paid once", "No"),
+}
+
+MODE_NOTE = {
+    "Native": (
+        "Inherited from YAGO2geo, or traversal over an inherited relation. "
+        "This is the only mode that counts as model coverage."
+    ),
+    "Geometry-on-demand": (
+        "The polygon relation is recomputed at every query. This is the "
+        "baseline against which stored relations are compared."
+    ),
+    "Computed-then-stored": (
+        "Base touches computed once and stored, then traversed for near, "
+        "far, between and chains. Same answers as on-demand, so the two tie "
+        "on completeness; the difference is cost, composability and "
+        "explainability."
+    ),
+    "Not applicable": (
+        "Reclassified: this form belongs to the cross-hierarchy questions."
+    ),
+}
+
+
 SCQ_META = {
     "SCQ1": {
         "label": "SCQ1 — LSOA borders / touches",
@@ -2761,6 +2797,18 @@ def page_scq_demonstrator(
     with left:
         st.subheader(scq_question(scq_key, meta))
         st.write(meta["keyword_sentence"])
+        mode, cost, counts = SCQ_ANSWER_MODE.get(
+            scq_key, ("Computed-then-stored", "Paid once", "No")
+        )
+        st.markdown(
+            "<div class='solutionbox'>"
+            f"<b>Answering mode:</b> {mode} &nbsp;·&nbsp; "
+            f"<b>Geometric cost:</b> {cost} &nbsp;·&nbsp; "
+            f"<b>Counts toward model completeness:</b> {counts}"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(MODE_NOTE.get(mode, ""))
 
     with right:
         st.markdown(
@@ -4782,14 +4830,40 @@ ORDER BY cluster_size DESC, cluster_id
                 )
                 polygon_df["fsm_avg"] = polygon_df["fsm_avg"].fillna("N/A")
                 polygon_df["att_avg"] = polygon_df["att_avg"].fillna("N/A")
-        except Exception:
+        except Exception as exc:
             polygon_df = None
+            st.warning(
+                "Cluster regions could not be drawn, so school pins are "
+                f"shown instead. Reason: {exc}"
+            )
 
     cluster_only = bool(
         search_mode == "Cluster search"
         and polygon_df is not None
         and not polygon_df.empty
     )
+    if search_mode == "Cluster search" and not cluster_only:
+        wkt_count = int(
+            scalar(
+                cfg,
+                "MATCH (l:LSOA) WHERE l.wkt IS NOT NULL RETURN count(l)",
+                default=0,
+            )
+            or 0
+        )
+        if wkt_count == 0:
+            st.error(
+                "This database has no LSOA boundary geometry (l.wkt), so "
+                "cluster regions cannot be drawn and school pins are shown "
+                "instead. The boundary load ran on the other database — run "
+                "the LSOA geometry step of load_to_neo4j.py against this one."
+            )
+        else:
+            st.info(
+                f"{wkt_count:,} LSOAs carry boundary geometry, but none of "
+                "the current cluster members returned a polygon. Showing "
+                "school pins instead."
+            )
     if cluster_only:
         st.caption(
             "Cluster regions are shaded by size — hover a region to see the "
