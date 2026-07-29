@@ -1893,6 +1893,15 @@ PIN_ICONS = {
     "unknown": _pin_icon("#94a3b8", "#475569"),
 }
 
+# Traffic-light icons for the all-bands cluster view: red = worst band on the
+# clustered variable, green = best, grey = the LSOA has no value to band on.
+BAND_PIN_ICONS = {
+    "band_red": _pin_icon("#e11d48", "#881337"),
+    "band_mid": _pin_icon("#ff8a00", "#a34f00"),
+    "band_green": _pin_icon("#22c55e", "#166534"),
+    "band_none": _pin_icon("#94a3b8", "#475569"),
+}
+
 
 # The deck.gl tooltip is absolutely positioned inside the chart wrapper, so a
 # pin near the bottom edge would have its card clipped. Two things are needed:
@@ -1993,9 +2002,18 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
         unsafe_allow_html=True,
     )
 
-    chart_df["icon"] = chart_df["deprivation"].apply(
-        lambda d: PIN_ICONS.get(str(d), PIN_ICONS["unknown"])
+    band_mode = (
+        "cluster_band" in chart_df.columns
+        and chart_df["cluster_band"].notna().any()
     )
+    if band_mode:
+        chart_df["icon"] = chart_df["cluster_band"].apply(
+            lambda b: BAND_PIN_ICONS.get(str(b), BAND_PIN_ICONS["band_none"])
+        )
+    else:
+        chart_df["icon"] = chart_df["deprivation"].apply(
+            lambda d: PIN_ICONS.get(str(d), PIN_ICONS["unknown"])
+        )
 
     focused = selected_school[0] != "All"
 
@@ -2115,16 +2133,32 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
     )
     st.pydeck_chart(deck, use_container_width=True)
 
-    st.markdown(
-        "<div class='map-note'>"
-        "<b>Deprivation legend:</b> "
-        "<span style='color:#ff4f79;font-size:16px;'>&#9679;</span> High &nbsp; "
-        "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
-        "<span style='color:#20c6d7;font-size:16px;'>&#9679;</span> Low &nbsp; "
-        "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    if band_mode:
+        st.markdown(
+            "<div class='map-note'>"
+            "<b>Severity bands on the clustered variable:</b> "
+            "<span style='color:#e11d48;font-size:16px;'>&#9679;</span>"
+            " Worst band &nbsp; "
+            "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span>"
+            " Middle band &nbsp; "
+            "<span style='color:#22c55e;font-size:16px;'>&#9679;</span>"
+            " Best band &nbsp; "
+            "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span>"
+            " No value to band on"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div class='map-note'>"
+            "<b>Deprivation legend:</b> "
+            "<span style='color:#ff4f79;font-size:16px;'>&#9679;</span> High &nbsp; "
+            "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
+            "<span style='color:#20c6d7;font-size:16px;'>&#9679;</span> Low &nbsp; "
+            "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     if selected_school[0] != "All" and not chart_df.empty:
         r = chart_df.iloc[0]
@@ -3541,10 +3575,13 @@ def page_map(cfg: Dict[str, str]) -> None:
     ]
     cluster_variable = CLUSTER_VARIABLES[0]
     cluster_domain_label = "Education"
-    cluster_decile = 3
-    cluster_rank_threshold = 382
-    cluster_fsm_threshold = 30.0
-    cluster_att_threshold = 92.0
+    cluster_decile_min = cluster_decile_max = None
+    cluster_rank_min = cluster_rank_max = None
+    cluster_fsm_min = cluster_fsm_max = None
+    cluster_att_min = cluster_att_max = None
+    cluster_inputs_ok = True
+    cluster_view = "Bounded pool"
+    band_cut1 = band_cut2 = None
     cluster_depth = 4
     min_cluster_size = 3
     if search_mode == "An adjacency cluster":
@@ -3568,18 +3605,52 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "clusters."
             ),
         )
+        def cluster_bound(
+            label: str,
+            default_text: str,
+            lo: float,
+            hi: float,
+            key: str,
+            integer: bool = False,
+        ) -> float | None:
+            """Optional typed bound. Blank or All means no bound on this side."""
+            raw = st.sidebar.text_input(
+                label, value=default_text, placeholder="All", key=key
+            )
+            text = str(raw).strip()
+            if not text or text.lower() == "all":
+                return None
+            try:
+                value = float(text)
+            except ValueError:
+                st.sidebar.error(f"{label}: enter a number or All.")
+                st.session_state["_cluster_input_error"] = True
+                return None
+            if value < lo or value > hi:
+                st.sidebar.error(
+                    f"{label}: {value:g} is outside the data range "
+                    f"({lo:g}\u2013{hi:g})."
+                )
+                st.session_state["_cluster_input_error"] = True
+                return None
+            return float(int(value)) if integer else value
+
+        st.session_state["_cluster_input_error"] = False
+        st.sidebar.caption(
+            "Type exact bounds; leave a box as All to drop that side. The "
+            "exact values you type are what goes in the research log."
+        )
         if cluster_variable == "Deprivation (WIMD decile)":
-            cluster_decile = st.sidebar.slider(
-                "WIMD decile at most",
-                min_value=1,
-                max_value=10,
-                value=3,
-                help=(
-                    "An LSOA joins the pool when its WIMD decile is at or "
-                    "below this value. Decile 1 is the most deprived. This "
-                    "threshold is a research choice: record the value you use "
-                    "and the alternative you rejected."
-                ),
+            cluster_decile_min = cluster_bound(
+                "WIMD decile from", "All", 1, 10, "cl_dec_min", integer=True
+            )
+            cluster_decile_max = cluster_bound(
+                "WIMD decile to", "3", 1, 10, "cl_dec_max", integer=True
+            )
+            st.sidebar.caption(
+                "Decile 1 is the most deprived. 'to 3' alone reproduces the "
+                "old most-deprived-30% pool; 'from 8' alone selects the "
+                "least deprived."
             )
         elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
             cluster_domain_label = st.sidebar.selectbox(
@@ -3587,63 +3658,149 @@ def page_map(cfg: Dict[str, str]) -> None:
                 list(WIMD_DOMAIN_PROPS.keys()),
                 index=3,
             )
-            cluster_rank_threshold = st.sidebar.slider(
-                "Domain rank at most (1 = most deprived of 1,909)",
-                min_value=50,
-                max_value=1909,
-                value=382,
-                step=1,
-                help=(
-                    "382 is the top quintile (most deprived 20%). Domain "
-                    "ranks come from wimd_2019.xlsx via load_to_neo4j.py's "
-                    "load_wimd() (RUN_WIMD_LOAD = True)."
-                ),
+            cluster_rank_min = cluster_bound(
+                "Domain rank from", "All", 1, 1909, "cl_rank_min", integer=True
             )
-        elif cluster_variable == "School FSM average":
-            cluster_fsm_threshold = st.sidebar.slider(
-                "Mean school FSM % at least",
-                min_value=0.0,
-                max_value=71.8,
-                value=30.0,
-                step=0.5,
-                help=(
-                    "The LSOA joins the pool when the average FSM of its "
-                    "schools is at or above this value. FSM coverage is "
-                    "96.6% of schools."
-                ),
-            )
-        elif cluster_variable == "School attendance average":
-            cluster_att_threshold = st.sidebar.slider(
-                "Mean school attendance % at most",
-                min_value=79.1,
-                max_value=98.1,
-                value=92.0,
-                step=0.1,
-                help=(
-                    "The LSOA joins the pool when the average attendance of "
-                    "its schools is at or below this value. The official "
-                    "Welsh Government persistent-absence line is 90%. "
-                    "Attendance coverage is 96.7% of schools."
-                ),
-            )
-        else:
-            cluster_fsm_threshold = st.sidebar.slider(
-                "Mean school FSM % at least",
-                min_value=0.0,
-                max_value=71.8,
-                value=30.0,
-                step=0.5,
-            )
-            cluster_att_threshold = st.sidebar.slider(
-                "Mean school attendance % at most",
-                min_value=79.1,
-                max_value=98.1,
-                value=92.0,
-                step=0.1,
+            cluster_rank_max = cluster_bound(
+                "Domain rank to", "382", 1, 1909, "cl_rank_max", integer=True
             )
             st.sidebar.caption(
-                "The compound pool needs both conditions at once: high "
-                "deprivation pressure (FSM) and low attendance."
+                "Rank 1 = most deprived of 1,909. 'to 382' is the most "
+                "deprived quintile. Ranks come from wimd_2019.xlsx via "
+                "load_wimd() (RUN_WIMD_LOAD = True)."
+            )
+        elif cluster_variable == "School FSM average":
+            cluster_fsm_min = cluster_bound(
+                "Mean school FSM % from", "30", 0.0, 71.8, "cl_fsm_min"
+            )
+            cluster_fsm_max = cluster_bound(
+                "Mean school FSM % to", "All", 0.0, 71.8, "cl_fsm_max"
+            )
+            st.sidebar.caption(
+                "Mean over the schools LOCATED_IN each LSOA; FSM coverage "
+                "is 96.6% of schools."
+            )
+        elif cluster_variable == "School attendance average":
+            cluster_att_min = cluster_bound(
+                "Mean attendance % from", "All", 79.1, 98.1, "cl_att_min"
+            )
+            cluster_att_max = cluster_bound(
+                "Mean attendance % to", "92", 79.1, 98.1, "cl_att_max"
+            )
+            st.sidebar.caption(
+                "The official Welsh Government persistent-absence line is "
+                "90%. Attendance coverage is 96.7% of schools."
+            )
+        else:
+            cluster_fsm_min = cluster_bound(
+                "Mean school FSM % from", "30", 0.0, 71.8, "cl_c_fsm_min"
+            )
+            cluster_fsm_max = cluster_bound(
+                "Mean school FSM % to", "All", 0.0, 71.8, "cl_c_fsm_max"
+            )
+            cluster_att_min = cluster_bound(
+                "Mean attendance % from", "All", 79.1, 98.1, "cl_c_att_min"
+            )
+            cluster_att_max = cluster_bound(
+                "Mean attendance % to", "92", 79.1, 98.1, "cl_c_att_max"
+            )
+            st.sidebar.caption(
+                "The compound pool needs both metrics inside their bounds "
+                "at once: deprivation pressure (FSM) and low attendance."
+            )
+        for low, high, label in (
+            (cluster_decile_min, cluster_decile_max, "WIMD decile"),
+            (cluster_rank_min, cluster_rank_max, "Domain rank"),
+            (cluster_fsm_min, cluster_fsm_max, "FSM"),
+            (cluster_att_min, cluster_att_max, "Attendance"),
+        ):
+            if low is not None and high is not None and low > high:
+                st.sidebar.error(f"{label}: From is above To.")
+                st.session_state["_cluster_input_error"] = True
+        cluster_inputs_ok = not st.session_state.get(
+            "_cluster_input_error", False
+        )
+        if cluster_variable != "High FSM and low attendance (compound)":
+            cluster_view = st.sidebar.radio(
+                "Cluster view",
+                ["Bounded pool", "All severity bands"],
+                help=(
+                    "Bounded pool uses the From/To boxes above and returns "
+                    "connected clusters inside that pool. All severity bands "
+                    "colours every school by its LSOA's band on the chosen "
+                    "variable: red worst, orange middle, green best. Banding "
+                    "is a grading of the variable, not of the clustering — "
+                    "the adjacency cluster itself is binary (in or out). For "
+                    "graded cluster confidence, the statistical Gi* route "
+                    "with 90/95/99% bands is the tool, and it stays outside "
+                    "the completeness scoring."
+                ),
+            )
+            if cluster_view == "All severity bands":
+                if cluster_variable == "Deprivation (WIMD decile)":
+                    band_cut1, band_cut2 = 3.0, 7.0
+                    st.sidebar.caption(
+                        "Fixed bands 1–3 / 4–7 / 8–10 — identical to the "
+                        "loader's high/medium/low deprivation categories, so "
+                        "the two colourings stay consistent."
+                    )
+                elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+                    band_cut1 = cluster_bound(
+                        "Red band up to rank", "636", 1, 1909,
+                        "band_rank_1", integer=True,
+                    )
+                    band_cut2 = cluster_bound(
+                        "Orange band up to rank", "1272", 1, 1909,
+                        "band_rank_2", integer=True,
+                    )
+                    st.sidebar.caption(
+                        "Defaults are tertiles of 1,909. The cuts are a "
+                        "research choice: record them."
+                    )
+                elif cluster_variable == "School FSM average":
+                    band_cut1 = cluster_bound(
+                        "Orange band from FSM %", "15", 0.0, 71.8,
+                        "band_fsm_1",
+                    )
+                    band_cut2 = cluster_bound(
+                        "Red band from FSM %", "30", 0.0, 71.8,
+                        "band_fsm_2",
+                    )
+                    st.sidebar.caption(
+                        "Green below the first cut, orange between, red at "
+                        "or above the second. Cuts are a research choice: "
+                        "record them."
+                    )
+                else:
+                    band_cut1 = cluster_bound(
+                        "Red band up to attendance %", "90", 79.1, 98.1,
+                        "band_att_1",
+                    )
+                    band_cut2 = cluster_bound(
+                        "Orange band up to attendance %", "94", 79.1, 98.1,
+                        "band_att_2",
+                    )
+                    st.sidebar.caption(
+                        "90% is the official Welsh Government "
+                        "persistent-absence line; the upper cut is a "
+                        "research choice: record it."
+                    )
+                if band_cut1 is None or band_cut2 is None:
+                    st.sidebar.error("Both band cuts are needed.")
+                    st.session_state["_cluster_input_error"] = True
+                elif float(band_cut1) >= float(band_cut2):
+                    st.sidebar.error(
+                        "The first band cut must be below the second."
+                    )
+                    st.session_state["_cluster_input_error"] = True
+                cluster_inputs_ok = not st.session_state.get(
+                    "_cluster_input_error", False
+                )
+        else:
+            cluster_view = "Bounded pool"
+            st.sidebar.caption(
+                "The banded view needs a single variable to grade, so it is "
+                "not offered for the compound pool."
             )
         cluster_depth = st.sidebar.select_slider(
             "Traversal depth (documented bound)",
@@ -3905,16 +4062,117 @@ def page_map(cfg: Dict[str, str]) -> None:
     cluster_cypher = ""
     cluster_params: Dict[str, Any] = {"min_size": int(min_cluster_size)}
     cluster_pool_label = ""
+    band_map: Dict[str, str] = {}
+    band_label = ""
+    band_cypher = ""
     if search_mode == "An adjacency cluster":
-        if cluster_variable == "Deprivation (WIMD decile)":
+        if not cluster_inputs_ok:
+            st.info(
+                "Fix the red cluster bound message in the sidebar, or type "
+                "All to drop that bound."
+            )
+            return
+
+        if cluster_view == "All severity bands":
+            c1, c2 = float(band_cut1), float(band_cut2)
+            if cluster_variable == "Deprivation (WIMD decile)":
+                band_cypher = (
+                    "MATCH (l:LSOA)\n"
+                    "WHERE l.wimd_decile IS NOT NULL\n"
+                    "RETURN l.code AS code,\n"
+                    "  CASE WHEN l.wimd_decile <= $c1 THEN 'band_red'\n"
+                    "       WHEN l.wimd_decile <= $c2 THEN 'band_mid'\n"
+                    "       ELSE 'band_green' END AS band"
+                )
+                band_label = "WIMD decile bands 1-3 / 4-7 / 8-10"
+            elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+                domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
+                band_cypher = (
+                    "MATCH (l:LSOA)\n"
+                    f"WHERE l.{domain_prop} IS NOT NULL\n"
+                    "RETURN l.code AS code,\n"
+                    f"  CASE WHEN l.{domain_prop} <= $c1 THEN 'band_red'\n"
+                    f"       WHEN l.{domain_prop} <= $c2 THEN 'band_mid'\n"
+                    "       ELSE 'band_green' END AS band"
+                )
+                band_label = (
+                    f"{cluster_domain_label} rank bands: red <= {c1:g}, "
+                    f"orange <= {c2:g}, green above"
+                )
+            elif cluster_variable == "School FSM average":
+                band_cypher = (
+                    "MATCH (l:LSOA)\n"
+                    "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
+                    "WITH l, avg(s.fsm_pct) AS m\n"
+                    "WHERE m IS NOT NULL\n"
+                    "RETURN l.code AS code,\n"
+                    "  CASE WHEN m >= $c2 THEN 'band_red'\n"
+                    "       WHEN m >= $c1 THEN 'band_mid'\n"
+                    "       ELSE 'band_green' END AS band"
+                )
+                band_label = (
+                    f"mean school FSM bands: green < {c1:g}%, orange "
+                    f"{c1:g}-{c2:g}%, red >= {c2:g}%"
+                )
+            else:
+                band_cypher = (
+                    "MATCH (l:LSOA)\n"
+                    "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
+                    "WITH l, avg(s.attendance_pct) AS m\n"
+                    "WHERE m IS NOT NULL\n"
+                    "RETURN l.code AS code,\n"
+                    "  CASE WHEN m <= $c1 THEN 'band_red'\n"
+                    "       WHEN m <= $c2 THEN 'band_mid'\n"
+                    "       ELSE 'band_green' END AS band"
+                )
+                band_label = (
+                    f"mean attendance bands: red <= {c1:g}%, orange "
+                    f"{c1:g}-{c2:g}%, green > {c2:g}%"
+                )
+            try:
+                band_df = run_cypher(
+                    cfg, band_cypher, {"c1": c1, "c2": c2}
+                )
+            except Exception as exc:
+                st.error(f"Band query failed: {exc}")
+                st.code(band_cypher, language="cypher")
+                return
+            band_map = dict(
+                zip(band_df["code"].astype(str), band_df["band"])
+            )
+
+        def range_clause(
+            expr: str, low: float | None, high: float | None,
+            p_low: str, p_high: str, as_int: bool = False,
+        ) -> Tuple[str, str]:
+            """WHERE fragment + human label for an optional two-sided bound."""
+            parts, labels = [], []
+            if low is not None:
+                parts.append(f"{expr} >= ${p_low}")
+                cluster_params[p_low] = int(low) if as_int else float(low)
+                labels.append(f">= {low:g}")
+            if high is not None:
+                parts.append(f"{expr} <= ${p_high}")
+                cluster_params[p_high] = int(high) if as_int else float(high)
+                labels.append(f"<= {high:g}")
+            return " AND ".join(parts), " and ".join(labels)
+
+        if cluster_view == "All severity bands":
+            pass
+        elif cluster_variable == "Deprivation (WIMD decile)":
+            if cluster_decile_min is None and cluster_decile_max is None:
+                st.warning("Set at least one WIMD decile bound.")
+                return
+            clause, lab = range_clause(
+                "l.wimd_decile", cluster_decile_min, cluster_decile_max,
+                "min_decile", "max_decile", as_int=True,
+            )
             pool_match = (
                 "MATCH (l:LSOA)\n"
-                "WHERE l.wimd_decile IS NOT NULL "
-                "AND l.wimd_decile <= $max_decile\n"
+                f"WHERE l.wimd_decile IS NOT NULL AND {clause}\n"
                 "WITH collect(l.code) AS pool_codes"
             )
-            cluster_params["max_decile"] = int(cluster_decile)
-            cluster_pool_label = f"WIMD decile <= {int(cluster_decile)}"
+            cluster_pool_label = f"WIMD decile {lab}"
         elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
             domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
             loaded = int(
@@ -3936,64 +4194,95 @@ def page_map(cfg: Dict[str, str]) -> None:
                     "domains load with the original."
                 )
                 return
+            if cluster_rank_min is None and cluster_rank_max is None:
+                st.warning("Set at least one domain-rank bound.")
+                return
+            clause, lab = range_clause(
+                f"l.{domain_prop}", cluster_rank_min, cluster_rank_max,
+                "min_rank", "max_rank", as_int=True,
+            )
             pool_match = (
                 "MATCH (l:LSOA)\n"
-                f"WHERE l.{domain_prop} IS NOT NULL "
-                f"AND l.{domain_prop} <= $max_rank\n"
+                f"WHERE l.{domain_prop} IS NOT NULL AND {clause}\n"
                 "WITH collect(l.code) AS pool_codes"
             )
-            cluster_params["max_rank"] = int(cluster_rank_threshold)
             cluster_pool_label = (
-                f"{cluster_domain_label} rank <= {int(cluster_rank_threshold)}"
-                f" (of 1,909; {loaded:,} LSOAs carry the rank)"
+                f"{cluster_domain_label} rank {lab} "
+                f"(of 1,909; {loaded:,} LSOAs carry the rank)"
             )
         elif cluster_variable == "School FSM average":
+            if cluster_fsm_min is None and cluster_fsm_max is None:
+                st.warning("Set at least one FSM bound.")
+                return
+            clause, lab = range_clause(
+                "pool_metric", cluster_fsm_min, cluster_fsm_max,
+                "fsm_lo", "fsm_hi",
+            )
             pool_match = (
                 "MATCH (l:LSOA)\n"
                 "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
                 "WITH l, avg(s.fsm_pct) AS pool_metric\n"
-                "WHERE pool_metric IS NOT NULL "
-                "AND pool_metric >= $min_fsm_mean\n"
+                f"WHERE pool_metric IS NOT NULL AND {clause}\n"
                 "WITH collect(l.code) AS pool_codes"
             )
-            cluster_params["min_fsm_mean"] = float(cluster_fsm_threshold)
             cluster_pool_label = (
-                f"mean school FSM >= {cluster_fsm_threshold:g}% "
-                "(LSOAs with no schools drop out)"
+                f"mean school FSM {lab}% (LSOAs with no schools drop out)"
             )
         elif cluster_variable == "School attendance average":
+            if cluster_att_min is None and cluster_att_max is None:
+                st.warning("Set at least one attendance bound.")
+                return
+            clause, lab = range_clause(
+                "pool_metric", cluster_att_min, cluster_att_max,
+                "att_lo", "att_hi",
+            )
             pool_match = (
                 "MATCH (l:LSOA)\n"
                 "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
                 "WITH l, avg(s.attendance_pct) AS pool_metric\n"
-                "WHERE pool_metric IS NOT NULL "
-                "AND pool_metric <= $max_att_mean\n"
+                f"WHERE pool_metric IS NOT NULL AND {clause}\n"
                 "WITH collect(l.code) AS pool_codes"
             )
-            cluster_params["max_att_mean"] = float(cluster_att_threshold)
             cluster_pool_label = (
-                f"mean school attendance <= {cluster_att_threshold:g}% "
+                f"mean school attendance {lab}% "
                 "(official persistent-absence line: 90%)"
             )
         else:
+            fsm_set = (
+                cluster_fsm_min is not None or cluster_fsm_max is not None
+            )
+            att_set = (
+                cluster_att_min is not None or cluster_att_max is not None
+            )
+            if not (fsm_set and att_set):
+                st.warning(
+                    "The compound pool needs at least one bound on FSM AND "
+                    "at least one on attendance."
+                )
+                return
+            fsm_clause, fsm_lab = range_clause(
+                "mean_fsm", cluster_fsm_min, cluster_fsm_max,
+                "fsm_lo", "fsm_hi",
+            )
+            att_clause, att_lab = range_clause(
+                "mean_att", cluster_att_min, cluster_att_max,
+                "att_lo", "att_hi",
+            )
             pool_match = (
                 "MATCH (l:LSOA)\n"
                 "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
                 "WITH l, avg(s.fsm_pct) AS mean_fsm, "
                 "avg(s.attendance_pct) AS mean_att\n"
                 "WHERE mean_fsm IS NOT NULL AND mean_att IS NOT NULL\n"
-                "AND mean_fsm >= $min_fsm_mean "
-                "AND mean_att <= $max_att_mean\n"
+                f"AND {fsm_clause} AND {att_clause}\n"
                 "WITH collect(l.code) AS pool_codes"
             )
-            cluster_params["min_fsm_mean"] = float(cluster_fsm_threshold)
-            cluster_params["max_att_mean"] = float(cluster_att_threshold)
             cluster_pool_label = (
-                f"mean FSM >= {cluster_fsm_threshold:g}% AND "
-                f"mean attendance <= {cluster_att_threshold:g}%"
+                f"mean FSM {fsm_lab}% AND mean attendance {att_lab}%"
             )
 
-        cluster_cypher = f"""
+        if cluster_view == "Bounded pool":
+            cluster_cypher = f"""
 // Adjacency cluster over the computed LSOA_TOUCHES graph.
 // Pool: {cluster_pool_label}
 // Geometry-origin: LSOA_TOUCHES is derived from boundary geometry and is not
@@ -4016,26 +4305,30 @@ RETURN cluster_id,
        members
 ORDER BY cluster_size DESC, cluster_id
 """
-        try:
-            with st.spinner("Building adjacency clusters over LSOA_TOUCHES..."):
-                cluster_df = run_cypher(cfg, cluster_cypher, cluster_params)
-        except Exception as exc:
-            st.error(f"Cluster query failed: {exc}")
-            st.code(cluster_cypher, language="cypher")
-            return
-        if cluster_df.empty:
-            st.warning(
-                "No adjacency cluster met both the deprivation threshold and "
-                "the minimum size. Raise the WIMD decile, lower the minimum "
-                "size, or increase the traversal depth."
-            )
-            st.code(cluster_cypher, language="cypher")
-            return
-        for member_list in cluster_df["members"]:
-            cluster_codes.extend(list(member_list))
-        cluster_codes = sorted(set(cluster_codes))
-        conditions.append("l.code IN $cluster_codes")
-        params["cluster_codes"] = cluster_codes
+            try:
+                with st.spinner(
+                    "Building adjacency clusters over LSOA_TOUCHES..."
+                ):
+                    cluster_df = run_cypher(
+                        cfg, cluster_cypher, cluster_params
+                    )
+            except Exception as exc:
+                st.error(f"Cluster query failed: {exc}")
+                st.code(cluster_cypher, language="cypher")
+                return
+            if cluster_df.empty:
+                st.warning(
+                    "No adjacency cluster met both the threshold and the "
+                    "minimum size. Widen the bounds, lower the minimum "
+                    "size, or increase the traversal depth."
+                )
+                st.code(cluster_cypher, language="cypher")
+                return
+            for member_list in cluster_df["members"]:
+                cluster_codes.extend(list(member_list))
+            cluster_codes = sorted(set(cluster_codes))
+            conditions.append("l.code IN $cluster_codes")
+            params["cluster_codes"] = cluster_codes
 
     non_metric_conditions = (
         base_conditions + conditions[len(base_conditions) + len(filtered_metric_props):]
@@ -4098,6 +4391,7 @@ ORDER BY cluster_size DESC, cluster_id
            s.latitude AS latitude,
            s.longitude AS longitude,
            coalesce(s.pupils_2025, s.pupils) AS pupils,
+           l.code AS lsoa_code,
            coalesce(l.deprivation, s.deprivation, 'unknown') AS deprivation,
            coalesce(l.wimd_decile, s.wimd_decile) AS wimd_decile,
            s.fsm_pct AS fsm_pct,
@@ -4191,6 +4485,32 @@ ORDER BY cluster_size DESC, cluster_id
     map_df["latitude"] = pd.to_numeric(map_df["latitude"], errors="coerce")
     map_df["longitude"] = pd.to_numeric(map_df["longitude"], errors="coerce")
     map_df = map_df.dropna(subset=["latitude", "longitude"])
+    if band_map:
+        map_df["cluster_band"] = (
+            map_df["lsoa_code"].astype(str).map(band_map).fillna("band_none")
+        )
+        band_counts = map_df["cluster_band"].value_counts()
+        st.markdown(
+            f"{provenance_badge('Geometry-origin')} "
+            f"**All severity bands** — {band_label}. Schools: "
+            f"<span style='color:#e11d48;font-weight:800'>"
+            f"{int(band_counts.get('band_red', 0)):,} red</span> · "
+            f"<span style='color:#ff8a00;font-weight:800'>"
+            f"{int(band_counts.get('band_mid', 0)):,} orange</span> · "
+            f"<span style='color:#22c55e;font-weight:800'>"
+            f"{int(band_counts.get('band_green', 0)):,} green</span> · "
+            f"{int(band_counts.get('band_none', 0)):,} without a value.",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "The bands grade the variable, not the clustering: an adjacency "
+            "cluster is binary (an LSOA is in the pool or not). Graded "
+            "cluster confidence (90/95/99%) is what the statistical Gi* "
+            "route provides, and that stays outside completeness scoring."
+        )
+        with st.expander("Band Cypher"):
+            st.code(band_cypher, language="cypher")
+            st.json({"c1": float(band_cut1), "c2": float(band_cut2)})
     if map_df.empty:
         st.info("No rows with valid map coordinates after filtering.")
         st.code(cypher, language="cypher")
