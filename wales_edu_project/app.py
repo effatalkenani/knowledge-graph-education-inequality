@@ -1902,6 +1902,67 @@ def render_task_card(t: Dict[str, Any]) -> None:
     )
 
 
+# LSOA boundaries are stored in the graph as WKT in British National Grid
+# (EPSG:27700) because load_to_neo4j.py reprojects everything to BNG before
+# doing point-in-polygon. deck.gl needs lon/lat, so grid metres are converted
+# here. Self-contained on purpose: no pyproj dependency in the deployed app.
+# Accuracy is a few metres without OSTN15, which is far finer than an LSOA.
+def bng_to_wgs84(east, north):
+    a, b = 6377563.396, 6356256.909
+    F0 = 0.9996012717
+    lat0 = math.radians(49.0); lon0 = math.radians(-2.0)
+    N0, E0 = -100000.0, 400000.0
+    e2 = 1 - (b*b)/(a*a)
+    n = (a-b)/(a+b); n2=n*n; n3=n2*n
+    lat = lat0; M = 0.0
+    while True:
+        lat = (north - N0 - M)/(a*F0) + lat
+        Ma = (1+n+1.25*n2+1.25*n3)*(lat-lat0)
+        Mb = (3*n+3*n2+2.625*n3)*math.sin(lat-lat0)*math.cos(lat+lat0)
+        Mc = (1.875*n2+1.875*n3)*math.sin(2*(lat-lat0))*math.cos(2*(lat+lat0))
+        Md = (35.0/24.0)*n3*math.sin(3*(lat-lat0))*math.cos(3*(lat+lat0))
+        M = b*F0*(Ma-Mb+Mc-Md)
+        if abs(north - N0 - M) < 1e-5:
+            break
+    cosLat, sinLat = math.cos(lat), math.sin(lat)
+    nu = a*F0/math.sqrt(1-e2*sinLat*sinLat)
+    rho = a*F0*(1-e2)*pow(1-e2*sinLat*sinLat, -1.5)
+    eta2 = nu/rho - 1
+    tanLat = math.tan(lat); t2 = tanLat*tanLat; t4 = t2*t2; t6 = t4*t2
+    secLat = 1.0/cosLat
+    VII = tanLat/(2*rho*nu)
+    VIII = tanLat/(24*rho*nu**3)*(5+3*t2+eta2-9*t2*eta2)
+    IX = tanLat/(720*rho*nu**5)*(61+90*t2+45*t4)
+    X = secLat/nu
+    XI = secLat/(6*nu**3)*(nu/rho+2*t2)
+    XII = secLat/(120*nu**5)*(5+28*t2+24*t4)
+    XIIA = secLat/(5040*nu**7)*(61+662*t2+1320*t4+720*t6)
+    dE = east - E0; dE2=dE*dE
+    latA = lat - VII*dE2 + VIII*dE2*dE2 - IX*dE2*dE2*dE2
+    lonA = lon0 + X*dE - XI*dE*dE2 + XII*dE*dE2*dE2 - XIIA*dE*dE2*dE2*dE2
+    # Helmert OSGB36 -> WGS84
+    H = 0.0
+    sinP, cosP = math.sin(latA), math.cos(latA)
+    sinL, cosL = math.sin(lonA), math.cos(lonA)
+    nu2 = a/math.sqrt(1-e2*sinP*sinP)
+    x1 = (nu2+H)*cosP*cosL; y1 = (nu2+H)*cosP*sinL
+    z1 = ((1-e2)*nu2+H)*sinP
+    tx, ty, tz = 446.448, -125.157, 542.060
+    s = -20.4894e-6
+    rx = math.radians(0.1502/3600); ry = math.radians(0.2470/3600); rz = math.radians(0.8421/3600)
+    x2 = tx + x1*(1+s) - y1*rz + z1*ry
+    y2 = ty + x1*rz + y1*(1+s) - z1*rx
+    z2 = tz - x1*ry + y1*rx + z1*(1+s)
+    a2, b2 = 6378137.0, 6356752.3142
+    e22 = 1 - (b2*b2)/(a2*a2)
+    p = math.sqrt(x2*x2+y2*y2)
+    phi = math.atan2(z2, p*(1-e22))
+    for _ in range(12):
+        nu3 = a2/math.sqrt(1-e22*math.sin(phi)**2)
+        phi = math.atan2(z2 + e22*nu3*math.sin(phi), p)
+    return math.degrees(math.atan2(y2, x2)), math.degrees(phi)
+
+
 def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
     """Turn a POLYGON / MULTIPOLYGON WKT string into deck.gl ring lists.
 
@@ -1931,9 +1992,14 @@ def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
                     bits = pair.strip().split()
                     if len(bits) >= 2:
                         try:
-                            pts.append([float(bits[0]), float(bits[1])])
+                            x, y = float(bits[0]), float(bits[1])
                         except ValueError:
-                            pass
+                            continue
+                        # Grid metres are always far outside lon/lat range,
+                        # so magnitude is a safe discriminator.
+                        if abs(x) > 180.0 or abs(y) > 90.0:
+                            x, y = bng_to_wgs84(x, y)
+                        pts.append([x, y])
                 if len(pts) >= 3:
                     rings.append(pts)
                 current = ""
