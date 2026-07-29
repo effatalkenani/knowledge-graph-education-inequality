@@ -3520,15 +3520,17 @@ def page_map(cfg: Dict[str, str]) -> None:
         ),
     )
 
+    # Property names match load_to_neo4j.py's load_wimd(); the last three
+    # are added by the extended loader and need one RUN_WIMD_LOAD re-run.
     WIMD_DOMAIN_PROPS = {
-        "Income": "wimd_rank_income",
-        "Employment": "wimd_rank_employment",
-        "Health": "wimd_rank_health",
-        "Education": "wimd_rank_education",
-        "Access to Services": "wimd_rank_access",
-        "Housing": "wimd_rank_housing",
-        "Community Safety": "wimd_rank_safety",
-        "Physical Environment": "wimd_rank_environment",
+        "Income": "income_rank",
+        "Employment": "employment_rank",
+        "Health": "health_rank",
+        "Education": "education_rank",
+        "Access to Services": "access_rank",
+        "Housing": "housing_rank",
+        "Community Safety": "safety_rank",
+        "Physical Environment": "environment_rank",
     }
     CLUSTER_VARIABLES = [
         "Deprivation (WIMD decile)",
@@ -3593,8 +3595,8 @@ def page_map(cfg: Dict[str, str]) -> None:
                 step=1,
                 help=(
                     "382 is the top quintile (most deprived 20%). Domain "
-                    "ranks come from wimd_2019.xlsx and must be loaded onto "
-                    "LSOA nodes first with load_wimd_domains.py."
+                    "ranks come from wimd_2019.xlsx via load_to_neo4j.py's "
+                    "load_wimd() (RUN_WIMD_LOAD = True)."
                 ),
             )
         elif cluster_variable == "School FSM average":
@@ -3926,10 +3928,12 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
             if loaded == 0:
                 st.error(
-                    f"No LSOA carries {domain_prop} yet. Run "
-                    "load_wimd_domains.py to load the eight WIMD 2019 domain "
-                    "ranks from wimd_2019.xlsx onto the LSOA nodes, then "
-                    "reload this page."
+                    f"No LSOA carries {domain_prop} on this database yet. "
+                    "Set RUN_WIMD_LOAD = True in load_to_neo4j.py (extended "
+                    "version) and run it against this database, then reload "
+                    "this page. Housing, Community Safety and Physical "
+                    "Environment need the extended loader; the other five "
+                    "domains load with the original."
                 )
                 return
             pool_match = (
