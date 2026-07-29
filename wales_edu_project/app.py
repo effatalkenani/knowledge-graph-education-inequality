@@ -189,7 +189,7 @@ TASKS = [
             ("0.3", "Completeness Metrics", "Use SpCom and CQCov as the evaluation vocabulary."),
             ("0.4", "Graph Proximity", "Explain near/between through traversal over touches, not raw distance."),
         ],
-        "status": "Done",
+        "status": "Complete",
     },
     {
         "id": "Task 1",
@@ -201,7 +201,7 @@ TASKS = [
             ("1.3", "Native Topology", "Preserve native WITHIN and TOUCHES relations for model-level coverage."),
             ("1.4", "Neo4j Confirmation", "Expose node and relationship counts in the app for verification."),
         ],
-        "status": "Done",
+        "status": "Complete",
     },
     {
         "id": "Task 2",
@@ -215,7 +215,7 @@ TASKS = [
             ("2.5", "Transport Access", "Represent school proximity to transport stops using DISTANCE_NEAR."),
             ("2.6", "Provenance Labelling", "Record Native, Geometry-origin, or Derived origin for relationships."),
         ],
-        "status": "Closed in artifact",
+        "status": "Complete",
     },
     {
         "id": "Task 3",
@@ -227,7 +227,7 @@ TASKS = [
             ("3.3", "No Forced Fit", "Mark SCQ3 as weak/optional for this use case rather than manufacturing evidence."),
             ("3.4", "Reclassification", "Move Ward–LSOA containment-style questions away from SCQ5/SCQ6 into SCQ7/SCQ8."),
         ],
-        "status": "Closed in artifact",
+        "status": "Complete",
     },
     {
         "id": "Task 4",
@@ -240,7 +240,7 @@ TASKS = [
             ("4.4", "Provenance Panel", "Show Native, Geometry-origin, or Derived for the relation used."),
             ("4.5", "Map Support", "Keep only a lightweight map that supports the demonstrator."),
         ],
-        "status": "Closed in artifact",
+        "status": "Complete",
     },
     {
         "id": "Task 5",
@@ -253,7 +253,7 @@ TASKS = [
             ("5.4", "Geometry Attribution", "Do not count geometry-origin relations as model completeness."),
             ("5.5", "Compute-once Reasoning", "Compare geometry-on-demand with compute-once-then-reason."),
         ],
-        "status": "Closed in artifact",
+        "status": "Complete",
     },
     {
         "id": "Task 6",
@@ -265,7 +265,7 @@ TASKS = [
             ("6.3", "Cross-hierarchy Near", "Answer SCQ8 as geometry-origin plus derived traversal."),
             ("6.4", "Finding not Gap", "Report missing native seam as the research finding, not as a defect to hide."),
         ],
-        "status": "Closed in artifact",
+        "status": "Complete",
     },
     {
         "id": "Task 7",
@@ -276,7 +276,7 @@ TASKS = [
             ("7.2", "Evaluation", "Write model vs demonstrator coverage findings."),
             ("7.3", "Related Work", "Expand policy and literature question evidence."),
         ],
-        "status": "Next / Not in app scope",
+        "status": "Dissertation phase",
     },
 ]
 
@@ -1739,14 +1739,18 @@ def hero() -> None:
     )
 
 
-def task_badge(task: str, keyword_sentence: str, status: str = "Done") -> None:
-    cls = "done" if "Done" in status or "Complete" in status else "current" if "Current" in status else "next"
+def task_badge(task: str, keyword_sentence: str, status: str = "Complete") -> None:
+    cls = (
+        "done" if ("Complete" in status or "Done" in status)
+        else "current" if ("In progress" in status or "Current" in status)
+        else "next"
+    )
     st.markdown(
         f"""
 <div class="task-card">
   <span class="badge {cls}">{status}</span>
   <h3>{task}</h3>
-  <div><span class="task-key">Keyword sentence:</span> {keyword_sentence}</div>
+  <div>{keyword_sentence}</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -1755,7 +1759,11 @@ def task_badge(task: str, keyword_sentence: str, status: str = "Done") -> None:
 
 def render_task_card(t: Dict[str, Any]) -> None:
     status = t["status"]
-    cls = "done" if "Done" in status or "Closed" in status else "current" if "Current" in status else "next"
+    cls = (
+        "done" if ("Complete" in status or "Done" in status or "Closed" in status)
+        else "current" if ("In progress" in status or "Current" in status)
+        else "next"
+    )
     solution = TASK_SOLUTIONS.get(t["id"], {})
     subtasks = "".join(
         [f"<div class='subtask'><b>{num} — {name}:</b> {desc}</div>" for num, name, desc in t["subtasks"]]
@@ -1765,10 +1773,10 @@ def render_task_card(t: Dict[str, Any]) -> None:
 <div class="task-card">
   <span class="badge {cls}">{status}</span>
   <h3>{t['id']} — {t['title']}</h3>
-  <p><span class="task-key">Target sentence:</span> {t['keyword_sentence']}</p>
-  <div class="solutionbox"><b>Implemented answer:</b> {solution.get('answer','')}<br>
-  <b>Evidence in this app:</b> {solution.get('evidence','')}<br>
-  <b>Where to verify:</b> {solution.get('app_section','')}</div>
+  <p>{t['keyword_sentence']}</p>
+  <div class="solutionbox"><b>Outcome:</b> {solution.get('answer','')}<br>
+  <b>Evidence:</b> {solution.get('evidence','')}<br>
+  <b>In the app:</b> {solution.get('app_section','')}</div>
   {subtasks}
 </div>
 """,
@@ -2435,8 +2443,8 @@ def page_visual_story() -> None:
 # =============================================================================
 def page_task_overview(cfg: Dict[str, str]) -> None:
     hero()
-    st.header("Task-aligned implemented answers")
-    st.caption("This page is not only progress tracking: each task shows the implemented answer, the evidence, and where the supervisor can verify it in the app.")
+    st.header("Project overview")
+    st.caption("The project by task: what each task set out to do, what was built, and where to see it working in this app.")
     cols = st.columns(4)
     try:
         counts = cached_counts(cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
@@ -2460,10 +2468,13 @@ def page_policy_questions() -> None:
     task_badge(
         "Task 3 — Policy Questions mapped to SCQs",
         "Translate education-policy questions into standard spatial competency question forms so the use case is evaluated through SCQ1–SCQ8 rather than ad-hoc queries.",
-        "Closed in artifact / Expand with literature later",
+        "In progress",
     )
     st.markdown(
-        "<div class='solutionbox'><b>Implemented answer:</b> This page gives the examiner a direct evidence path: policy question → SCQ form → Cypher-ready relation → provenance → coverage decision. It supports Task 3 and prepares the scoring logic used in Task 5.</div>",
+        "<div class='solutionbox'>Each education policy question is mapped to "
+        "its SCQ form, the graph relation that answers it, and the provenance "
+        "of that relation — the basis of the coverage scoring in the "
+        "Evaluation page.</div>",
         unsafe_allow_html=True,
     )
     tab1, tab2 = st.tabs(["SCQ overview", "Question table"])
@@ -2500,7 +2511,7 @@ def page_scq_demonstrator(
             "showing the query, parameters, results, and provenance "
             "of the relation used."
         ),
-        "Current / Closing",
+        "Complete",
     )
 
     visual_scq_runner_flow()
@@ -2886,7 +2897,7 @@ def page_evaluation() -> None:
             "geometry-assisted demonstrator coverage using one "
             "consistent eight-SCQ scorecard."
         ),
-        "Closed in artifact",
+        "Complete",
     )
 
     st.markdown(
@@ -3069,7 +3080,7 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
             "statistical hierarchy using INTERSECTS and near relations "
             "between AdminUnit and LSOA."
         ),
-        "Current / Closing",
+        "In progress",
     )
 
     visual_cross_hierarchy_bridge()
@@ -3518,14 +3529,13 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 def page_map(cfg: Dict[str, str]) -> None:
     hero()
     task_badge(
-        "Task 4.5 — Lightweight Map Support",
+        "Map Explorer",
         (
-            "Keep a School–LSOA–Transport explorer to support the "
-            "demonstrator; scraped FSM, attendance and secondary "
-            "performance metrics are shown where verified fields are "
-            "available."
+            "Explore schools across Wales with LSOA deprivation, FSM, "
+            "attendance, secondary performance, and transport access — "
+            "by school, by metric range, or by adjacency cluster."
         ),
-        "Support",
+        "Supporting view",
     )
     visual_scq_runner_flow()
 
