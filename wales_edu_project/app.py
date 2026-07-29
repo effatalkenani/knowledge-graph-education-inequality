@@ -183,6 +183,57 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:chec
   color: #ffffff !important; font-weight: 700;
 }
 
+/* Warmer field styling: amber-tinted borders and darker warm labels so the
+   sidebar controls read as part of the theme rather than cold grey. */
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div,
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div,
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div,
+section[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div {
+  border: 1px solid #fdba74 !important;
+  border-radius: 8px !important;
+  background: #fffdfa !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div:focus-within,
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div:focus-within,
+section[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div:focus-within {
+  border-color: #ea580c !important;
+  box-shadow: 0 0 0 2px rgba(234,88,12,.14) !important;
+}
+section[data-testid="stSidebar"] label p {
+  color: #7c2d12 !important; font-weight: 650 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+  background: linear-gradient(135deg,#9a3412,#c2410c) !important;
+  color: #fff !important; border-radius: 6px !important;
+}
+
+/* Orange interactive details: carets, expander arrows, dropdown highlights,
+   and switch tracks pick up the theme instead of default grey. */
+section[data-testid="stSidebar"] [data-baseweb="select"] svg {
+  color: #ea580c !important; fill: #ea580c !important;
+}
+[data-testid="stExpander"] summary svg {
+  color: #ea580c !important; fill: #ea580c !important;
+}
+[data-testid="stExpander"] summary:hover {
+  color: #9a3412 !important;
+}
+[data-baseweb="popover"] [role="option"]:hover {
+  background: #fff7ed !important; color: #9a3412 !important;
+}
+[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+  background: linear-gradient(135deg,#9a3412,#c2410c) !important;
+  color: #ffffff !important;
+}
+section[data-testid="stSidebar"] [role="switch"][aria-checked="true"] {
+  background: #ea580c !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div:hover,
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div:hover,
+section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover {
+  border-color: #fb923c !important;
+}
+
 .nav-card{display:block;text-decoration:none;border:1px solid #fed7aa;border-radius:13px;background:#fff;padding:.58rem .65rem;margin:.35rem 0;color:#431407;font-size:.84rem;font-weight:760;box-shadow:0 4px 12px rgba(234,88,12,.045);}
 .nav-card-active{background:linear-gradient(135deg,#ff4f79,#ff8a00);color:white!important;border-color:#ff4f79;box-shadow:0 7px 18px rgba(255,79,121,.16);}
 .nav-card:hover{border-color:#fb923c;background:#fff7ed;}
@@ -1199,12 +1250,7 @@ def sidebar_config() -> Dict[str, str]:
     """, unsafe_allow_html=True)
     with st.sidebar:
         inject_segmented_css()
-        st.radio(
-            t("language"),
-            options=["English", "Cymraeg"],
-            horizontal=True,
-            key="ui_lang",
-        )
+    st.session_state["ui_lang"] = "English"
 
     cfg["dark_theme"] = st.sidebar.toggle(
         t("dark_theme"),
@@ -2248,10 +2294,10 @@ def visual_project_pipeline() -> None:
 <div class="visual-card">
   <h3>Project Pipeline — each visual block supports a supervisor task</h3>
   <div class="grid grid-5">
-    <div class="task-step"><div class="step-num step-blue">1</div><div class="step-title2">Task 1<br>Administrative Hierarchy</div><div class="step-text">YAGO2geo baseline: AdminUnit, WITHIN, TOUCHES.</div></div>
-    <div class="task-step"><div class="step-num step-green">2</div><div class="step-title2">Task 2<br>LSOA + Statistics</div><div class="step-text">Add LSOA, WIMD, schools, FSM, transport.</div></div>
-    <div class="task-step"><div class="step-num step-orange">3</div><div class="step-title2">Task 3<br>Policy → SCQ</div><div class="step-text">Translate policy questions into SCQ1–SCQ8 patterns.</div></div>
-    <div class="task-step"><div class="step-num step-purple">4</div><div class="step-title2">Task 4<br>Demonstrator</div><div class="step-text">Run Cypher, show rows, parameters and provenance.</div></div>
+    <div class="task-step"><div class="step-num step-blue">1</div><div class="step-title2">Administrative Hierarchy</div><div class="step-text">YAGO2geo baseline: AdminUnit, WITHIN, TOUCHES.</div></div>
+    <div class="task-step"><div class="step-num step-green">2</div><div class="step-title2">LSOA + Statistics</div><div class="step-text">Add LSOA, WIMD, schools, FSM, transport.</div></div>
+    <div class="task-step"><div class="step-num step-orange">3</div><div class="step-title2">Policy → SCQ</div><div class="step-text">Translate policy questions into SCQ1–SCQ8 patterns.</div></div>
+    <div class="task-step"><div class="step-num step-purple">4</div><div class="step-title2">Demonstrator</div><div class="step-text">Run Cypher, show rows, parameters and provenance.</div></div>
     <div class="task-step"><div class="step-num step-teal">5–6</div><div class="step-title2">Evaluation + Seam</div><div class="step-text">Separate native coverage from geometry-assisted capability.</div></div>
   </div>
   <div class="visual-note"><b>Purpose:</b> this pipeline tells the examiner where each implementation decision is evidenced in the app, without adding decorative content.</div>
@@ -2511,7 +2557,7 @@ def page_task_overview(cfg: Dict[str, str]) -> None:
 def page_policy_questions() -> None:
     hero()
     task_badge(
-        "Task 3 — Policy Questions mapped to SCQs",
+        "Policy Questions mapped to SCQs",
         "Translate education-policy questions into standard spatial competency question forms so the use case is evaluated through SCQ1–SCQ8 rather than ad-hoc queries.",
         "In progress",
     )
@@ -2533,6 +2579,7 @@ def page_policy_questions() -> None:
         )
     with tab2:
         df = pd.DataFrame(POLICY_LIBRARY, columns=["SCQ", "Policy question pattern", "Implemented graph answer", "Task link", "Relation used", "Provenance"])
+        df = df.drop(columns=["Task link"])
         df["Counts toward native model completeness?"] = df["Provenance"].map(lambda p: "Yes" if p == "Native" else ("n/a" if "Weak" in p else "No"))
         st.markdown("<div class='clean-title'>Implemented Policy Question Library</div>", unsafe_allow_html=True)
         st.markdown("<div class='clean-subtitle'>Each row is intentionally task-linked and provenance-backed.</div>", unsafe_allow_html=True)
@@ -2550,7 +2597,7 @@ def page_scq_demonstrator(
     hero()
 
     task_badge(
-        "Task 4 — SCQ Demonstrator",
+        "SCQ Demonstrator",
         (
             "Run SCQ1–SCQ8 over the integrated Neo4j graph while "
             "showing the query, parameters, results, and provenance "
@@ -2580,7 +2627,6 @@ def page_scq_demonstrator(
     with left:
         st.subheader(scq_question(scq_key, meta))
         st.write(meta["keyword_sentence"])
-        st.caption(f"{t('task_link')}: {meta['task']}")
 
     with right:
         st.markdown(
@@ -2936,7 +2982,7 @@ def page_evaluation() -> None:
     hero()
 
     task_badge(
-        "Task 5 — Evaluation and Coverage",
+        "Evaluation and Coverage",
         (
             "Evaluate native model coverage separately from "
             "geometry-assisted demonstrator coverage using one "
@@ -3119,7 +3165,7 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
     hero()
 
     task_badge(
-        "Task 6 — Cross-hierarchy Seam",
+        "Cross-hierarchy Seam",
         (
             "Evaluate the seam between administrative hierarchy and "
             "statistical hierarchy using INTERSECTS and near relations "
@@ -3596,10 +3642,22 @@ def page_map(cfg: Dict[str, str]) -> None:
     MATCH (s:School)
     WITH DISTINCT coalesce(s.phase_group, s.phase, s.school_type) AS phase
     WHERE phase IS NOT NULL AND phase <> ''
+      AND phase IN ['Primary', 'Secondary', 'Special', 'All-age']
     RETURN phase AS value, phase AS label
     ORDER BY label
     LIMIT 100
     """)
+    if not phase_opts:
+        # Fallback when phase_group values differ from the standard four:
+        # show whatever distinct values exist rather than an empty list.
+        phase_opts = safe_options(cfg, """
+        MATCH (s:School)
+        WITH DISTINCT coalesce(s.phase_group, s.phase, s.school_type) AS phase
+        WHERE phase IS NOT NULL AND phase <> ''
+        RETURN phase AS value, phase AS label
+        ORDER BY label
+        LIMIT 100
+        """)
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
@@ -3608,18 +3666,17 @@ def page_map(cfg: Dict[str, str]) -> None:
         "Search mode",
         [
             "All matching schools",
-            "A single school",
             "A metric range",
             "An adjacency cluster",
         ],
         index=0,
         label_visibility="collapsed",
         help=(
-            "All matching schools keeps the existing behaviour. A single "
-            "school pins the map to one school. A metric range filters on "
-            "two-sided ranges. An adjacency cluster finds connected groups "
-            "of LSOAs that all meet a deprivation threshold, using the "
-            "computed LSOA_TOUCHES relation."
+            "All matching schools shows every school passing the filters "
+            "(pick one school in the School box to focus the map on it). "
+            "A metric range filters on two-sided FSM / attendance / Capped 9 "
+            "ranges. An adjacency cluster finds connected groups of LSOAs "
+            "that share a condition, joined by computed LSOA_TOUCHES edges."
         ),
     )
 
@@ -3879,24 +3936,23 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "The banded view needs a single variable to grade, so it is "
                 "not offered for the compound pool."
             )
-        cluster_depth = st.sidebar.select_slider(
-            "Traversal depth (documented bound)",
-            options=[1, 2, 3, 4, 5],
-            value=4,
-            help=(
-                "Cypher cannot take a variable-length bound as a parameter "
-                "without APOC, so the depth is a fixed documented assumption. "
-                "Two LSOAs in the same true component that sit further apart "
-                "than this bound will be reported as separate clusters. "
-                "Record the bound and whether changing it changes the sizes."
-            ),
-        )
+        # Traversal depth is a fixed documented implementation bound: Cypher
+        # cannot take a variable-length bound as a parameter without APOC.
+        # Removed from the UI as an internal detail; change it here and
+        # record the change in the research log if needed.
+        cluster_depth = 4
         min_cluster_size = st.sidebar.number_input(
-            "Minimum cluster size",
+            "Smallest cluster to show (LSOAs)",
             min_value=1,
             max_value=50,
             value=3,
             step=1,
+            help=(
+                "A cluster is reported only if it has at least this many "
+                "connected LSOAs. 1 shows everything, including isolated "
+                "single LSOAs; 3 hides singletons and pairs; a large value "
+                "such as 20 keeps only the big contiguous belts."
+            ),
         )
 
     dep_options = [
@@ -3906,11 +3962,16 @@ def page_map(cfg: Dict[str, str]) -> None:
         ("low_deprivation", "Low"),
         ("unknown", "Unknown"),
     ]
-    dep_choice = st.sidebar.selectbox(
-        "Deprivation",
-        dep_options,
-        format_func=lambda x: x[1],
-    )
+    if search_mode == "An adjacency cluster":
+        # In cluster mode the cluster itself defines the deprivation scope,
+        # so the general filter is hidden to avoid two competing controls.
+        dep_choice = dep_options[0]
+    else:
+        dep_choice = st.sidebar.selectbox(
+            "Deprivation",
+            dep_options,
+            format_func=lambda x: x[1],
+        )
     dep = dep_choice[0]
     dep_label = dep_choice[1]
     transport = st.sidebar.selectbox(
@@ -4027,17 +4088,10 @@ def page_map(cfg: Dict[str, str]) -> None:
             "secondary only) — published for secondaries only, so this is a "
             "source limitation, not missing data."
         )
-        include_missing_metrics = st.checkbox(
-            "Include schools with no value for these metrics",
-            value=False,
-            help=(
-                "Off by default. When it is off, a metric filter also removes "
-                "every school whose value is missing. Special schools often "
-                "carry no FSM, attendance or Capped 9 value, so leaving this "
-                "off drops them from the answer. The number of schools removed "
-                "for a missing value is reported above the map either way."
-            ),
-        )
+        # Metric filters always require a value; how many schools were
+        # removed for having no value is disclosed above the map, so the
+        # exclusion is visible without an extra control here.
+        include_missing_metrics = False
 
     # Bounds are enforced by the number inputs themselves; only the
     # From/To ordering can still be wrong.
@@ -4056,10 +4110,7 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
-    if selected_school[0] != "All" and search_mode in (
-        "All matching schools",
-        "A single school",
-    ):
+    if selected_school[0] != "All" and search_mode == "All matching schools":
         conditions.append("s.code = $school_code")
         params["school_code"] = selected_school[0]
     if dep != "All":
@@ -4500,12 +4551,11 @@ ORDER BY cluster_size DESC, cluster_id
                 "no value for at least one filtered metric and are still shown."
             )
         elif missing_metric_schools:
-            st.warning(
-                f"{missing_metric_schools:,} schools were removed because they "
-                "have no value for at least one filtered metric, not because "
-                "they failed the range. Special schools are usually in this "
-                "group. Tick 'Include schools with no value for these metrics' "
-                "in the sidebar to keep them."
+            st.caption(
+                f"Note: {missing_metric_schools:,} schools are not shown "
+                "because they have no value for a filtered metric (special "
+                "schools are usually in this group) — removed for a missing "
+                "value, not for failing the range."
             )
 
     if search_mode == "An adjacency cluster" and not cluster_df.empty:
