@@ -1245,7 +1245,7 @@ def sidebar_config() -> Dict[str, str]:
     st.sidebar.markdown("""
     <div style="padding:.35rem 0 .9rem 0;">
       <div style="font-size:1.3rem;font-weight:900;color:#7c2d12;line-height:1.15;">Wales Education KG</div>
-      <div style="font-size:.82rem;color:#64748b;margin-top:.25rem;">Task-aligned demonstrator</div>
+      <div style="font-size:.82rem;color:#64748b;margin-top:.25rem;">Spatial competency demonstrator</div>
     </div>
     """, unsafe_allow_html=True)
     with st.sidebar:
@@ -1265,15 +1265,14 @@ def sidebar_config() -> Dict[str, str]:
         st.sidebar.markdown("""
         <div class="side-card">
           <div class="side-title">System status</div>
-          <div class="side-ok">● Neo4j connected</div>
-          <div class="side-muted">wales-education-kg</div>
+          <div class="side-ok">● Database connected</div>
         </div>
         """, unsafe_allow_html=True)
     except Exception:
         st.sidebar.markdown("""
         <div class="side-card">
           <div class="side-title">System status</div>
-          <div class="side-alert">● Neo4j not connected</div>
+          <div class="side-alert">● Database not connected</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1302,7 +1301,6 @@ def sidebar_config() -> Dict[str, str]:
     def _set_page(page_name: str) -> None:
         st.session_state.page = page_name
 
-    st.sidebar.markdown("<div style='font-size:.78rem;color:#9a3412;font-weight:800;margin:.9rem 0 .35rem;'>NAVIGATION</div>", unsafe_allow_html=True)
     for p in pages:
         active = st.session_state.page == p
         label = icons[p]
@@ -1318,14 +1316,6 @@ def sidebar_config() -> Dict[str, str]:
     except Exception:
         pass
 
-    st.sidebar.markdown("""
-    <div class="side-card">
-      <div class="side-title">Evaluation principle</div>
-      <div class="side-copy"><b class="native-word">Native</b> counts toward model completeness.<br>
-      <b class="geo-word">Geometry-origin</b> supports demonstrator capability.<br>
-      <b class="derived-word">Derived</b> depends on its origin.</div>
-    </div>
-    """, unsafe_allow_html=True)
     cfg["page"] = st.session_state.page
     return cfg
 
