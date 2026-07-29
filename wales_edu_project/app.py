@@ -15,6 +15,7 @@ Task 7  Dissertation writing (not implemented in the app)
 
 import base64
 import json
+import math
 from html import escape
 from typing import Any, Dict, List, Tuple
 
