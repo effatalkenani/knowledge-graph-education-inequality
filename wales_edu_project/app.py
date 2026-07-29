@@ -1339,8 +1339,9 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         geo_color = "#ffb454"
         derived_color = "#c4b5fd"
     else:
-        app_bg = "linear-gradient(180deg,#ffffff 0%,#f8fbff 48%,#ffffff 100%)"
-        sidebar_bg = "#f2f4f8"
+        # Cardiff University red, used as a soft warm tint rather than grey.
+        app_bg = "linear-gradient(180deg,#fff6f6 0%,#fffafa 45%,#fff1f1 100%)"
+        sidebar_bg = "linear-gradient(180deg,#fff4f4 0%,#ffeaea 100%)"
         panel_bg = "#ffffff"
         panel_border = "#e5e7eb"
         text = "#303443"
@@ -3651,22 +3652,21 @@ def page_map(cfg: Dict[str, str]) -> None:
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
-    st.sidebar.markdown("### Search for")
+    st.sidebar.markdown("### Search type")
     search_mode = st.sidebar.radio(
-        "Search mode",
+        "Search type",
         [
-            "All matching schools",
-            "A metric range",
-            "An adjacency cluster",
+            "Standard search",
+            "Cluster search",
         ],
         index=0,
         label_visibility="collapsed",
         help=(
-            "All matching schools shows every school passing the filters "
-            "(pick one school in the School box to focus the map on it). "
-            "A metric range filters on two-sided FSM / attendance / Capped 9 "
-            "ranges. An adjacency cluster finds connected groups of LSOAs "
-            "that share a condition, joined by computed LSOA_TOUCHES edges."
+            "Standard search shows every school passing the filters below, "
+            "including any metric ranges you set. Cluster search is "
+            "different in kind: it finds connected groups of neighbouring "
+            "LSOAs that share a condition, then shows the schools inside "
+            "them."
         ),
     )
 
@@ -3684,8 +3684,8 @@ def page_map(cfg: Dict[str, str]) -> None:
         "Physical Environment": "environment_rank",
     }
     CLUSTER_VARIABLES = [
-        "Deprivation (high / medium / low)",
-        "Deprivation domain (WIMD 2019 rank)",
+        "Deprivation level",
+        "Deprivation rank",
         "School FSM average",
         "School attendance average",
         "High FSM and low attendance (compound)",
@@ -3701,7 +3701,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     band_cut1 = band_cut2 = None
     cluster_depth = 4
     min_cluster_size = 3
-    if search_mode == "An adjacency cluster":
+    if search_mode == "Cluster search":
         st.sidebar.markdown("### Adjacency cluster")
         st.sidebar.caption(
             "Geometry-origin. LSOA_TOUCHES is computed from boundary "
@@ -3757,9 +3757,9 @@ def page_map(cfg: Dict[str, str]) -> None:
             "Type exact bounds; leave a box as All to drop that side. The "
             "exact values you type are what goes in the research log."
         )
-        if cluster_variable == "Deprivation (high / medium / low)":
+        if cluster_variable == "Deprivation level":
             cluster_dep_levels = st.sidebar.multiselect(
-                "Deprivation levels",
+                "Levels to include",
                 ["High", "Medium", "Low"],
                 default=["High"],
                 help=(
@@ -3771,9 +3771,9 @@ def page_map(cfg: Dict[str, str]) -> None:
             if not cluster_dep_levels:
                 st.sidebar.error("Pick at least one deprivation level.")
                 st.session_state["_cluster_input_error"] = True
-        elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+        elif cluster_variable == "Deprivation rank":
             cluster_domain_label = st.sidebar.selectbox(
-                "WIMD 2019 measure",
+                "Which deprivation measure",
                 list(WIMD_DOMAIN_PROPS.keys()),
                 index=0,
                 help=(
@@ -3844,93 +3844,33 @@ def page_map(cfg: Dict[str, str]) -> None:
         cluster_inputs_ok = not st.session_state.get(
             "_cluster_input_error", False
         )
-        if cluster_variable != "High FSM and low attendance (compound)":
-            cluster_view = st.sidebar.radio(
-                "Cluster view",
-                ["Bounded pool", "All severity bands"],
-                help=(
-                    "Bounded pool uses the From/To boxes above and returns "
-                    "connected clusters inside that pool. All severity bands "
-                    "colours every school by its LSOA's band on the chosen "
-                    "variable: red worst, orange middle, green best. Banding "
-                    "is a grading of the variable, not of the clustering — "
-                    "the adjacency cluster itself is binary (in or out). For "
-                    "graded cluster confidence, the statistical Gi* route "
-                    "with 90/95/99% bands is the tool, and it stays outside "
-                    "the completeness scoring."
-                ),
-            )
-            if cluster_view == "All severity bands":
-                if cluster_variable == "Deprivation (high / medium / low)":
-                    band_cut1, band_cut2 = 3.0, 7.0
-                    st.sidebar.caption(
-                        "Deprivation is already categorical: the stored "
-                        "high / medium / low category (deciles 1-3 / 4-7 / "
-                        "8-10) is used directly — no cuts to set."
-                    )
-                elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
-                    band_cut1 = cluster_bound(
-                        "Red band up to rank", "636", 1, 1909,
-                        "band_rank_1", integer=True,
-                    )
-                    band_cut2 = cluster_bound(
-                        "Orange band up to rank", "1272", 1, 1909,
-                        "band_rank_2", integer=True,
-                    )
-                    st.sidebar.caption(
-                        "Defaults are tertiles of 1,909. The cuts are a "
-                        "research choice: record them."
-                    )
-                elif cluster_variable == "School FSM average":
-                    band_cut1 = cluster_bound(
-                        "Orange band from FSM %", "15", 0.0, 71.8,
-                        "band_fsm_1",
-                    )
-                    band_cut2 = cluster_bound(
-                        "Red band from FSM %", "30", 0.0, 71.8,
-                        "band_fsm_2",
-                    )
-                    st.sidebar.caption(
-                        "Green below the first cut, orange between, red at "
-                        "or above the second. Cuts are a research choice: "
-                        "record them."
-                    )
-                else:
-                    band_cut1 = cluster_bound(
-                        "Red band up to attendance %", "90", 79.1, 98.1,
-                        "band_att_1",
-                    )
-                    band_cut2 = cluster_bound(
-                        "Orange band up to attendance %", "94", 79.1, 98.1,
-                        "band_att_2",
-                    )
-                    st.sidebar.caption(
-                        "90% is the official Welsh Government "
-                        "persistent-absence line; the upper cut is a "
-                        "research choice: record it."
-                    )
-                if band_cut1 is None or band_cut2 is None:
-                    st.sidebar.error("Both band cuts are needed.")
-                    st.session_state["_cluster_input_error"] = True
-                elif float(band_cut1) >= float(band_cut2):
-                    st.sidebar.error(
-                        "The first band cut must be below the second."
-                    )
-                    st.session_state["_cluster_input_error"] = True
-                cluster_inputs_ok = not st.session_state.get(
-                    "_cluster_input_error", False
-                )
-        else:
-            cluster_view = "Bounded pool"
-            st.sidebar.caption(
-                "The banded view needs a single variable to grade, so it is "
-                "not offered for the compound pool."
-            )
-        # Traversal depth is a fixed documented implementation bound: Cypher
-        # cannot take a variable-length bound as a parameter without APOC.
-        # Removed from the UI as an internal detail; change it here and
-        # record the change in the research log if needed.
-        cluster_depth = 4
+        # Cluster search always builds bounded pools. The former
+        # "All severity bands" whole-map view was removed as a second
+        # control the user had to reason about: pin colours already carry
+        # the traffic-light grading in every mode.
+        cluster_view = "Bounded pool"
+        # Cluster reach, named with the evaluation instrument's own
+        # proximity vocabulary instead of a raw hop count: touches = 1 hop,
+        # graph-near = 2 hops (the paper's near), far = more than 2.
+        CLUSTER_REACH = {
+            "Touching only (touches)": 1,
+            "Including near (2 steps)": 2,
+            "Including far (4 steps)": 4,
+        }
+        reach_label = st.sidebar.selectbox(
+            "How far the cluster reaches",
+            list(CLUSTER_REACH.keys()),
+            index=2,
+            help=(
+                "This uses the proximity vocabulary of the evaluation "
+                "instrument. Touching only groups LSOAs that share a "
+                "boundary. Including near adds units two touches-steps "
+                "away, which is the paper's definition of near. Including "
+                "far reaches beyond that. A wider reach merges nearby "
+                "patches into fewer, larger clusters."
+            ),
+        )
+        cluster_depth = CLUSTER_REACH[reach_label]
         min_cluster_size = st.sidebar.number_input(
             "Smallest cluster to show (LSOAs)",
             min_value=1,
@@ -3952,7 +3892,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         ("low_deprivation", "Low"),
         ("unknown", "Unknown"),
     ]
-    if search_mode == "An adjacency cluster":
+    if search_mode == "Cluster search":
         # In cluster mode the cluster itself defines the deprivation scope,
         # so the general filter is hidden to avoid two competing controls.
         dep_choice = dep_options[0]
@@ -3978,9 +3918,13 @@ def page_map(cfg: Dict[str, str]) -> None:
             "DISTANCE_NEAR relation inside that threshold."
         ),
     )
-    la = st.sidebar.selectbox("Local authority", las, format_func=lambda x: x[1])
-    phase = st.sidebar.selectbox("School phase", phases, format_func=lambda x: x[1])
-    st.sidebar.markdown("### School filters")
+    school_filters = st.sidebar.expander("School filters", expanded=False)
+    la = school_filters.selectbox(
+        "Local authority", las, format_func=lambda x: x[1]
+    )
+    phase = school_filters.selectbox(
+        "School phase", phases, format_func=lambda x: x[1]
+    )
     school_option_filters = []
     school_option_params: Dict[str, Any] = {}
     if la[0] != "All":
@@ -4014,7 +3958,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         """,
         school_option_params,
     )
-    selected_school = st.sidebar.selectbox(
+    selected_school = school_filters.selectbox(
         "School",
         school_options,
         format_func=lambda x: x[1],
@@ -4023,8 +3967,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             "or keep All matching schools."
         ),
     )
-    metrics_open = search_mode == "A metric range"
-    with st.sidebar.expander("More filters: school metrics", expanded=metrics_open):
+    with school_filters:
+        st.markdown("---")
         st.caption(
             "Each range is locked to the loaded data, so a value below the "
             "minimum or above the maximum cannot be entered. Leave a box "
@@ -4100,7 +4044,7 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
-    if selected_school[0] != "All" and search_mode == "All matching schools":
+    if selected_school[0] != "All" and search_mode == "Standard search":
         conditions.append("s.code = $school_code")
         params["school_code"] = selected_school[0]
     if dep != "All":
@@ -4156,7 +4100,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     band_map: Dict[str, str] = {}
     band_label = ""
     band_cypher = ""
-    if search_mode == "An adjacency cluster":
+    if search_mode == "Cluster search":
         if not cluster_inputs_ok:
             st.info(
                 "Fix the red cluster bound message in the sidebar, or type "
@@ -4166,7 +4110,7 @@ def page_map(cfg: Dict[str, str]) -> None:
 
         if cluster_view == "All severity bands":
             c1, c2 = float(band_cut1), float(band_cut2)
-            if cluster_variable == "Deprivation (high / medium / low)":
+            if cluster_variable == "Deprivation level":
                 band_cypher = (
                     "MATCH (l:LSOA)\n"
                     "WHERE l.deprivation IS NOT NULL\n"
@@ -4180,7 +4124,7 @@ def page_map(cfg: Dict[str, str]) -> None:
                 band_label = (
                     "stored deprivation category: high / medium / low"
                 )
-            elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+            elif cluster_variable == "Deprivation rank":
                 domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
                 band_cypher = (
                     "MATCH (l:LSOA)\n"
@@ -4255,7 +4199,7 @@ def page_map(cfg: Dict[str, str]) -> None:
 
         if cluster_view == "All severity bands":
             pass
-        elif cluster_variable == "Deprivation (high / medium / low)":
+        elif cluster_variable == "Deprivation level":
             if not cluster_dep_levels:
                 st.warning("Pick at least one deprivation level.")
                 return
@@ -4271,7 +4215,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             cluster_pool_label = (
                 "deprivation level " + " / ".join(cluster_dep_levels)
             )
-        elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+        elif cluster_variable == "Deprivation rank":
             domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
             loaded = int(
                 scalar(
@@ -4548,7 +4492,7 @@ ORDER BY cluster_size DESC, cluster_id
                 "value, not for failing the range."
             )
 
-    if search_mode == "An adjacency cluster" and not cluster_df.empty:
+    if search_mode == "Cluster search" and not cluster_df.empty:
         st.markdown(
             f"{provenance_badge('Geometry-origin')} "
             f"**{len(cluster_df):,} adjacency clusters** covering "
@@ -4595,7 +4539,7 @@ ORDER BY cluster_size DESC, cluster_id
 
     render_school_map(map_df, selected_school)
 
-    if search_mode == "An adjacency cluster" and not cluster_df.empty:
+    if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
             f"Cluster results — {len(cluster_df):,} clusters, "
             f"{len(cluster_codes):,} LSOAs",
