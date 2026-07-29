@@ -11,11 +11,25 @@ from shapely.ops import transform
 from pyproj import Transformer
 from shapely.validation import make_valid
 
+import time 
+
 import geopandas as gpd
 
-URI = "neo4j+s://1e982852.databases.neo4j.io"
-AUTH = ("neo4j", "4kbPrn_-FsWEKiZTsuCnu5xvotFjME8q6W0dLN7JD3k")
-DATABASE = "neo4j"
+
+# --- CONNECTION SETTINGS ---
+MODE = "CLOUD" 
+
+if MODE == "CLOUD":
+    URI = "neo4j+s://1e982852.databases.neo4j.io"
+    AUTH = ("1e982852", "4kbPrn_-FsWEKiZTsuCnu5xvotFjME8q6W0dLN7JD3k")
+    DATABASE = "1e982852"
+else:
+    URI = "bolt://localhost:7687"
+    AUTH = ("neo4j", "QWEasd1QWE")
+    DATABASE = "wales-education-kg"  
+
+
+
 DATA_DIR = "./data"
 
 
@@ -28,32 +42,33 @@ SCHOOLS_FILE = os.path.join(DATA_DIR, "schools_wales.csv")
 FSM_FILE = os.path.join(DATA_DIR, "FSM.csv")
 SCHOOL_METRICS_FILE = os.path.join(DATA_DIR, "welsh_schools_data_full.csv")
 TRANSPORT_FILE = os.path.join(DATA_DIR, "transport_stops_wales.csv")
+OS_TOPOLOGICAL_FILE = os.path.join(DATA_DIR, "OS_topological.nt")
 
 LSOA_GPKG_FILE = os.path.join(
     DATA_DIR,
     "lsoa_wales_2011.gpkg"
 )
 
-RUN_OS_NEW_ENRICHMENT = False
-
-RUN_LSOA_LOAD = False
+RUN_OS_NEW_ENRICHMENT = True   
+RUN_LSOA_LOAD = False           
 RUN_WIMD_LOAD = False
-RUN_SCHOOLS_LOAD = False
-RUN_FSM_LOAD = False
-RUN_SCRAPED_SCHOOL_METRICS_LOAD = True
-RUN_TRANSPORT_LOAD = False
+RUN_STOP_LSOA_LINKS = False           
+RUN_SCHOOLS_LOAD = False        
+RUN_FSM_LOAD = False            
+RUN_SCRAPED_SCHOOL_METRICS_LOAD = False 
+RUN_TRANSPORT_LOAD = False      
 
-RUN_LSOA_TOUCHES = False
-RUN_LSOA_GRAPH_NEAR = False
+RUN_LSOA_GEOMETRY_REPAIR = False   
+RUN_ADMIN_LSOA_INTERSECTS = False
+  
+RUN_LSOA_TOUCHES = False           
+RUN_LSOA_GRAPH_NEAR = False        
+RUN_SCHOOL_LSOA_LINK = False       
+RUN_SCHOOL_TRANSPORT_NEAR = False  
+RUN_RELATION_ORIGIN_TAGGING = False
+RUN_UNLINKED_LSOA_DIAGNOSTICS = False
 
-RUN_LSOA_GEOMETRY_REPAIR = False
 
-RUN_ADMIN_LSOA_INTERSECTS = True
-RUN_SCHOOL_LSOA_LINK = False
-RUN_SCHOOL_TRANSPORT_NEAR = False
-
-RUN_RELATION_ORIGIN_TAGGING = True
-RUN_UNLINKED_LSOA_DIAGNOSTICS = True
 
 
 TRANSPORT_NEAR_METRES = 800
@@ -76,6 +91,13 @@ HAS_GEOMETRY = URIRef("http://www.opengis.net/ont/geosparql#hasGeometry")
 AS_WKT = URIRef("http://www.opengis.net/ont/geosparql#asWKT")
 
 
+SF_WITHIN = URIRef("http://www.opengis.net/ont/geosparql#sfWithin" )
+SF_TOUCHES = URIRef("http://www.opengis.net/ont/geosparql#sfTouches" )
+
+SF_WITHIN_ALT = URIRef("http://www.opengis.net/ont/geosparql#within" )
+SF_TOUCHES_ALT = URIRef("http://www.opengis.net/ont/geosparql#touches" )
+
+
 def driver():
     return GraphDatabase.driver(URI, auth=AUTH)
 
@@ -83,13 +105,19 @@ def driver():
 def clean_wkt(value):
     if value is None:
         return None
-
     text = str(value).strip()
-
+    
+    text = text.replace("<http://www.opengis.net/def/crs/EPSG/0/4326>", ""  )
+    text = text.replace("<HTTP://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326>", "")
+    text = text.strip()
+    
     if text.upper().startswith("DATA TRUNCATED "):
         text = text[len("DATA TRUNCATED "):].strip()
-
+        
     return text
+
+
+
 
 
 def clean_text(value):
@@ -203,15 +231,14 @@ def confidence_from_distance(distance_m):
         return "medium"
     return "low"
 
-
 def parse_os_file(file_path):
     g = Graph()
     g.parse(file_path, format="turtle")
     rows = []
+    relations = []
 
     for subject in set(g.subjects()):
         uri = str(subject)
-
         if "/osentity_" not in uri and "yago-knowledge.org/resource" not in uri:
             continue
 
@@ -219,13 +246,21 @@ def parse_os_file(file_path):
         geom_uri = str(geom) if geom else None
         geom_wkt = clean_wkt(g.value(geom, AS_WKT)) if geom else None
 
-        # Search all rdf:type values and select the OS administrative type
         os_type = None
+        raw_type = None
         for type_uri in g.objects(subject, RDF.type):
             candidate = map_os_type(type_uri)
-
             if candidate:
                 os_type = candidate
+                # ADDITION: preserve the raw (pre-normalisation) type name
+                # exactly as it appears in the source ontology, e.g.
+                # "OS_COMMUNITY", "OS_CivilParishorCommunity",
+                # "OS_CCOMMUNITY". This does NOT change map_os_type's
+                # normalisation logic above — it only records what the
+                # raw type was before folding, so the normalisation
+                # hypothesis can be tested with certainty later instead
+                # of approximated from the WCWR tag in the URI.
+                raw_type = local_name(type_uri)
                 break
 
         name_value = g.value(subject, HAS_OS_NAME)
@@ -236,58 +271,106 @@ def parse_os_file(file_path):
             "name": str(name_value) if name_value else None,
             "os_id": str(os_id_value) if os_id_value else None,
             "type": os_type,
+            "raw_type": raw_type,
             "geometry_uri": geom_uri,
             "wkt": geom_wkt,
         })
 
-    return rows
+        # 1. البحث عن Within (بصيغة sfWithin أو within)
+        for p in [SF_WITHIN, URIRef("http://www.opengis.net/ont/geosparql#within" )]:
+            for obj in g.objects(subject, p):
+                relations.append({"from": uri, "to": str(obj), "type": "WITHIN"})
+        
+        # 2. البحث عن Touches (بصيغة sfTouches أو touches)
+        for p in [SF_TOUCHES, URIRef("http://www.opengis.net/ont/geosparql#touches" )]:
+            for obj in g.objects(subject, p):
+                relations.append({"from": uri, "to": str(obj), "type": "TOUCHES"})
+
+    return rows, relations
 
 
 def enrich_admin_units():
-    print("Parsing OS_extended.ttl...")
-    extended_rows = parse_os_file(OS_EXTENDED_FILE)
+    print("Parsing OS_extended.ttl and OS_new.ttl for nodes...")
+    extended_rows, _ = parse_os_file(OS_EXTENDED_FILE)
+    new_rows, _ = parse_os_file(OS_NEW_FILE)
 
-    print("Parsing OS_new.ttl...")
-    new_rows = parse_os_file(OS_NEW_FILE)
-
-    # Merge by URI; OS_new may supplement OS_extended
+    # دمج العقد
     merged = {}
-
     for row in extended_rows + new_rows:
         uri = row["uri"]
-
-        if uri not in merged:
-            merged[uri] = row
+        if uri not in merged: merged[uri] = row
         else:
             for key, value in row.items():
-                if value is not None:
-                    merged[uri][key] = value
-
+                if value is not None: merged[uri][key] = value
     rows = list(merged.values())
 
-    print("Administrative entities available for enrichment:", len(rows))
+    # قراءة العلاقات من ملف OS_topological.nt
+    print("Parsing OS_topological.nt for official relations...")
+    all_rels = []
+    g_topo = Graph()
+    g_topo.parse(OS_TOPOLOGICAL_FILE, format="nt")
+    
+    for s, p, o in g_topo:
+        rel_uri = str(p)
+        rel_type = None
+        if "sfWithin" in rel_uri: rel_type = "WITHIN"
+        elif "sfTouches" in rel_uri: rel_type = "TOUCHES"
+        
+        if rel_type:
+            all_rels.append({"from": str(s), "to": str(o), "type": rel_type})
+
+    print("Nodes to enrich:", len(rows))
+    print("Official relations found:", len(all_rels))
 
     d = driver()
-    matched = 0
-
+    
+    # 1. رفع العقد أولاً
     with d.session(database=DATABASE) as s:
         for row in rows:
-            result = s.run("""
-            MATCH (n:AdminUnit {uri:$uri})
+            s.run("""
+            MERGE (n:AdminUnit {uri:$uri})
             SET n.name = coalesce($name, n.name),
                 n.os_id = coalesce($os_id, n.os_id),
                 n.type = coalesce($type, n.type),
+                n.raw_type = coalesce($raw_type, n.raw_type),
                 n.geometry_uri = coalesce($geometry_uri, n.geometry_uri),
                 n.wkt = coalesce($wkt, n.wkt)
-            RETURN count(n) AS c
             """, **row)
+    
+    # 2. رفع العلاقات في دفعات مع نظام معالجة انقطاع الاتصال
+    print("Loading official relations to Neo4j (with auto-retry)...")
+    batch_size = 1000
+    for i in range(0, len(all_rels), batch_size):
+        batch = all_rels[i : i + batch_size]
+        
+        # محاولة الرفع مع إعادة المحاولة في حال الخطأ
+        retry_count = 0
+        success = False
+        while retry_count < 5 and not success:
+            try:
+                with d.session(database=DATABASE) as s:
+                    s.run("""
+                    UNWIND $batch AS rel
+                    MATCH (a:AdminUnit {uri: rel.from})
+                    MATCH (b:AdminUnit {uri: rel.to})
+                    CALL apoc.merge.relationship(a, rel.type, {}, 
+                        {origin: "official_os_source", method: "native_ttl_import"}, b) 
+                    YIELD rel AS r RETURN count(*)
+                    """, batch=batch)
+                success = True
+            except Exception as e:
+                retry_count += 1
+                print(f"\nConnection lost at relation {i}, retrying ({retry_count}/5)... Error: {str(e)}")
+                time.sleep(5) # الانتظار قليلاً قبل المحاولة مرة أخرى
+        
+        if not success:
+            print(f"Failed to load batch starting at {i} after 5 attempts. Skipping...")
 
-            matched += result.single()["c"]
+        if (i + batch_size) % 10000 == 0 or (i + batch_size) >= len(all_rels):
+            print(f"Progress: {min(i + batch_size, len(all_rels))}/{len(all_rels)} relations loaded...")
 
     d.close()
-
-    print("AdminUnits enriched:", matched)
-
+    print("Success! Official relations are now fully loaded in the Cloud.")
 
 def load_lsoa():
     df = pd.read_excel(LSOA_FILE)
@@ -345,7 +428,10 @@ def load_wimd():
                 l.income_rank=$income_rank,
                 l.employment_rank=$employment_rank,
                 l.health_rank=$health_rank,
-                l.access_rank=$access_rank
+                l.access_rank=$access_rank,
+                l.housing_rank=$housing_rank,
+                l.safety_rank=$safety_rank,
+                l.environment_rank=$environment_rank
             """,
             code=str(r["LSOA code"]),
             la=str(r["Local Authority name (Eng)"]),
@@ -356,7 +442,10 @@ def load_wimd():
             income_rank=int(r["Income"]) if pd.notna(r.get("Income")) else None,
             employment_rank=int(r["Employment"]) if pd.notna(r.get("Employment")) else None,
             health_rank=int(r["Health"]) if pd.notna(r.get("Health")) else None,
-            access_rank=int(r["Access to Services"]) if pd.notna(r.get("Access to Services")) else None)
+            access_rank=int(r["Access to Services"]) if pd.notna(r.get("Access to Services")) else None,
+            housing_rank=int(r["Housing"]) if pd.notna(r.get("Housing")) else None,
+            safety_rank=int(r["Community Safety"]) if pd.notna(r.get("Community Safety")) else None,
+            environment_rank=int(r["Physical Environment"]) if pd.notna(r.get("Physical Environment")) else None)
 
     d.close()
     print("WIMD attached")
@@ -938,137 +1027,83 @@ def get_admin_geoms():
 
 
 def repair_lsoa_wkt_from_geopackage():
-    """
-    Replace truncated LSOA WKT values in Neo4j using the complete
-    geometries from the official DataMapWales GeoPackage.
-    """
-
     print("Reading official LSOA GeoPackage...")
-
     gdf = gpd.read_file(LSOA_GPKG_FILE)
-
-    print("GeoPackage rows:", len(gdf))
-    print("GeoPackage CRS:", gdf.crs)
-    print("Columns:", list(gdf.columns))
-
-    code_column = None
-
-    for candidate in [
-        "LSOA11Code",
-        "lsoa11code",
-        "LSOA11CD",
-        "lsoa11cd"
-    ]:
-        if candidate in gdf.columns:
-            code_column = candidate
-            break
-
-    if code_column is None:
-        raise ValueError(
-            "Could not find the LSOA code column. "
-            f"Available columns: {list(gdf.columns)}"
-        )
-
-    if gdf.crs is None:
-        raise ValueError("GeoPackage has no CRS information")
-
-    # The current LSOA WKT in Neo4j uses British National Grid.
+    code_column = "LSOA11Code" if "LSOA11Code" in gdf.columns else "lsoa11code"
     if str(gdf.crs).upper() != "EPSG:27700":
         gdf = gdf.to_crs("EPSG:27700")
 
     updates = []
-
     for _, row in gdf.iterrows():
         code = str(row[code_column]).strip()
-        geom = row.geometry
+        geom = make_valid(row.geometry)
+        if not geom.is_empty:
+            updates.append({"code": code, "wkt": geom.wkt})
 
-        if geom is None or geom.is_empty:
-            continue
-
-        geom = make_valid(geom)
-
-        if geom.is_empty:
-            continue
-
-        updates.append({
-            "code": code,
-            "wkt": geom.wkt
-        })
-
-    print("Valid official geometries prepared:", len(updates))
-
+    print(f"Valid official geometries prepared: {len(updates)}")
+    
     d = driver()
-
-    updated = 0
-
-    with d.session(database=DATABASE) as s:
-        result = s.run("""
-        UNWIND $rows AS row
-        MATCH (l:LSOA {code: row.code})
-        WHERE l.wkt STARTS WITH 'DATA TRUNCATED'
-           OR l.wkt IS NULL
-        SET l.wkt = row.wkt,
-            l.geometry_source = 'DataMapWales LSOA Wales 2011',
-            l.geometry_repaired = true
-        RETURN count(l) AS updated
-        """, rows=updates)
-
-        record = result.single()
-        updated = record["updated"] if record else 0
-
+    updated_total = 0
+    batch_size = 20
+    
+    for i in range(0, len(updates), batch_size):
+        batch = updates[i : i + batch_size]
+        try:
+            with d.session(database=DATABASE) as s:
+                result = s.run("""
+                UNWIND $rows AS row
+                MATCH (l:LSOA {code: row.code})
+                SET l.wkt = row.wkt,
+                    l.geometry_source = 'DataMapWales LSOA Wales 2011',
+                    l.geometry_repaired = true
+                RETURN count(l) AS updated
+                """, rows=batch)
+                updated_total += result.single()["updated"]
+            print(f"Progress: {min(i + batch_size, len(updates))}/{len(updates)} repaired...")
+            time.sleep(0.5) # وقت مستقطع بسيط لراحة السيرفر
+        except Exception as e:
+            print(f"Error in batch {i}: {e}. Retrying next batch...")
+            continue
+    
     d.close()
-
-    print("Truncated LSOA geometries repaired:", updated)
+    print(f"Truncated LSOA geometries repaired: {updated_total}")
 
 def build_admin_lsoa_intersects():
     print("Computing AdminUnit INTERSECTS LSOA...")
-
     lsoas = get_lsoa_geoms()
     admins = get_admin_geoms()
-
     lsoa_codes = [x["code"] for x in lsoas]
     lsoa_polygons = [x["geometry"] for x in lsoas]
-
     lsoa_tree = STRtree(lsoa_polygons)
     rels = []
 
     for admin in admins:
-        admin_uri = admin["uri"]
-        admin_type = admin["type"]
         admin_geom = make_valid(admin["geometry"])
-
         for j in lsoa_tree.query(admin_geom):
-            j = int(j)
-            lsoa_geom = make_valid(lsoa_polygons[j])
-            lsoa_code = lsoa_codes[j]
-
+            lsoa_geom = make_valid(lsoa_polygons[int(j)])
             if admin_geom.intersects(lsoa_geom):
-                rels.append((admin_uri, lsoa_code, admin_type))
+                rels.append({"admin_uri": admin["uri"], "lsoa_code": lsoa_codes[int(j)], "admin_type": admin["type"]})
 
-    print("Admin-LSOA INTERSECTS:", len(rels))
+    print(f"Admin-LSOA INTERSECTS pairs found: {len(rels)}")
 
     d = driver()
+    batch_size = 500
     with d.session(database=DATABASE) as s:
-        # حذف القديم بعد تصحيح Ward
-        # Delete old INTERSECTS after fixing Ward classification
         s.run("MATCH (:AdminUnit)-[r:INTERSECTS]->(:LSOA) DELETE r")
-
-        for admin_uri, lsoa_code, admin_type in rels:
+        
+        for i in range(0, len(rels), batch_size):
+            batch = rels[i : i + batch_size]
             s.run("""
-            MATCH (a:AdminUnit {uri:$admin_uri})
-            MATCH (l:LSOA {code:$lsoa_code})
+            UNWIND $rows AS row
+            MATCH (a:AdminUnit {uri: row.admin_uri})
+            MATCH (l:LSOA {code: row.lsoa_code})
             MERGE (a)-[r:INTERSECTS]->(l)
-            SET r.origin = "geometry",
-                r.method = "polygon_intersects",
-                r.admin_type = $admin_type
-            """,
-            admin_uri=admin_uri,
-            lsoa_code=lsoa_code,
-            admin_type=admin_type)
+            SET r.origin = 'geometry', r.method = 'polygon_intersects', r.admin_type = row.admin_type
+            """, rows=batch)
+            print(f"Progress: {min(i + batch_size, len(rels))}/{len(rels)} relationships loaded...")
 
     d.close()
-    print("AdminUnit-LSOA INTERSECTS loaded")
-
+    print("AdminUnit-LSOA INTERSECTS loaded successfully")
 
 def diagnose_unlinked_lsoas():
     print("Diagnosing LSOAs without Welsh UA INTERSECTS...")
@@ -1130,6 +1165,8 @@ def diagnose_unlinked_lsoas():
 
     results = []
 
+
+
     for lsoa in lsoas:
         if lsoa["code"] in linked_codes:
             continue
@@ -1137,8 +1174,14 @@ def diagnose_unlinked_lsoas():
         lsoa_geom = make_valid(lsoa["geometry"])
         point = lsoa_geom.representative_point()
 
-        nearest_index = int(tree.nearest(point))
-        authority = authorities[nearest_index]
+        res = tree.nearest(point)
+        if res is not None:
+            nearest_index = int(res)
+            authority = authorities[nearest_index]
+        else:
+            continue 
+
+
 
         distance_m = float(
             point.distance(authority["geometry"])
@@ -1185,6 +1228,68 @@ def diagnose_unlinked_lsoas():
     )
 
     d.close()
+
+def load_stop_lsoa_links():
+    """
+    Link each TransportStop to the LSOA whose polygon contains it, creating
+    (:TransportStop)-[:LOCATED_IN]->(:LSOA).
+
+    This is what makes a topological (graph) notion of transport proximity
+    possible. Without it the only transport relation in the graph is the
+    800 m DISTANCE_NEAR proxy, which is a metric distance and stays outside
+    the completeness scoring. With stops placed inside LSOAs, graph-near and
+    graph-far transport can be derived from LSOA_TOUCHES using the
+    evaluation instrument's own proximity definitions.
+
+    Gated by RUN_STOP_LSOA_LINKS.
+    """
+
+    print("Computing TransportStop LOCATED_IN LSOA...")
+
+    lsoas = get_lsoa_geoms()
+    lsoa_codes = [x["code"] for x in lsoas]
+    lsoa_polygons = [x["geometry"] for x in lsoas]
+    tree = STRtree(lsoa_polygons)
+
+    made = 0
+    unmatched = 0
+    d = driver()
+    with d.session(database=DATABASE) as s:
+        s.run("MATCH (:TransportStop)-[r:LOCATED_IN]->(:LSOA) DELETE r")
+
+        stops = s.run("""
+        MATCH (t:TransportStop)
+        WHERE t.latitude IS NOT NULL AND t.longitude IS NOT NULL
+        RETURN t.code AS code, t.latitude AS lat, t.longitude AS lon
+        """).data()
+
+        print("Transport stops with coordinates:", len(stops))
+
+        for st in stops:
+            p = Point(float(st["lon"]), float(st["lat"]))
+            placed = False
+            for j in tree.query(p):
+                j = int(j)
+                if lsoa_polygons[j].covers(p) or lsoa_polygons[j].intersects(p):
+                    s.run("""
+                    MATCH (t:TransportStop {code:$stop_code})
+                    MATCH (l:LSOA {code:$lsoa_code})
+                    MERGE (t)-[r:LOCATED_IN]->(l)
+                    SET r.origin = "geometry",
+                        r.method = "point_in_polygon"
+                    """,
+                    stop_code=st["code"],
+                    lsoa_code=lsoa_codes[j])
+                    made += 1
+                    placed = True
+                    break
+            if not placed:
+                unmatched += 1
+
+    d.close()
+    print("TransportStop LOCATED_IN LSOA created:", made)
+    print("Stops in no LSOA polygon (expected: stops outside Wales):", unmatched)
+
 
 def build_school_lsoa_links():
     print("Computing School LOCATED_IN LSOA with quality metadata...")
@@ -1458,6 +1563,9 @@ if __name__ == "__main__":
 
     if RUN_WIMD_LOAD:
         load_wimd()
+
+    if RUN_STOP_LSOA_LINKS:
+        load_stop_lsoa_links()
 
     if RUN_SCHOOLS_LOAD:
         load_schools()
