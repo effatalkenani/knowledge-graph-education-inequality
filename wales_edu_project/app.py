@@ -4785,11 +4785,22 @@ ORDER BY cluster_size DESC, cluster_id
             if not polygon_df.empty:
                 summary_rows = []
                 for code, grp in map_df.groupby(map_df["lsoa_code"].astype(str)):
-                    names = [str(n) for n in grp["name"].head(4).tolist()]
+                    name_col = (
+                        "school" if "school" in grp.columns else "name"
+                    )
+                    names = [
+                        str(n) for n in grp[name_col].head(4).tolist()
+                    ] if name_col in grp.columns else []
                     more = len(grp) - len(names)
-                    fsm_vals = pd.to_numeric(grp.get("fsm_pct"), errors="coerce")
+                    fsm_vals = pd.to_numeric(
+                        grp["fsm_pct"] if "fsm_pct" in grp.columns
+                        else pd.Series(dtype=float),
+                        errors="coerce",
+                    )
                     att_vals = pd.to_numeric(
-                        grp.get("attendance_pct"), errors="coerce"
+                        grp["attendance_pct"] if "attendance_pct" in grp.columns
+                        else pd.Series(dtype=float),
+                        errors="coerce",
                     )
                     summary_rows.append(
                         {
