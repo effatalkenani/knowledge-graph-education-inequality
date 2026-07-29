@@ -4699,9 +4699,13 @@ ORDER BY cluster_size DESC, cluster_id
                 return
             if cluster_df.empty:
                 st.warning(
-                    "No adjacency cluster met both the threshold and the "
-                    "minimum size. Widen the bounds, lower the minimum "
-                    "size, or increase the traversal depth."
+                    "No cluster reached the smallest size you asked for "
+                    f"({int(min_cluster_size)} LSOAs) with the current "
+                    "settings, so there is nothing to draw. Lower "
+                    "'Smallest cluster to show', widen the pool (for "
+                    "example add another deprivation level), or raise the "
+                    "search depth to 4 steps so connected patches merge "
+                    "instead of splitting."
                 )
                 if SHOW_QUERIES:
                     st.code(cluster_cypher, language="cypher")
