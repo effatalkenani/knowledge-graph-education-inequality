@@ -138,6 +138,51 @@ div[data-testid="stSidebar"] button {
 div[data-testid="stSidebar"] button:hover {transform:translateY(-1px); border-color:#fb923c !important; color:#9a3412 !important; box-shadow:0 5px 14px rgba(249,115,22,.12);}
 div[data-testid="stSidebar"] button[kind="primary"] {background:linear-gradient(135deg,#ff4f79,#ff8a00) !important; border-color:#ff4f79 !important; color:white !important; box-shadow:0 6px 16px rgba(255,79,121,.16);} 
 
+/* Range pairs (From/To) in the sidebar: force the two columns to sit side
+   by side instead of wrapping, and slim the number inputs so they fit. */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+  flex-wrap: nowrap !important; gap: .55rem !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+  min-width: 0 !important; flex: 1 1 0 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] button {
+  display: none !important;               /* hide +/- steppers: typing only */
+}
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] input {
+  padding: .3rem .5rem !important; font-size: .86rem !important;
+}
+section[data-testid="stSidebar"] [data-testid="stNumberInput"] label {
+  font-size: .74rem !important; margin-bottom: .12rem !important;
+}
+
+/* Sidebar radio groups (Search for, Cluster view): clean rectangular card.
+   Overrides the segmented-pill CSS, which is meant for the horizontal
+   language/direction toggles in the main area only. */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogroup"] {
+  display: flex !important; flex-direction: column !important;
+  gap: 4px !important; width: 100%;
+  background: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 10px !important; padding: 6px !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+  width: 100%; display: flex !important; align-items: center;
+  border-radius: 7px !important; padding: .34rem .65rem !important;
+  margin: 0 !important; cursor: pointer;
+  transition: background .15s ease;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
+  background: #fff7ed !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) {
+  background: linear-gradient(135deg,#9a3412,#c2410c) !important;
+  box-shadow: none !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) p {
+  color: #ffffff !important; font-weight: 700;
+}
+
 .nav-card{display:block;text-decoration:none;border:1px solid #fed7aa;border-radius:13px;background:#fff;padding:.58rem .65rem;margin:.35rem 0;color:#431407;font-size:.84rem;font-weight:760;box-shadow:0 4px 12px rgba(234,88,12,.045);}
 .nav-card-active{background:linear-gradient(135deg,#ff4f79,#ff8a00);color:white!important;border-color:#ff4f79;box-shadow:0 7px 18px rgba(255,79,121,.16);}
 .nav-card:hover{border-color:#fb923c;background:#fff7ed;}
@@ -1901,9 +1946,9 @@ def _pin_icon(fill: str, stroke: str) -> Dict[str, Any]:
 
 
 PIN_ICONS = {
-    "high_deprivation": _pin_icon("#ff4f79", "#a10f38"),
+    "high_deprivation": _pin_icon("#e11d48", "#881337"),
     "medium_deprivation": _pin_icon("#ff8a00", "#a34f00"),
-    "low_deprivation": _pin_icon("#20c6d7", "#0a6b78"),
+    "low_deprivation": _pin_icon("#22c55e", "#166534"),
     "unknown": _pin_icon("#94a3b8", "#475569"),
 }
 
@@ -2166,9 +2211,9 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
         st.markdown(
             "<div class='map-note'>"
             "<b>Deprivation legend:</b> "
-            "<span style='color:#ff4f79;font-size:16px;'>&#9679;</span> High &nbsp; "
+            "<span style='color:#e11d48;font-size:16px;'>&#9679;</span> High &nbsp; "
             "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
-            "<span style='color:#20c6d7;font-size:16px;'>&#9679;</span> Low &nbsp; "
+            "<span style='color:#22c55e;font-size:16px;'>&#9679;</span> Low &nbsp; "
             "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
             "</div>",
             unsafe_allow_html=True,
@@ -3581,6 +3626,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     # Property names match load_to_neo4j.py's load_wimd(); the last three
     # are added by the extended loader and need one RUN_WIMD_LOAD re-run.
     WIMD_DOMAIN_PROPS = {
+        "Overall (WIMD 2019)": "wimd_rank",
         "Income": "income_rank",
         "Employment": "employment_rank",
         "Health": "health_rank",
@@ -3591,15 +3637,15 @@ def page_map(cfg: Dict[str, str]) -> None:
         "Physical Environment": "environment_rank",
     }
     CLUSTER_VARIABLES = [
-        "Deprivation (WIMD decile)",
+        "Deprivation (high / medium / low)",
         "Deprivation domain (WIMD 2019 rank)",
         "School FSM average",
         "School attendance average",
         "High FSM and low attendance (compound)",
     ]
     cluster_variable = CLUSTER_VARIABLES[0]
-    cluster_domain_label = "Education"
-    cluster_decile_min = cluster_decile_max = None
+    cluster_domain_label = "Overall (WIMD 2019)"
+    cluster_dep_levels = ["High"]
     cluster_rank_min = cluster_rank_max = None
     cluster_fsm_min = cluster_fsm_max = None
     cluster_att_min = cluster_att_max = None
@@ -3664,23 +3710,31 @@ def page_map(cfg: Dict[str, str]) -> None:
             "Type exact bounds; leave a box as All to drop that side. The "
             "exact values you type are what goes in the research log."
         )
-        if cluster_variable == "Deprivation (WIMD decile)":
-            cluster_decile_min = cluster_bound(
-                "WIMD decile from", "All", 1, 10, "cl_dec_min", integer=True
+        if cluster_variable == "Deprivation (high / medium / low)":
+            cluster_dep_levels = st.sidebar.multiselect(
+                "Deprivation levels",
+                ["High", "Medium", "Low"],
+                default=["High"],
+                help=(
+                    "High = deciles 1-3 (most deprived 30%), Medium = 4-7, "
+                    "Low = 8-10 — the same stored categories that colour the "
+                    "map pins red / orange / green."
+                ),
             )
-            cluster_decile_max = cluster_bound(
-                "WIMD decile to", "3", 1, 10, "cl_dec_max", integer=True
-            )
-            st.sidebar.caption(
-                "Decile 1 is the most deprived. 'to 3' alone reproduces the "
-                "old most-deprived-30% pool; 'from 8' alone selects the "
-                "least deprived."
-            )
+            if not cluster_dep_levels:
+                st.sidebar.error("Pick at least one deprivation level.")
+                st.session_state["_cluster_input_error"] = True
         elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
             cluster_domain_label = st.sidebar.selectbox(
-                "WIMD 2019 domain",
+                "WIMD 2019 measure",
                 list(WIMD_DOMAIN_PROPS.keys()),
-                index=3,
+                index=0,
+                help=(
+                    "Overall is the combined WIMD 2019 rank. The eight "
+                    "domains break deprivation down by type: Income, "
+                    "Employment, Health, Education, Access to Services, "
+                    "Housing, Community Safety, Physical Environment."
+                ),
             )
             cluster_rank_min = cluster_bound(
                 "Domain rank from", "All", 1, 1909, "cl_rank_min", integer=True
@@ -3733,7 +3787,6 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "at once: deprivation pressure (FSM) and low attendance."
             )
         for low, high, label in (
-            (cluster_decile_min, cluster_decile_max, "WIMD decile"),
             (cluster_rank_min, cluster_rank_max, "Domain rank"),
             (cluster_fsm_min, cluster_fsm_max, "FSM"),
             (cluster_att_min, cluster_att_max, "Attendance"),
@@ -3761,7 +3814,7 @@ def page_map(cfg: Dict[str, str]) -> None:
                 ),
             )
             if cluster_view == "All severity bands":
-                if cluster_variable == "Deprivation (WIMD decile)":
+                if cluster_variable == "Deprivation (high / medium / low)":
                     band_cut1, band_cut2 = 3.0, 7.0
                     st.sidebar.caption(
                         "Deprivation is already categorical: the stored "
@@ -3921,45 +3974,58 @@ def page_map(cfg: Dict[str, str]) -> None:
     )
     metrics_open = search_mode == "A metric range"
     with st.sidebar.expander("More filters: school metrics", expanded=metrics_open):
-        st.caption("Leave a box as All to drop that side of the range.")
-        fsm_min_text = st.text_input(
-            "FSM % from",
-            value="All",
-            placeholder="All, or e.g. 30",
+        st.caption(
+            "Each range is locked to the loaded data, so a value below the "
+            "minimum or above the maximum cannot be entered. Leave a box "
+            "empty (All) to drop that side."
         )
-        fsm_max_text = st.text_input(
-            "FSM % to",
-            value="All",
-            placeholder="All, or e.g. 60",
-        )
-        st.caption("Loaded range: 0.0%–71.8%.")
-        attendance_min_text = st.text_input(
-            "Attendance % from",
-            value="All",
-            placeholder="All, or e.g. 85",
-        )
-        attendance_max_text = st.text_input(
-            "Attendance % to",
-            value="All",
-            placeholder="All, or e.g. 92",
-        )
-        st.caption("Loaded range: 79.1%–98.1%.")
-        capped9_min_text = st.text_input(
-            "Capped 9 points from",
-            value="All",
-            placeholder="All, or e.g. 300",
-        )
-        capped9_max_text = st.text_input(
-            "Capped 9 points to",
-            value="All",
-            placeholder="All, or e.g. 380",
-        )
+        st.markdown("**FSM %** — allowed: **0.0 to 71.8**")
+        f1, f2 = st.columns(2)
+        with f1:
+            fsm_min = st.number_input(
+                "From", min_value=0.0, max_value=71.8, value=None,
+                step=0.5, placeholder="All", key="m_fsm_from",
+                help="Lowest FSM % to include. Allowed 0.0–71.8; typing outside shows an error. Empty = no lower bound.",
+            )
+        with f2:
+            fsm_max = st.number_input(
+                "To", min_value=0.0, max_value=71.8, value=None,
+                step=0.5, placeholder="All", key="m_fsm_to",
+                help="Highest FSM % to include. Allowed 0.0–71.8; typing outside shows an error. Empty = no upper bound.",
+            )
+        st.markdown("**Attendance %** — allowed: **79.1 to 98.1**")
+        a1, a2 = st.columns(2)
+        with a1:
+            attendance_min = st.number_input(
+                "From", min_value=79.1, max_value=98.1, value=None,
+                step=0.1, placeholder="All", key="m_att_from",
+                help="Lowest attendance % to include. Allowed 79.1–98.1; typing outside shows an error. Empty = no lower bound.",
+            )
+        with a2:
+            attendance_max = st.number_input(
+                "To", min_value=79.1, max_value=98.1, value=None,
+                step=0.1, placeholder="All", key="m_att_to",
+                help="Highest attendance % to include. Allowed 79.1–98.1; typing outside shows an error. Empty = no upper bound.",
+            )
+        st.markdown("**Capped 9 points** — allowed: **245.1 to 453.1**")
+        c1_, c2_ = st.columns(2)
+        with c1_:
+            capped9_min = st.number_input(
+                "From", min_value=245.1, max_value=453.1, value=None,
+                step=1.0, placeholder="All", key="m_cap_from",
+                help="Lowest Capped 9 score to include. Allowed 245.1–453.1; typing outside shows an error. Empty = no lower bound.",
+            )
+        with c2_:
+            capped9_max = st.number_input(
+                "To", min_value=245.1, max_value=453.1, value=None,
+                step=1.0, placeholder="All", key="m_cap_to",
+                help="Highest Capped 9 score to include. Allowed 245.1–453.1; typing outside shows an error. Empty = no upper bound.",
+            )
         st.caption(
             "Capped 9 is a secondary-school points score, not a 0-100 "
             "percentage. It exists for 205 of 1,453 schools (14.1%, "
             "secondary only) — published for secondaries only, so this is a "
-            "source limitation, not missing data. Loaded range: "
-            "245.1–453.1 points."
+            "source limitation, not missing data."
         )
         include_missing_metrics = st.checkbox(
             "Include schools with no value for these metrics",
@@ -3973,46 +4039,9 @@ def page_map(cfg: Dict[str, str]) -> None:
             ),
         )
 
-    def parse_optional_float(
-        raw_value: str,
-        field_name: str,
-        minimum: float,
-        maximum: float,
-        unit: str,
-    ) -> Tuple[float | None, bool]:
-        text = str(raw_value).strip()
-        if not text or text.lower() == "all":
-            return None, True
-        try:
-            value = float(text)
-        except ValueError:
-            st.sidebar.error(f"{field_name}: enter a number or leave it blank for All.")
-            return None, False
-        if value < minimum or value > maximum:
-            st.sidebar.error(
-                f"{field_name}: {value:g}{unit} is outside the loaded data range "
-                f"({minimum:g}{unit}–{maximum:g}{unit})."
-            )
-            return None, False
-        return value, True
-
-    fsm_min, fsm_min_ok = parse_optional_float(fsm_min_text, "FSM from", 0.0, 71.8, "%")
-    fsm_max, fsm_max_ok = parse_optional_float(fsm_max_text, "FSM to", 0.0, 71.8, "%")
-    attendance_min, att_min_ok = parse_optional_float(
-        attendance_min_text, "Attendance from", 79.1, 98.1, "%"
-    )
-    attendance_max, att_max_ok = parse_optional_float(
-        attendance_max_text, "Attendance to", 79.1, 98.1, "%"
-    )
-    capped9_min, cap_min_ok = parse_optional_float(
-        capped9_min_text, "Capped 9 from", 245.1, 453.1, ""
-    )
-    capped9_max, cap_max_ok = parse_optional_float(
-        capped9_max_text, "Capped 9 to", 245.1, 453.1, ""
-    )
-    parse_ok = all(
-        [fsm_min_ok, fsm_max_ok, att_min_ok, att_max_ok, cap_min_ok, cap_max_ok]
-    )
+    # Bounds are enforced by the number inputs themselves; only the
+    # From/To ordering can still be wrong.
+    range_order_ok = True
     for low, high, label in (
         (fsm_min, fsm_max, "FSM"),
         (attendance_min, attendance_max, "Attendance"),
@@ -4020,12 +4049,9 @@ def page_map(cfg: Dict[str, str]) -> None:
     ):
         if low is not None and high is not None and low > high:
             st.sidebar.error(f"{label}: the From value is above the To value.")
-            parse_ok = False
-    if not parse_ok:
-        st.info(
-            "Fix the red metric filter message in the sidebar, or type All to "
-            "remove that filter."
-        )
+            range_order_ok = False
+    if not range_order_ok:
+        st.info("Swap the From and To values marked in red in the sidebar.")
         return
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
@@ -4099,7 +4125,7 @@ def page_map(cfg: Dict[str, str]) -> None:
 
         if cluster_view == "All severity bands":
             c1, c2 = float(band_cut1), float(band_cut2)
-            if cluster_variable == "Deprivation (WIMD decile)":
+            if cluster_variable == "Deprivation (high / medium / low)":
                 band_cypher = (
                     "MATCH (l:LSOA)\n"
                     "WHERE l.deprivation IS NOT NULL\n"
@@ -4188,20 +4214,22 @@ def page_map(cfg: Dict[str, str]) -> None:
 
         if cluster_view == "All severity bands":
             pass
-        elif cluster_variable == "Deprivation (WIMD decile)":
-            if cluster_decile_min is None and cluster_decile_max is None:
-                st.warning("Set at least one WIMD decile bound.")
+        elif cluster_variable == "Deprivation (high / medium / low)":
+            if not cluster_dep_levels:
+                st.warning("Pick at least one deprivation level.")
                 return
-            clause, lab = range_clause(
-                "l.wimd_decile", cluster_decile_min, cluster_decile_max,
-                "min_decile", "max_decile", as_int=True,
-            )
+            level_values = [
+                f"{lvl.lower()}_deprivation" for lvl in cluster_dep_levels
+            ]
+            cluster_params["dep_levels"] = level_values
             pool_match = (
                 "MATCH (l:LSOA)\n"
-                f"WHERE l.wimd_decile IS NOT NULL AND {clause}\n"
+                "WHERE l.deprivation IN $dep_levels\n"
                 "WITH collect(l.code) AS pool_codes"
             )
-            cluster_pool_label = f"WIMD decile {lab}"
+            cluster_pool_label = (
+                "deprivation level " + " / ".join(cluster_dep_levels)
+            )
         elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
             domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
             loaded = int(
@@ -4484,29 +4512,9 @@ ORDER BY cluster_size DESC, cluster_id
         st.markdown(
             f"{provenance_badge('Geometry-origin')} "
             f"**{len(cluster_df):,} adjacency clusters** covering "
-            f"**{len(cluster_codes):,} LSOAs** — pool: {cluster_pool_label}, "
-            f"traversal depth {int(cluster_depth)}.",
+            f"**{len(cluster_codes):,} LSOAs** — pool: {cluster_pool_label}.",
             unsafe_allow_html=True,
         )
-        st.caption(
-            "An adjacency cluster is a connected group of LSOAs that all meet "
-            "the threshold and are joined by computed LSOA_TOUCHES edges. It "
-            "is not the statistical cluster used by Sandu et al., which comes "
-            "from a Moran's I spatial-weights matrix and is a different notion "
-            "of proximity that stays outside the completeness scoring."
-        )
-        display_df(
-            cluster_df.assign(
-                members=cluster_df["members"].apply(
-                    lambda codes: ", ".join(list(codes)[:8])
-                    + (" ..." if len(codes) > 8 else "")
-                )
-            )
-        )
-        if SHOW_QUERIES:
-            with st.expander("Cluster Cypher"):
-                st.code(cluster_cypher, language="cypher")
-                st.json(cluster_params)
 
     if df.empty:
         st.info("No rows with coordinates after filtering.")
@@ -4546,6 +4554,34 @@ ORDER BY cluster_size DESC, cluster_id
         return
 
     render_school_map(map_df, selected_school)
+
+    if search_mode == "An adjacency cluster" and not cluster_df.empty:
+        with st.expander(
+            f"Cluster results — {len(cluster_df):,} clusters, "
+            f"{len(cluster_codes):,} LSOAs",
+            expanded=False,
+        ):
+            st.caption(
+                "An adjacency cluster is a connected group of LSOAs that "
+                "all meet the threshold and are joined by computed "
+                "LSOA_TOUCHES edges (traversal depth "
+                f"{int(cluster_depth)}). It is not the statistical cluster "
+                "used by Sandu et al., which comes from a Moran's I "
+                "spatial-weights matrix and stays outside the completeness "
+                "scoring."
+            )
+            display_df(
+                cluster_df.assign(
+                    members=cluster_df["members"].apply(
+                        lambda codes: ", ".join(list(codes)[:8])
+                        + (" ..." if len(codes) > 8 else "")
+                    )
+                )
+            )
+            if SHOW_QUERIES:
+                st.code(cluster_cypher, language="cypher")
+                st.json(cluster_params)
+
     if SHOW_QUERIES:
         with st.expander("Map Cypher"):
             st.code(cypher, language="cypher")
