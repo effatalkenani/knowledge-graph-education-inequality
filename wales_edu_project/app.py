@@ -1866,6 +1866,70 @@ def render_task_card(t: Dict[str, Any]) -> None:
     )
 
 
+def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
+    """Turn a POLYGON / MULTIPOLYGON WKT string into deck.gl ring lists.
+
+    Written without shapely so the deployed app needs no extra dependency.
+    Only exterior rings are kept: holes are rare in LSOA boundaries and
+    deck.gl renders the outline faithfully enough for a choropleth.
+    """
+    if not wkt_text:
+        return []
+    text = str(wkt_text).strip().upper()
+    body = wkt_text[wkt_text.find("(") :] if "(" in wkt_text else ""
+    if not body:
+        return []
+    rings: List[List[List[float]]] = []
+    depth = 0
+    current = ""
+    for ch in body:
+        if ch == "(":
+            depth += 1
+            if depth >= 2 if text.startswith("MULTIPOLYGON") else depth >= 1:
+                current = ""
+            continue
+        if ch == ")":
+            if current.strip():
+                pts: List[List[float]] = []
+                for pair in current.split(","):
+                    bits = pair.strip().split()
+                    if len(bits) >= 2:
+                        try:
+                            pts.append([float(bits[0]), float(bits[1])])
+                        except ValueError:
+                            pass
+                if len(pts) >= 3:
+                    rings.append(pts)
+                current = ""
+            depth -= 1
+            continue
+        current += ch
+    return rings
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def cluster_polygons(
+    cfg_key: Tuple[str, str, str, str], codes: Tuple[str, ...]
+) -> pd.DataFrame:
+    """Fetch LSOA boundary polygons (l.wkt) for the given LSOA codes."""
+    cfg = {
+        "uri": cfg_key[0],
+        "user": cfg_key[1],
+        "password": cfg_key[2],
+        "database": cfg_key[3],
+    }
+    rows = run_cypher(
+        cfg,
+        """
+        MATCH (l:LSOA)
+        WHERE l.code IN $codes AND l.wkt IS NOT NULL
+        RETURN l.code AS code, l.name AS name, l.wkt AS wkt
+        """,
+        {"codes": list(codes)},
+    )
+    return rows
+
+
 def provenance_badge(provenance: str) -> str:
     p = provenance.lower()
     cls = "native" if "native" in p and "geometry" not in p else "geometry" if "geometry" in p else "derived"
@@ -2029,7 +2093,11 @@ div[data-testid="stDeckGlJsonChart"] canvas + div {
 """
 
 
-def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) -> None:
+def render_school_map(
+    map_df: pd.DataFrame,
+    selected_school: Tuple[str, str],
+    polygon_df: pd.DataFrame | None = None,
+) -> None:
     """Render the Wales school map with pydeck (deck.gl).
 
     Why pydeck and not Folium: pydeck ships inside Streamlit itself, so no
@@ -2216,8 +2284,52 @@ def render_school_map(map_df: pd.DataFrame, selected_school: Tuple[str, str]) ->
         },
     }
 
+    layers = []
+    if polygon_df is not None and not polygon_df.empty:
+        poly_rows = []
+        sizes = polygon_df.get("cluster_size")
+        max_size = float(sizes.max()) if sizes is not None and len(sizes) else 1.0
+        for _, prow in polygon_df.iterrows():
+            for ring in _wkt_rings(prow.get("wkt")):
+                weight = (
+                    float(prow.get("cluster_size", 1)) / max_size
+                    if max_size > 0
+                    else 0.0
+                )
+                # Deeper red for bigger clusters, in the manner of a
+                # choropleth: the shade encodes cluster size.
+                poly_rows.append(
+                    {
+                        "polygon": ring,
+                        "name": prow.get("name") or prow.get("code"),
+                        "code": prow.get("code"),
+                        "cluster_size": int(prow.get("cluster_size", 0)),
+                        "fill": [
+                            225,
+                            int(90 - 60 * weight),
+                            int(110 - 70 * weight),
+                            int(90 + 90 * weight),
+                        ],
+                    }
+                )
+        if poly_rows:
+            layers.append(
+                pdk.Layer(
+                    "PolygonLayer",
+                    data=poly_rows,
+                    get_polygon="polygon",
+                    get_fill_color="fill",
+                    get_line_color=[136, 19, 55, 170],
+                    line_width_min_pixels=1,
+                    stroked=True,
+                    filled=True,
+                    pickable=False,
+                )
+            )
+    layers.append(pin_layer)
+
     deck = pdk.Deck(
-        layers=[pin_layer],
+        layers=layers,
         initial_view_state=view_state,
         # No external basemap: tiles are fetched from a third-party service
         # and are blocked on this network. The pins carry the information, and
@@ -4537,7 +4649,25 @@ ORDER BY cluster_size DESC, cluster_id
             st.code(cypher, language="cypher")
         return
 
-    render_school_map(map_df, selected_school)
+    polygon_df = None
+    if search_mode == "Cluster search" and cluster_codes:
+        size_by_code: Dict[str, int] = {}
+        for _, crow in cluster_df.iterrows():
+            for member in crow["members"]:
+                size_by_code[str(member)] = int(crow["cluster_size"])
+        try:
+            polygon_df = cluster_polygons(
+                (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+                tuple(cluster_codes),
+            )
+            if not polygon_df.empty:
+                polygon_df = polygon_df.assign(
+                    cluster_size=polygon_df["code"].astype(str).map(size_by_code)
+                )
+        except Exception:
+            polygon_df = None
+
+    render_school_map(map_df, selected_school, polygon_df)
 
     if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
