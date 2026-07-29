@@ -28,6 +28,12 @@ from neo4j import GraphDatabase
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
+# One switch for the whole app: when False, no Cypher query text, parameter
+# dump, or query expander renders anywhere in the UI. The queries still run
+# and still live in the code and the research log; this only controls display.
+# Flip to True during development when the query text is needed on screen.
+SHOW_QUERIES = False
+
 st.set_page_config(
     page_title="Wales Education KG — Task-Aligned Demonstrator",
     page_icon="🏴󠁧󠁢󠁷󠁬󠁳󠁿",
@@ -2659,14 +2665,14 @@ def page_scq_demonstrator(
             str(scq3_hops),
         )
 
-    st.markdown(f"### {t('cypher_used')}")
-    st.code(
-        active_cypher.strip(),
-        language="cypher",
-    )
-
-    st.markdown(f"### {t('parameters')}")
-    st.json(params)
+    if SHOW_QUERIES:
+        st.markdown(f"### {t('cypher_used')}")
+        st.code(
+            active_cypher.strip(),
+            language="cypher",
+        )
+        st.markdown(f"### {t('parameters')}")
+        st.json(params)
 
     if not run_query:
         return
@@ -2798,14 +2804,16 @@ def page_scq_demonstrator(
                 st.metric(answer_metric, len(result_df))
                 st.caption(answer_caption)
                 display_df(result_df)
-                with st.expander(t("show_query")):
-                    st.code(active_cypher.strip(), language="cypher")
+                if SHOW_QUERIES:
+                    with st.expander(t("show_query")):
+                        st.code(active_cypher.strip(), language="cypher")
 
             with tab_evidence:
                 st.metric(t("metric_pairs"), len(evidence_df))
                 display_df(evidence_df)
-                with st.expander(t("show_query")):
-                    st.code(evidence_cypher.strip(), language="cypher")
+                if SHOW_QUERIES:
+                    with st.expander(t("show_query")):
+                        st.code(evidence_cypher.strip(), language="cypher")
 
         else:
             result_label = meta.get(
@@ -3270,13 +3278,14 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                     "No LSOAs are currently available for SCQ7."
                 )
 
-            with st.expander(
-                "Show SCQ7 Cypher query"
-            ):
-                st.code(
-                    scq7_query.strip(),
-                    language="cypher",
-                )
+            if SHOW_QUERIES:
+                with st.expander(
+                    "Show SCQ7 Cypher query"
+                ):
+                    st.code(
+                        scq7_query.strip(),
+                        language="cypher",
+                    )
 
         # ------------------------------------------------------------------
         # SCQ8
@@ -3318,11 +3327,12 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         st.info(t("no_results_8"))
                     else:
                         display_df(df8)
-                    with st.expander(t("show_query")):
-                        st.code(
-                            scq8_query.strip(),
-                            language="cypher",
-                        )
+                    if SHOW_QUERIES:
+                        with st.expander(t("show_query")):
+                            st.code(
+                                scq8_query.strip(),
+                                language="cypher",
+                            )
 
                 with tab_e8:
                     df8_pairs = run_cypher(
@@ -3341,11 +3351,12 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         st.info(t("no_results_8"))
                     else:
                         display_df(df8_pairs)
-                    with st.expander(t("show_query")):
-                        st.code(
-                            SCQ8_EVIDENCE_CYPHER.strip(),
-                            language="cypher",
-                        )
+                    if SHOW_QUERIES:
+                        with st.expander(t("show_query")):
+                            st.code(
+                                SCQ8_EVIDENCE_CYPHER.strip(),
+                                language="cypher",
+                            )
 
             else:
                 st.warning(
@@ -3408,13 +3419,14 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                 else:
                     display_df(df7r)
 
-                with st.expander(
-                    "Show SCQ7 Cypher query (reversed direction)"
-                ):
-                    st.code(
-                        SCQ7_REVERSE_CYPHER.strip(),
-                        language="cypher",
-                    )
+                if SHOW_QUERIES:
+                    with st.expander(
+                        "Show SCQ7 Cypher query (reversed direction)"
+                    ):
+                        st.code(
+                            SCQ7_REVERSE_CYPHER.strip(),
+                            language="cypher",
+                        )
 
             # ----------------------------------------------------------
             # SCQ8 (reversed): Ward/Community -> nearby LSOAs (disjoint)
@@ -3455,11 +3467,12 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         st.info(t("no_results_8"))
                     else:
                         display_df(df8r)
-                    with st.expander(t("show_query")):
-                        st.code(
-                            SCQ8_REVERSE_CYPHER.strip(),
-                            language="cypher",
-                        )
+                    if SHOW_QUERIES:
+                        with st.expander(t("show_query")):
+                            st.code(
+                                SCQ8_REVERSE_CYPHER.strip(),
+                                language="cypher",
+                            )
 
                 with tab_re8:
                     df8r_pairs = run_cypher(
@@ -3478,11 +3491,12 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         st.info(t("no_results_8"))
                     else:
                         display_df(df8r_pairs)
-                    with st.expander(t("show_query")):
-                        st.code(
-                            SCQ8_REVERSE_EVIDENCE_CYPHER.strip(),
-                            language="cypher",
-                        )
+                    if SHOW_QUERIES:
+                        with st.expander(t("show_query")):
+                            st.code(
+                                SCQ8_REVERSE_EVIDENCE_CYPHER.strip(),
+                                language="cypher",
+                            )
 
 
     st.markdown(
@@ -3740,9 +3754,9 @@ def page_map(cfg: Dict[str, str]) -> None:
                 if cluster_variable == "Deprivation (WIMD decile)":
                     band_cut1, band_cut2 = 3.0, 7.0
                     st.sidebar.caption(
-                        "Fixed bands 1–3 / 4–7 / 8–10 — identical to the "
-                        "loader's high/medium/low deprivation categories, so "
-                        "the two colourings stay consistent."
+                        "Deprivation is already categorical: the stored "
+                        "high / medium / low category (deciles 1-3 / 4-7 / "
+                        "8-10) is used directly — no cuts to set."
                     )
                 elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
                     band_cut1 = cluster_bound(
@@ -4078,13 +4092,17 @@ def page_map(cfg: Dict[str, str]) -> None:
             if cluster_variable == "Deprivation (WIMD decile)":
                 band_cypher = (
                     "MATCH (l:LSOA)\n"
-                    "WHERE l.wimd_decile IS NOT NULL\n"
+                    "WHERE l.deprivation IS NOT NULL\n"
                     "RETURN l.code AS code,\n"
-                    "  CASE WHEN l.wimd_decile <= $c1 THEN 'band_red'\n"
-                    "       WHEN l.wimd_decile <= $c2 THEN 'band_mid'\n"
-                    "       ELSE 'band_green' END AS band"
+                    "  CASE l.deprivation\n"
+                    "       WHEN 'high_deprivation' THEN 'band_red'\n"
+                    "       WHEN 'medium_deprivation' THEN 'band_mid'\n"
+                    "       WHEN 'low_deprivation' THEN 'band_green'\n"
+                    "       ELSE 'band_none' END AS band"
                 )
-                band_label = "WIMD decile bands 1-3 / 4-7 / 8-10"
+                band_label = (
+                    "stored deprivation category: high / medium / low"
+                )
             elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
                 domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
                 band_cypher = (
@@ -4135,7 +4153,8 @@ def page_map(cfg: Dict[str, str]) -> None:
                 )
             except Exception as exc:
                 st.error(f"Band query failed: {exc}")
-                st.code(band_cypher, language="cypher")
+                if SHOW_QUERIES:
+                    st.code(band_cypher, language="cypher")
                 return
             band_map = dict(
                 zip(band_df["code"].astype(str), band_df["band"])
@@ -4314,7 +4333,8 @@ ORDER BY cluster_size DESC, cluster_id
                     )
             except Exception as exc:
                 st.error(f"Cluster query failed: {exc}")
-                st.code(cluster_cypher, language="cypher")
+                if SHOW_QUERIES:
+                    st.code(cluster_cypher, language="cypher")
                 return
             if cluster_df.empty:
                 st.warning(
@@ -4322,7 +4342,8 @@ ORDER BY cluster_size DESC, cluster_id
                     "minimum size. Widen the bounds, lower the minimum "
                     "size, or increase the traversal depth."
                 )
-                st.code(cluster_cypher, language="cypher")
+                if SHOW_QUERIES:
+                    st.code(cluster_cypher, language="cypher")
                 return
             for member_list in cluster_df["members"]:
                 cluster_codes.extend(list(member_list))
@@ -4472,13 +4493,15 @@ ORDER BY cluster_size DESC, cluster_id
                 )
             )
         )
-        with st.expander("Cluster Cypher"):
-            st.code(cluster_cypher, language="cypher")
-            st.json(cluster_params)
+        if SHOW_QUERIES:
+            with st.expander("Cluster Cypher"):
+                st.code(cluster_cypher, language="cypher")
+                st.json(cluster_params)
 
     if df.empty:
         st.info("No rows with coordinates after filtering.")
-        st.code(cypher, language="cypher")
+        if SHOW_QUERIES:
+            st.code(cypher, language="cypher")
         return
 
     map_df = df.copy()
@@ -4502,24 +4525,21 @@ ORDER BY cluster_size DESC, cluster_id
             f"{int(band_counts.get('band_none', 0)):,} without a value.",
             unsafe_allow_html=True,
         )
-        st.caption(
-            "The bands grade the variable, not the clustering: an adjacency "
-            "cluster is binary (an LSOA is in the pool or not). Graded "
-            "cluster confidence (90/95/99%) is what the statistical Gi* "
-            "route provides, and that stays outside completeness scoring."
-        )
-        with st.expander("Band Cypher"):
-            st.code(band_cypher, language="cypher")
-            st.json({"c1": float(band_cut1), "c2": float(band_cut2)})
+        if SHOW_QUERIES:
+            with st.expander("Band Cypher"):
+                st.code(band_cypher, language="cypher")
+                st.json({"c1": float(band_cut1), "c2": float(band_cut2)})
     if map_df.empty:
         st.info("No rows with valid map coordinates after filtering.")
-        st.code(cypher, language="cypher")
+        if SHOW_QUERIES:
+            st.code(cypher, language="cypher")
         return
 
     render_school_map(map_df, selected_school)
-    with st.expander("Map Cypher"):
-        st.code(cypher, language="cypher")
-        st.json(params)
+    if SHOW_QUERIES:
+        with st.expander("Map Cypher"):
+            st.code(cypher, language="cypher")
+            st.json(params)
 
 
 def main() -> None:
