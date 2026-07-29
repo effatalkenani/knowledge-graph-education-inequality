@@ -1186,10 +1186,12 @@ def sidebar_config() -> Dict[str, str]:
         </div>
         """, unsafe_allow_html=True)
 
-    pages = ["Task Overview", "Visual Story", "Policy Questions", "SCQ Demonstrator", "Evaluation", "Cross-hierarchy", "Map"]
+    # "Task Overview" and "Visual Story" were development-time learning aids
+    # and are intentionally removed from the submission navigation. Their
+    # page functions remain below, uncalled: to restore one for a supervision
+    # demo, add its name back to this list.
+    pages = ["Policy Questions", "SCQ Demonstrator", "Evaluation", "Cross-hierarchy", "Map"]
     labels = {
-        "Task Overview": "Overview",
-        "Visual Story": "Visual Story",
         "Policy Questions": "Policy Questions",
         "SCQ Demonstrator": "SCQ Demonstrator",
         "Evaluation": "Evaluation",
@@ -1197,16 +1199,14 @@ def sidebar_config() -> Dict[str, str]:
         "Map": "Map Explorer",
     }
     icons = {
-        "Task Overview": "Overview",
-        "Visual Story": "Visual Story",
         "Policy Questions": "Policy Questions",
         "SCQ Demonstrator": "SCQ Demonstrator",
         "Evaluation": "Evaluation",
         "Cross-hierarchy": "Cross-hierarchy",
         "Map": "Map Explorer",
     }
-    if "page" not in st.session_state:
-        st.session_state.page = "Task Overview"
+    if "page" not in st.session_state or st.session_state.page not in pages:
+        st.session_state.page = "Policy Questions"
 
     def _set_page(page_name: str) -> None:
         st.session_state.page = page_name
@@ -4556,11 +4556,7 @@ def main() -> None:
     cfg = sidebar_config()
     apply_dashboard_theme(bool(cfg.get("dark_theme")))
     page = cfg.pop("page")
-    if page == "Task Overview":
-        page_task_overview(cfg)
-    elif page == "Visual Story":
-        page_visual_story()
-    elif page == "Policy Questions":
+    if page == "Policy Questions":
         page_policy_questions()
     elif page == "SCQ Demonstrator":
         page_scq_demonstrator(cfg)
