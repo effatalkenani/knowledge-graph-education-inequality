@@ -2097,6 +2097,7 @@ def render_school_map(
     map_df: pd.DataFrame,
     selected_school: Tuple[str, str],
     polygon_df: pd.DataFrame | None = None,
+    polygons_only: bool = False,
 ) -> None:
     """Render the Wales school map with pydeck (deck.gl).
 
@@ -2304,6 +2305,10 @@ def render_school_map(
                         "name": prow.get("name") or prow.get("code"),
                         "code": prow.get("code"),
                         "cluster_size": int(prow.get("cluster_size", 0)),
+                        "schools_count": prow.get("schools_count", 0),
+                        "schools_list": prow.get("schools_list", "—"),
+                        "fsm_avg": prow.get("fsm_avg", "N/A"),
+                        "att_avg": prow.get("att_avg", "N/A"),
                         "fill": [
                             225,
                             int(90 - 60 * weight),
@@ -2323,10 +2328,36 @@ def render_school_map(
                     line_width_min_pixels=1,
                     stroked=True,
                     filled=True,
-                    pickable=False,
+                    pickable=polygons_only,
+                    auto_highlight=polygons_only,
                 )
             )
-    layers.append(pin_layer)
+    if not polygons_only:
+        layers.append(pin_layer)
+
+    if polygons_only:
+        tooltip = {
+            "html": (
+                "<div class='pin-card'>"
+                "<div class='pin-title'>{name}</div>"
+                "<div class='pin-sub'>{code} &middot; cluster of {cluster_size} LSOAs</div>"
+                "<div class='pin-grid'>"
+                "<div class='pin-cell'><span class='pin-k'>SCHOOLS</span>"
+                "<span class='pin-v'>{schools_count}</span></div>"
+                "<div class='pin-cell'><span class='pin-k'>MEAN FSM</span>"
+                "<span class='pin-v'>{fsm_avg}</span></div>"
+                "<div class='pin-cell'><span class='pin-k'>MEAN ATTENDANCE</span>"
+                "<span class='pin-v'>{att_avg}</span></div>"
+                "</div>"
+                "<div class='pin-foot'>{schools_list}</div>"
+                "</div>"
+            ),
+            "style": {
+                "backgroundColor": "transparent",
+                "color": "#0f172a",
+                "zIndex": "9999",
+            },
+        }
 
     deck = pdk.Deck(
         layers=layers,
@@ -4020,14 +4051,19 @@ def page_map(cfg: Dict[str, str]) -> None:
         "Transport access",
         [
             "All",
-            "Near transport",
-            "No transport stop within 800m",
+            "Distance-near (within 800m)",
+            "Distance-far (no stop within 800m)",
+            "Graph-near (stop in a neighbouring LSOA)",
+            "Graph-far (no stop within two LSOA steps)",
         ],
         index=0,
         help=(
-            "Near transport means at least one TransportStop is within "
-            "800m. No transport stop within 800m means no stored "
-            "DISTANCE_NEAR relation inside that threshold."
+            "Two different notions of proximity, kept apart on purpose. "
+            "Distance-near is a metric threshold: a stop within 800m, a "
+            "planning proxy that stays outside the completeness scoring. "
+            "Graph-near is the evaluation instrument's own definition: the "
+            "school's own LSOA has no stop, but an LSOA reachable within two "
+            "touches-steps does. Graph-far is beyond that reach."
         ),
     )
     school_filters = st.sidebar.expander("School filters", expanded=False)
@@ -4192,18 +4228,56 @@ def page_map(cfg: Dict[str, str]) -> None:
     add_range_condition("fsm_pct", fsm_min, fsm_max)
     add_range_condition("attendance_pct", attendance_min, attendance_max)
     add_range_condition("capped9_score", capped9_min, capped9_max)
-    if transport == "Near transport":
+    if transport == "Distance-near (within 800m)":
         conditions.append(
             "EXISTS { "
             "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
             "}"
         )
-    elif transport == "No transport stop within 800m":
+    elif transport == "Distance-far (no stop within 800m)":
         conditions.append(
             "NOT EXISTS { "
             "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
             "}"
         )
+    elif transport.startswith("Graph-"):
+        stops_placed = int(
+            scalar(
+                cfg,
+                "MATCH (:TransportStop)-[:LOCATED_IN]->(:LSOA) "
+                "RETURN count(*)",
+                default=0,
+            )
+            or 0
+        )
+        if stops_placed == 0:
+            st.error(
+                "Graph-based transport proximity needs transport stops "
+                "placed inside LSOAs. Set RUN_STOP_LSOA_LINKS = True in "
+                "load_to_neo4j.py and run it against this database, then "
+                "reload. Until then use the distance-near options, which "
+                "work from the stored 800m DISTANCE_NEAR relation."
+            )
+            return
+        own_has_stop = (
+            "EXISTS { MATCH (l)<-[:LOCATED_IN]-(:TransportStop) }"
+        )
+        neighbour_has_stop = (
+            "EXISTS { "
+            "MATCH (l)-[:LSOA_TOUCHES*1..2]-(other:LSOA) "
+            "WHERE EXISTS { MATCH (other)<-[:LOCATED_IN]-(:TransportStop) } "
+            "}"
+        )
+        if transport.startswith("Graph-near"):
+            conditions.append(
+                f"(l IS NOT NULL AND NOT {own_has_stop} "
+                f"AND {neighbour_has_stop})"
+            )
+        else:
+            conditions.append(
+                f"(l IS NOT NULL AND NOT {own_has_stop} "
+                f"AND NOT {neighbour_has_stop})"
+            )
     cluster_df = pd.DataFrame()
     cluster_codes: List[str] = []
     cluster_cypher = ""
@@ -4582,7 +4656,7 @@ ORDER BY cluster_size DESC, cluster_id
     near_transport_count = int(summary.get("near_transport_schools") or 0)
     if transport == "No transport stop within 800m":
         transport_value = total_schools - near_transport_count
-    elif transport == "Near transport":
+    elif transport == "Distance-near (within 800m)":
         transport_value = total_schools
     else:
         transport_value = near_transport_count
@@ -4661,13 +4735,67 @@ ORDER BY cluster_size DESC, cluster_id
                 tuple(cluster_codes),
             )
             if not polygon_df.empty:
+                summary_rows = []
+                for code, grp in map_df.groupby(map_df["lsoa_code"].astype(str)):
+                    names = [str(n) for n in grp["name"].head(4).tolist()]
+                    more = len(grp) - len(names)
+                    fsm_vals = pd.to_numeric(grp.get("fsm_pct"), errors="coerce")
+                    att_vals = pd.to_numeric(
+                        grp.get("attendance_pct"), errors="coerce"
+                    )
+                    summary_rows.append(
+                        {
+                            "code": code,
+                            "schools_count": int(len(grp)),
+                            "schools_list": ", ".join(names)
+                            + (f" and {more} more" if more > 0 else ""),
+                            "fsm_avg": (
+                                f"{fsm_vals.mean():.1f}%"
+                                if fsm_vals.notna().any()
+                                else "N/A"
+                            ),
+                            "att_avg": (
+                                f"{att_vals.mean():.1f}%"
+                                if att_vals.notna().any()
+                                else "N/A"
+                            ),
+                        }
+                    )
+                summary_df = pd.DataFrame(
+                    summary_rows,
+                    columns=[
+                        "code",
+                        "schools_count",
+                        "schools_list",
+                        "fsm_avg",
+                        "att_avg",
+                    ],
+                )
                 polygon_df = polygon_df.assign(
                     cluster_size=polygon_df["code"].astype(str).map(size_by_code)
+                ).merge(summary_df, on="code", how="left")
+                polygon_df["schools_count"] = (
+                    polygon_df["schools_count"].fillna(0).astype(int)
                 )
+                polygon_df["schools_list"] = polygon_df["schools_list"].fillna(
+                    "No school inside this LSOA"
+                )
+                polygon_df["fsm_avg"] = polygon_df["fsm_avg"].fillna("N/A")
+                polygon_df["att_avg"] = polygon_df["att_avg"].fillna("N/A")
         except Exception:
             polygon_df = None
 
-    render_school_map(map_df, selected_school, polygon_df)
+    cluster_only = bool(
+        search_mode == "Cluster search"
+        and polygon_df is not None
+        and not polygon_df.empty
+    )
+    if cluster_only:
+        st.caption(
+            "Cluster regions are shaded by size — hover a region to see the "
+            "schools inside it. School pins return in Standard search."
+        )
+    render_school_map(map_df, selected_school, polygon_df, cluster_only)
 
     if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
