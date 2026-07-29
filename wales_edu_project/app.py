@@ -18,9 +18,6 @@ import json
 from html import escape
 from typing import Any, Dict, List, Tuple
 
-import re
-from pathlib import Path
-
 import folium
 import pydeck as pdk
 import pandas as pd
@@ -1093,9 +1090,9 @@ POLICY_LIBRARY = [
 # This table evaluates what the original YAGO2geo-style administrative model
 # can represent natively or by traversal over native administrative relations.
 MODEL_COMPLETENESS = pd.DataFrame([
-    ["Ward", "Ward", "Touches, near/far/between", "TOUCHES native; near/far/between by traversal", "Complete (model) — instances verified: 100.00% Wales, 99.97% UK"],
-    ["Community", "Community", "Touches, near/far/between", "TOUCHES native; rest by traversal", "Complete (model) — instances verified: 100.00% Wales, 99.93% UK"],
-    ["Unitary Authority", "Ward", "Contains, inside", "WITHIN native; contains by inverse", "Complete (model) — instances verified: 100.00% Wales and UK"],
+    ["Ward", "Ward", "Touches, near/far/between", "TOUCHES native; near/far/between by traversal", "Complete (model)"],
+    ["Community", "Community", "Touches, near/far/between", "TOUCHES native; rest by traversal", "Complete (model)"],
+    ["Unitary Authority", "Ward", "Contains, inside", "WITHIN native; contains by inverse", "Complete (model)"],
     ["LSOA", "LSOA", "Touches, near, far, between", "None native in YAGO2geo", "Missing — report"],
     ["Ward", "LSOA", "Intersect, near", "None native in YAGO2geo", "Missing — report"],
     ["Community", "LSOA", "Intersect, near", "None native in YAGO2geo", "Missing — report"],
@@ -1723,63 +1720,6 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
 # =============================================================================
 # UI COMPONENTS
 # =============================================================================
-# =============================================================================
-# NATIVE RELATION-INSTANCE COMPLETENESS AUDIT (static evidence file)
-# =============================================================================
-# The audit is produced offline by yago2geo_local_cloud_completeness_report.py
-# against the local Neo4j (the cloud app cannot reach it), and the resulting
-# HTML ships with the repo as read-only evidence. Sections are shown here in
-# expanders, without the report hero header.
-AUDIT_REPORT_FILE = Path(__file__).parent / "yago2geo_completeness_local.html"
-
-
-@st.cache_data(show_spinner=False)
-def load_audit_sections() -> tuple[str, list[tuple[str, str]]]:
-    if not AUDIT_REPORT_FILE.exists():
-        return "", []
-    raw = AUDIT_REPORT_FILE.read_text(encoding="utf-8", errors="replace")
-    style_match = re.search(r"<style>.*?</style>", raw, re.S)
-    style = style_match.group(0) if style_match else ""
-    sections = re.findall(
-        r'<section class="scope"[^>]*>.*?</section>', raw, re.S
-    )
-    titled: list[tuple[str, str]] = []
-    for section_html in sections:
-        h2 = re.search(r"<h2>(.*?)</h2>", section_html, re.S)
-        title = re.sub(r"<[^>]+>", "", h2.group(1)).strip() if h2 else "Section"
-        titled.append((title, section_html))
-    return style, titled
-
-
-def render_instance_audit() -> None:
-    style, sections = load_audit_sections()
-    st.subheader(
-        "5.1b Relation-instance completeness audit — instance-level evidence"
-    )
-    st.caption(
-        "Read-only audit computed offline against the local graph: "
-        "native asserted relations versus the geometry-derived reference. "
-        "Instance completeness is distinct from the model-level SpCom "
-        "scorecard over the eight SCQs."
-    )
-    if not sections:
-        st.info(
-            "Audit file yago2geo_completeness_local.html was not found "
-            "next to app.py. Add it to the repository to show the "
-            "instance-level evidence here."
-        )
-        return
-    for title, section_html in sections:
-        with st.expander(title, expanded=False):
-            components.html(
-                "<html><head>" + style + "</head>"
-                "<body style='background:#ffffff;margin:0'>"
-                + section_html + "</body></html>",
-                height=700,
-                scrolling=True,
-            )
-
-
 def hero() -> None:
     st.markdown(
         """
@@ -2917,12 +2857,8 @@ def page_evaluation() -> None:
             "are therefore reclassified / n/a rather than counted as "
             "independent education answers. The demonstrator still runs "
             "the implemented SCQ forms using geometry-origin and derived "
-            "relations. <b>Native SpCom is scored over the six "
-            "Domain–Range rows of Table 5.1</b> (three native, three "
-            "missing): 3/6 = 0.50. The annotated version scored "
-            "3/5 = 0.60; adding the requested LSOA–LSOA row makes it "
-            "0.50. CQCov over the eight SCQs is reported separately "
-            "in 5.2."
+            "relations, while <b>SpCom = 3/6 = 0.50</b> records the "
+            "corrected native model baseline."
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -2939,7 +2875,7 @@ def page_evaluation() -> None:
 
     with m2:
         st.metric(
-            label="Native SpCom — six model-table rows",
+            label="Native SpCom",
             value="3/6 = 0.50",
         )
 
@@ -2955,17 +2891,6 @@ def page_evaluation() -> None:
         r"=\frac{SR_s}{Size_{R_s}(\Omega)}"
         r"=\frac{3}{6}"
         r"=0.50"
-    )
-
-    st.caption(
-        "Denominator = the six Domain–Range rows of Table 5.1 "
-        "(three native, three natively absent). The annotated table "
-        "scored 3/5 = 0.60 before the LSOA–LSOA row was added, as "
-        "requested in the supervisor's notes; with that row the "
-        "corrected figure is 3/6 = 0.50. This relation-row SpCom is "
-        "distinct from CQCov, which counts SCQ answers over the "
-        "eight-question scorecard in 5.2, and from the "
-        "relation-instance completeness audit in 5.1b."
     )
 
     st.markdown(
@@ -3023,8 +2948,6 @@ def page_evaluation() -> None:
             use_container_width=True,
             hide_index=True,
         )
-
-        render_instance_audit()
 
         st.subheader("5.2 SCQ scorecard for the education use case")
         st.dataframe(
@@ -3577,6 +3500,169 @@ def page_map(cfg: Dict[str, str]) -> None:
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
+    st.sidebar.markdown("### Search for")
+    search_mode = st.sidebar.radio(
+        "Search mode",
+        [
+            "All matching schools",
+            "A single school",
+            "A metric range",
+            "An adjacency cluster",
+        ],
+        index=0,
+        label_visibility="collapsed",
+        help=(
+            "All matching schools keeps the existing behaviour. A single "
+            "school pins the map to one school. A metric range filters on "
+            "two-sided ranges. An adjacency cluster finds connected groups "
+            "of LSOAs that all meet a deprivation threshold, using the "
+            "computed LSOA_TOUCHES relation."
+        ),
+    )
+
+    WIMD_DOMAIN_PROPS = {
+        "Income": "wimd_rank_income",
+        "Employment": "wimd_rank_employment",
+        "Health": "wimd_rank_health",
+        "Education": "wimd_rank_education",
+        "Access to Services": "wimd_rank_access",
+        "Housing": "wimd_rank_housing",
+        "Community Safety": "wimd_rank_safety",
+        "Physical Environment": "wimd_rank_environment",
+    }
+    CLUSTER_VARIABLES = [
+        "Deprivation (WIMD decile)",
+        "Deprivation domain (WIMD 2019 rank)",
+        "School FSM average",
+        "School attendance average",
+        "High FSM and low attendance (compound)",
+    ]
+    cluster_variable = CLUSTER_VARIABLES[0]
+    cluster_domain_label = "Education"
+    cluster_decile = 3
+    cluster_rank_threshold = 382
+    cluster_fsm_threshold = 30.0
+    cluster_att_threshold = 92.0
+    cluster_depth = 4
+    min_cluster_size = 3
+    if search_mode == "An adjacency cluster":
+        st.sidebar.markdown("### Adjacency cluster")
+        st.sidebar.caption(
+            "Geometry-origin. LSOA_TOUCHES is computed from boundary "
+            "geometry, not asserted by YAGO2geo, so cluster results do not "
+            "count towards native model completeness. This is also not the "
+            "statistical (Gi*/LISA) cluster used by Sandu et al."
+        )
+        cluster_variable = st.sidebar.selectbox(
+            "Cluster on",
+            CLUSTER_VARIABLES,
+            help=(
+                "Deprivation options use LSOA-level WIMD values. School "
+                "options average the metric over the schools LOCATED_IN each "
+                "LSOA, so LSOAs with no schools drop out of those pools. "
+                "Capped 9 is deliberately not offered: it exists for 205 of "
+                "1,453 schools (secondary only), so clustering on it would "
+                "trace where secondary schools are, not where attainment "
+                "clusters."
+            ),
+        )
+        if cluster_variable == "Deprivation (WIMD decile)":
+            cluster_decile = st.sidebar.slider(
+                "WIMD decile at most",
+                min_value=1,
+                max_value=10,
+                value=3,
+                help=(
+                    "An LSOA joins the pool when its WIMD decile is at or "
+                    "below this value. Decile 1 is the most deprived. This "
+                    "threshold is a research choice: record the value you use "
+                    "and the alternative you rejected."
+                ),
+            )
+        elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+            cluster_domain_label = st.sidebar.selectbox(
+                "WIMD 2019 domain",
+                list(WIMD_DOMAIN_PROPS.keys()),
+                index=3,
+            )
+            cluster_rank_threshold = st.sidebar.slider(
+                "Domain rank at most (1 = most deprived of 1,909)",
+                min_value=50,
+                max_value=1909,
+                value=382,
+                step=1,
+                help=(
+                    "382 is the top quintile (most deprived 20%). Domain "
+                    "ranks come from wimd_2019.xlsx and must be loaded onto "
+                    "LSOA nodes first with load_wimd_domains.py."
+                ),
+            )
+        elif cluster_variable == "School FSM average":
+            cluster_fsm_threshold = st.sidebar.slider(
+                "Mean school FSM % at least",
+                min_value=0.0,
+                max_value=71.8,
+                value=30.0,
+                step=0.5,
+                help=(
+                    "The LSOA joins the pool when the average FSM of its "
+                    "schools is at or above this value. FSM coverage is "
+                    "96.6% of schools."
+                ),
+            )
+        elif cluster_variable == "School attendance average":
+            cluster_att_threshold = st.sidebar.slider(
+                "Mean school attendance % at most",
+                min_value=79.1,
+                max_value=98.1,
+                value=92.0,
+                step=0.1,
+                help=(
+                    "The LSOA joins the pool when the average attendance of "
+                    "its schools is at or below this value. The official "
+                    "Welsh Government persistent-absence line is 90%. "
+                    "Attendance coverage is 96.7% of schools."
+                ),
+            )
+        else:
+            cluster_fsm_threshold = st.sidebar.slider(
+                "Mean school FSM % at least",
+                min_value=0.0,
+                max_value=71.8,
+                value=30.0,
+                step=0.5,
+            )
+            cluster_att_threshold = st.sidebar.slider(
+                "Mean school attendance % at most",
+                min_value=79.1,
+                max_value=98.1,
+                value=92.0,
+                step=0.1,
+            )
+            st.sidebar.caption(
+                "The compound pool needs both conditions at once: high "
+                "deprivation pressure (FSM) and low attendance."
+            )
+        cluster_depth = st.sidebar.select_slider(
+            "Traversal depth (documented bound)",
+            options=[1, 2, 3, 4, 5],
+            value=4,
+            help=(
+                "Cypher cannot take a variable-length bound as a parameter "
+                "without APOC, so the depth is a fixed documented assumption. "
+                "Two LSOAs in the same true component that sit further apart "
+                "than this bound will be reported as separate clusters. "
+                "Record the bound and whether changing it changes the sizes."
+            ),
+        )
+        min_cluster_size = st.sidebar.number_input(
+            "Minimum cluster size",
+            min_value=1,
+            max_value=50,
+            value=3,
+            step=1,
+        )
+
     dep_options = [
         ("All", "All"),
         ("high_deprivation", "High"),
@@ -3650,38 +3736,59 @@ def page_map(cfg: Dict[str, str]) -> None:
             "or keep All matching schools."
         ),
     )
-    with st.sidebar.expander("More filters: school metrics", expanded=False):
+    metrics_open = search_mode == "A metric range"
+    with st.sidebar.expander("More filters: school metrics", expanded=metrics_open):
+        st.caption("Leave a box as All to drop that side of the range.")
         fsm_min_text = st.text_input(
-            "FSM minimum %",
+            "FSM % from",
             value="All",
             placeholder="All, or e.g. 30",
-            help=(
-                "Available FSM values in the loaded school data range from "
-                "0.0% to 71.8%. Keep All for no FSM filter."
-            ),
         )
-        st.caption("Loaded range: 0.0%–71.8%. Use All for no FSM filter.")
+        fsm_max_text = st.text_input(
+            "FSM % to",
+            value="All",
+            placeholder="All, or e.g. 60",
+        )
+        st.caption("Loaded range: 0.0%–71.8%.")
+        attendance_min_text = st.text_input(
+            "Attendance % from",
+            value="All",
+            placeholder="All, or e.g. 85",
+        )
         attendance_max_text = st.text_input(
-            "Attendance maximum %",
+            "Attendance % to",
             value="All",
-            placeholder="All, or e.g. 90",
-            help=(
-                "Available attendance values in the loaded school data range "
-                "from 79.1% to 98.1%. Keep All for no attendance filter."
-            ),
+            placeholder="All, or e.g. 92",
         )
-        st.caption("Loaded range: 79.1%–98.1%. Use All for no attendance filter.")
+        st.caption("Loaded range: 79.1%–98.1%.")
+        capped9_min_text = st.text_input(
+            "Capped 9 points from",
+            value="All",
+            placeholder="All, or e.g. 300",
+        )
         capped9_max_text = st.text_input(
-            "Capped 9 points maximum",
+            "Capped 9 points to",
             value="All",
-            placeholder="All, or e.g. 350",
+            placeholder="All, or e.g. 380",
+        )
+        st.caption(
+            "Capped 9 is a secondary-school points score, not a 0-100 "
+            "percentage. It exists for 205 of 1,453 schools (14.1%, "
+            "secondary only) — published for secondaries only, so this is a "
+            "source limitation, not missing data. Loaded range: "
+            "245.1–453.1 points."
+        )
+        include_missing_metrics = st.checkbox(
+            "Include schools with no value for these metrics",
+            value=False,
             help=(
-                "Capped 9 is a secondary-school points score, not a "
-                "0-100 percentage. Available values range from 245.1 "
-                "to 453.1. Keep All for no Capped 9 filter."
+                "Off by default. When it is off, a metric filter also removes "
+                "every school whose value is missing. Special schools often "
+                "carry no FSM, attendance or Capped 9 value, so leaving this "
+                "off drops them from the answer. The number of schools removed "
+                "for a missing value is reported above the map either way."
             ),
         )
-        st.caption("Loaded range: 245.1–453.1 points. Use All for no Capped 9 filter.")
 
     def parse_optional_float(
         raw_value: str,
@@ -3706,34 +3813,44 @@ def page_map(cfg: Dict[str, str]) -> None:
             return None, False
         return value, True
 
-    fsm_min, fsm_ok = parse_optional_float(
-        fsm_min_text,
-        "FSM minimum",
-        0.0,
-        71.8,
-        "%",
+    fsm_min, fsm_min_ok = parse_optional_float(fsm_min_text, "FSM from", 0.0, 71.8, "%")
+    fsm_max, fsm_max_ok = parse_optional_float(fsm_max_text, "FSM to", 0.0, 71.8, "%")
+    attendance_min, att_min_ok = parse_optional_float(
+        attendance_min_text, "Attendance from", 79.1, 98.1, "%"
     )
-    attendance_max, attendance_ok = parse_optional_float(
-        attendance_max_text,
-        "Attendance maximum",
-        79.1,
-        98.1,
-        "%",
+    attendance_max, att_max_ok = parse_optional_float(
+        attendance_max_text, "Attendance to", 79.1, 98.1, "%"
     )
-    capped9_max, capped9_ok = parse_optional_float(
-        capped9_max_text,
-        "Capped 9 points maximum",
-        245.1,
-        453.1,
-        "",
+    capped9_min, cap_min_ok = parse_optional_float(
+        capped9_min_text, "Capped 9 from", 245.1, 453.1, ""
     )
-    if not (fsm_ok and attendance_ok and capped9_ok):
-        st.info("Fix the red metric filter message in the sidebar, or type All to remove that filter.")
+    capped9_max, cap_max_ok = parse_optional_float(
+        capped9_max_text, "Capped 9 to", 245.1, 453.1, ""
+    )
+    parse_ok = all(
+        [fsm_min_ok, fsm_max_ok, att_min_ok, att_max_ok, cap_min_ok, cap_max_ok]
+    )
+    for low, high, label in (
+        (fsm_min, fsm_max, "FSM"),
+        (attendance_min, attendance_max, "Attendance"),
+        (capped9_min, capped9_max, "Capped 9"),
+    ):
+        if low is not None and high is not None and low > high:
+            st.sidebar.error(f"{label}: the From value is above the To value.")
+            parse_ok = False
+    if not parse_ok:
+        st.info(
+            "Fix the red metric filter message in the sidebar, or type All to "
+            "remove that filter."
+        )
         return
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
-    if selected_school[0] != "All":
+    if selected_school[0] != "All" and search_mode in (
+        "All matching schools",
+        "A single school",
+    ):
         conditions.append("s.code = $school_code")
         params["school_code"] = selected_school[0]
     if dep != "All":
@@ -3745,21 +3862,30 @@ def page_map(cfg: Dict[str, str]) -> None:
     if phase[0] != "All":
         conditions.append("coalesce(s.phase_group, s.phase, s.school_type) = $phase")
         params["phase"] = phase[0]
-    if fsm_min is not None:
-        conditions.append("s.fsm_pct IS NOT NULL AND s.fsm_pct >= $min_fsm")
-        params["min_fsm"] = fsm_min
-    if attendance_max is not None and attendance_max < 100:
-        conditions.append(
-            "s.attendance_pct IS NOT NULL "
-            "AND s.attendance_pct <= $max_attendance"
-        )
-        params["max_attendance"] = attendance_max
-    if capped9_max is not None:
-        conditions.append(
-            "s.capped9_score IS NOT NULL "
-            "AND s.capped9_score <= $max_capped9"
-        )
-        params["max_capped9"] = capped9_max
+    base_conditions = list(conditions)
+    filtered_metric_props: List[str] = []
+
+    def add_range_condition(prop: str, low: float | None, high: float | None) -> None:
+        """Two-sided range on a School property, explicit about missing values."""
+        parts: List[str] = []
+        if low is not None:
+            parts.append(f"s.{prop} >= $min_{prop}")
+            params[f"min_{prop}"] = low
+        if high is not None:
+            parts.append(f"s.{prop} <= $max_{prop}")
+            params[f"max_{prop}"] = high
+        if not parts:
+            return
+        filtered_metric_props.append(prop)
+        expression = " AND ".join(parts)
+        if include_missing_metrics:
+            conditions.append(f"(s.{prop} IS NULL OR ({expression}))")
+        else:
+            conditions.append(f"(s.{prop} IS NOT NULL AND {expression})")
+
+    add_range_condition("fsm_pct", fsm_min, fsm_max)
+    add_range_condition("attendance_pct", attendance_min, attendance_max)
+    add_range_condition("capped9_score", capped9_min, capped9_max)
     if transport == "Near transport":
         conditions.append(
             "EXISTS { "
@@ -3772,6 +3898,163 @@ def page_map(cfg: Dict[str, str]) -> None:
             "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
             "}"
         )
+    cluster_df = pd.DataFrame()
+    cluster_codes: List[str] = []
+    cluster_cypher = ""
+    cluster_params: Dict[str, Any] = {"min_size": int(min_cluster_size)}
+    cluster_pool_label = ""
+    if search_mode == "An adjacency cluster":
+        if cluster_variable == "Deprivation (WIMD decile)":
+            pool_match = (
+                "MATCH (l:LSOA)\n"
+                "WHERE l.wimd_decile IS NOT NULL "
+                "AND l.wimd_decile <= $max_decile\n"
+                "WITH collect(l.code) AS pool_codes"
+            )
+            cluster_params["max_decile"] = int(cluster_decile)
+            cluster_pool_label = f"WIMD decile <= {int(cluster_decile)}"
+        elif cluster_variable == "Deprivation domain (WIMD 2019 rank)":
+            domain_prop = WIMD_DOMAIN_PROPS[cluster_domain_label]
+            loaded = int(
+                scalar(
+                    cfg,
+                    f"MATCH (l:LSOA) WHERE l.{domain_prop} IS NOT NULL "
+                    "RETURN count(l)",
+                    default=0,
+                )
+                or 0
+            )
+            if loaded == 0:
+                st.error(
+                    f"No LSOA carries {domain_prop} yet. Run "
+                    "load_wimd_domains.py to load the eight WIMD 2019 domain "
+                    "ranks from wimd_2019.xlsx onto the LSOA nodes, then "
+                    "reload this page."
+                )
+                return
+            pool_match = (
+                "MATCH (l:LSOA)\n"
+                f"WHERE l.{domain_prop} IS NOT NULL "
+                f"AND l.{domain_prop} <= $max_rank\n"
+                "WITH collect(l.code) AS pool_codes"
+            )
+            cluster_params["max_rank"] = int(cluster_rank_threshold)
+            cluster_pool_label = (
+                f"{cluster_domain_label} rank <= {int(cluster_rank_threshold)}"
+                f" (of 1,909; {loaded:,} LSOAs carry the rank)"
+            )
+        elif cluster_variable == "School FSM average":
+            pool_match = (
+                "MATCH (l:LSOA)\n"
+                "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
+                "WITH l, avg(s.fsm_pct) AS pool_metric\n"
+                "WHERE pool_metric IS NOT NULL "
+                "AND pool_metric >= $min_fsm_mean\n"
+                "WITH collect(l.code) AS pool_codes"
+            )
+            cluster_params["min_fsm_mean"] = float(cluster_fsm_threshold)
+            cluster_pool_label = (
+                f"mean school FSM >= {cluster_fsm_threshold:g}% "
+                "(LSOAs with no schools drop out)"
+            )
+        elif cluster_variable == "School attendance average":
+            pool_match = (
+                "MATCH (l:LSOA)\n"
+                "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
+                "WITH l, avg(s.attendance_pct) AS pool_metric\n"
+                "WHERE pool_metric IS NOT NULL "
+                "AND pool_metric <= $max_att_mean\n"
+                "WITH collect(l.code) AS pool_codes"
+            )
+            cluster_params["max_att_mean"] = float(cluster_att_threshold)
+            cluster_pool_label = (
+                f"mean school attendance <= {cluster_att_threshold:g}% "
+                "(official persistent-absence line: 90%)"
+            )
+        else:
+            pool_match = (
+                "MATCH (l:LSOA)\n"
+                "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
+                "WITH l, avg(s.fsm_pct) AS mean_fsm, "
+                "avg(s.attendance_pct) AS mean_att\n"
+                "WHERE mean_fsm IS NOT NULL AND mean_att IS NOT NULL\n"
+                "AND mean_fsm >= $min_fsm_mean "
+                "AND mean_att <= $max_att_mean\n"
+                "WITH collect(l.code) AS pool_codes"
+            )
+            cluster_params["min_fsm_mean"] = float(cluster_fsm_threshold)
+            cluster_params["max_att_mean"] = float(cluster_att_threshold)
+            cluster_pool_label = (
+                f"mean FSM >= {cluster_fsm_threshold:g}% AND "
+                f"mean attendance <= {cluster_att_threshold:g}%"
+            )
+
+        cluster_cypher = f"""
+// Adjacency cluster over the computed LSOA_TOUCHES graph.
+// Pool: {cluster_pool_label}
+// Geometry-origin: LSOA_TOUCHES is derived from boundary geometry and is not
+// asserted by YAGO2geo, so this does not count towards model completeness.
+// Documented assumption: the traversal depth is a fixed bound of {int(cluster_depth)},
+// because Cypher cannot take a variable-length bound as a parameter.
+{pool_match}
+UNWIND pool_codes AS seed_code
+MATCH (seed:LSOA {{code: seed_code}})
+MATCH p = (seed)-[:LSOA_TOUCHES*0..{int(cluster_depth)}]-(m:LSOA)
+WHERE all(n IN nodes(p) WHERE n.code IN pool_codes)
+WITH seed_code, collect(DISTINCT m.code) AS reach
+WITH seed_code,
+     reduce(smallest = head(reach), c IN reach |
+            CASE WHEN c < smallest THEN c ELSE smallest END) AS cluster_id
+WITH cluster_id, collect(DISTINCT seed_code) AS members
+WHERE size(members) >= $min_size
+RETURN cluster_id,
+       size(members) AS cluster_size,
+       members
+ORDER BY cluster_size DESC, cluster_id
+"""
+        try:
+            with st.spinner("Building adjacency clusters over LSOA_TOUCHES..."):
+                cluster_df = run_cypher(cfg, cluster_cypher, cluster_params)
+        except Exception as exc:
+            st.error(f"Cluster query failed: {exc}")
+            st.code(cluster_cypher, language="cypher")
+            return
+        if cluster_df.empty:
+            st.warning(
+                "No adjacency cluster met both the deprivation threshold and "
+                "the minimum size. Raise the WIMD decile, lower the minimum "
+                "size, or increase the traversal depth."
+            )
+            st.code(cluster_cypher, language="cypher")
+            return
+        for member_list in cluster_df["members"]:
+            cluster_codes.extend(list(member_list))
+        cluster_codes = sorted(set(cluster_codes))
+        conditions.append("l.code IN $cluster_codes")
+        params["cluster_codes"] = cluster_codes
+
+    non_metric_conditions = (
+        base_conditions + conditions[len(base_conditions) + len(filtered_metric_props):]
+    )
+    missing_metric_schools = 0
+    if filtered_metric_props:
+        null_expression = " OR ".join(
+            f"s.{prop} IS NULL" for prop in filtered_metric_props
+        )
+        missing_cypher = f"""
+        MATCH (s:School)
+        OPTIONAL MATCH (s)-[:LOCATED_IN]->(l:LSOA)
+        WITH s, l
+        WHERE {' AND '.join(non_metric_conditions)} AND ({null_expression})
+        RETURN count(DISTINCT s) AS n
+        """
+        try:
+            missing_metric_schools = int(
+                scalar(cfg, missing_cypher, params, default=0) or 0
+            )
+        except Exception:
+            missing_metric_schools = 0
+
     where = " AND ".join(conditions)
 
     count_cypher = f"""
@@ -3852,6 +4135,48 @@ def page_map(cfg: Dict[str, str]) -> None:
     c3.metric("Transport", f"{transport_value:,}")
     avg_fsm = summary.get("avg_fsm_pct")
     c4.metric("Average FSM", f"{avg_fsm:.1f}%" if pd.notna(avg_fsm) else "N/A")
+
+    if filtered_metric_props:
+        if include_missing_metrics:
+            st.caption(
+                f"Missing values kept: {missing_metric_schools:,} schools have "
+                "no value for at least one filtered metric and are still shown."
+            )
+        elif missing_metric_schools:
+            st.warning(
+                f"{missing_metric_schools:,} schools were removed because they "
+                "have no value for at least one filtered metric, not because "
+                "they failed the range. Special schools are usually in this "
+                "group. Tick 'Include schools with no value for these metrics' "
+                "in the sidebar to keep them."
+            )
+
+    if search_mode == "An adjacency cluster" and not cluster_df.empty:
+        st.markdown(
+            f"{provenance_badge('Geometry-origin')} "
+            f"**{len(cluster_df):,} adjacency clusters** covering "
+            f"**{len(cluster_codes):,} LSOAs** — pool: {cluster_pool_label}, "
+            f"traversal depth {int(cluster_depth)}.",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "An adjacency cluster is a connected group of LSOAs that all meet "
+            "the threshold and are joined by computed LSOA_TOUCHES edges. It "
+            "is not the statistical cluster used by Sandu et al., which comes "
+            "from a Moran's I spatial-weights matrix and is a different notion "
+            "of proximity that stays outside the completeness scoring."
+        )
+        display_df(
+            cluster_df.assign(
+                members=cluster_df["members"].apply(
+                    lambda codes: ", ".join(list(codes)[:8])
+                    + (" ..." if len(codes) > 8 else "")
+                )
+            )
+        )
+        with st.expander("Cluster Cypher"):
+            st.code(cluster_cypher, language="cypher")
+            st.json(cluster_params)
 
     if df.empty:
         st.info("No rows with coordinates after filtering.")
