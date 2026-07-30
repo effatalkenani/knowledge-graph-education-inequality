@@ -2932,6 +2932,21 @@ def render_answer_map(
     if not codes:
         return
 
+    # The answer itself is never truncated — only the drawing is. A question
+    # like "not adjacent" returns nearly every LSOA in Wales, and rendering
+    # all of them would stall the browser without adding meaning.
+    MAP_DRAW_CAP = 400
+    drawn_note = ""
+    if len(codes) > MAP_DRAW_CAP:
+        drawn_note = (
+            f"Showing {MAP_DRAW_CAP:,} of {len(codes):,} answer regions on "
+            "the map for speed. The count above and the table below are the "
+            "full answer."
+        )
+        keep = [c for c in codes if focus_code and c == str(focus_code)]
+        keep += [c for c in codes if c not in keep][: MAP_DRAW_CAP - len(keep)]
+        codes = keep
+
     try:
         polys = cluster_polygons(
             (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
@@ -3070,6 +3085,8 @@ def render_answer_map(
         "</div>",
         unsafe_allow_html=True,
     )
+    if drawn_note:
+        st.caption(drawn_note)
 
 
 def page_scq_demonstrator(
@@ -3133,12 +3150,11 @@ def page_scq_demonstrator(
             unsafe_allow_html=True,
         )
 
-    limit = st.slider(
-        t("result_limit"),
-        min_value=1,
-        max_value=200,
-        value=30,
-    )
+    # No result-limit control: every SCQ returns its full answer so the
+    # counts on screen are the real figures and can go straight into the
+    # research log. The parameter is kept at a high internal ceiling only to
+    # stop a pathological query from hanging the app.
+    limit = 5000
 
     params: Dict[str, Any] = {
         "limit": limit,
