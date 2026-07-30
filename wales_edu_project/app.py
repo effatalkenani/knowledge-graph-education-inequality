@@ -165,8 +165,8 @@ section[data-testid="stSidebar"] [data-testid="stNumberInput"] label {
 section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogroup"] {
   display: flex !important; flex-direction: column !important;
   gap: 4px !important; width: 100%;
-  background: #ffffff !important;
-  border: 1px solid #e5e7eb !important;
+  background: var(--field-bg) !important;
+  border: 1px solid var(--field-border) !important;
   border-radius: 10px !important; padding: 6px !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
@@ -176,10 +176,10 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
   transition: background .15s ease;
 }
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
-  background: #fff7ed !important;
+  background: var(--option-hover) !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) {
-  background: linear-gradient(135deg,#9a3412,#c2410c) !important;
+  background: var(--accent-grad) !important;
   box-shadow: none !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) p {
@@ -192,49 +192,50 @@ section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div,
 section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div,
 section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div,
 section[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div {
-  border: 1px solid #fdba74 !important;
+  border: 1px solid var(--field-border) !important;
   border-radius: 8px !important;
-  background: #fffdfa !important;
+  background: var(--field-bg) !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div:focus-within,
 section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div:focus-within,
 section[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div:focus-within {
-  border-color: #ea580c !important;
-  box-shadow: 0 0 0 2px rgba(234,88,12,.14) !important;
+  border-color: var(--field-focus) !important;
+  box-shadow: 0 0 0 2px var(--field-glow) !important;
 }
 section[data-testid="stSidebar"] label p {
-  color: #7c2d12 !important; font-weight: 650 !important;
+  color: var(--field-label) !important; font-weight: 650 !important;
 }
 section[data-testid="stSidebar"] [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
-  background: linear-gradient(135deg,#9a3412,#c2410c) !important;
+  background: var(--accent-grad) !important;
   color: #fff !important; border-radius: 6px !important;
 }
 
 /* Orange interactive details: carets, expander arrows, dropdown highlights,
    and switch tracks pick up the theme instead of default grey. */
 section[data-testid="stSidebar"] [data-baseweb="select"] svg {
-  color: #ea580c !important; fill: #ea580c !important;
+  color: var(--field-focus) !important; fill: var(--field-focus) !important;
 }
 [data-testid="stExpander"] summary svg {
-  color: #ea580c !important; fill: #ea580c !important;
+  color: var(--field-focus) !important; fill: var(--field-focus) !important;
 }
 [data-testid="stExpander"] summary:hover {
   color: #9a3412 !important;
 }
 [data-baseweb="popover"] [role="option"]:hover {
-  background: #fff7ed !important; color: #9a3412 !important;
+  background: var(--option-hover) !important;
+  color: var(--option-hover-text) !important;
 }
 [data-baseweb="popover"] [role="option"][aria-selected="true"] {
-  background: linear-gradient(135deg,#9a3412,#c2410c) !important;
+  background: var(--accent-grad) !important;
   color: #ffffff !important;
 }
 section[data-testid="stSidebar"] [role="switch"][aria-checked="true"] {
-  background: #ea580c !important;
+  background: var(--field-focus) !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div:hover,
 section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div:hover,
 section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover {
-  border-color: #fb923c !important;
+  border-color: var(--field-focus) !important;
 }
 
 .nav-card{display:block;text-decoration:none;border:1px solid #fed7aa;border-radius:13px;background:#fff;padding:.58rem .65rem;margin:.35rem 0;color:#431407;font-size:.84rem;font-weight:760;box-shadow:0 4px 12px rgba(234,88,12,.045);}
@@ -1307,18 +1308,13 @@ def sidebar_config() -> Dict[str, str]:
     st.session_state.dark_theme = cfg["dark_theme"]
 
     try:
-        # Lightweight connection status; no URI/user/password shown to the examiner.
+        # Connection is only surfaced when it FAILS. A healthy connection is
+        # the expected state and needs no permanent badge; an unhealthy one
+        # explains why pages look empty.
         _ = scalar(cfg, "RETURN 1", default=1)
-        st.sidebar.markdown("""
-        <div class="side-card">
-          <div class="side-title">System status</div>
-          <div class="side-ok">● Database connected</div>
-        </div>
-        """, unsafe_allow_html=True)
     except Exception:
         st.sidebar.markdown("""
         <div class="side-card">
-          <div class="side-title">System status</div>
           <div class="side-alert">● Database not connected</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1373,21 +1369,32 @@ def sidebar_config() -> Dict[str, str]:
 def apply_dashboard_theme(dark_theme: bool) -> None:
     """Apply a compact infographic-inspired light/dark skin."""
     if dark_theme:
-        app_bg = "linear-gradient(180deg,#11166f 0%,#2025a8 48%,#17228f 100%)"
-        sidebar_bg = "linear-gradient(180deg,#12186f 0%,#1c2497 100%)"
-        panel_bg = "rgba(255,255,255,.08)"
-        panel_border = "rgba(255,255,255,.14)"
-        text = "#f8fafc"
-        muted = "#dbeafe"
-        sidebar_text = "#f8fafc"
-        metric_bg = "rgba(255,255,255,.10)"
-        hero = "linear-gradient(135deg,#ff4f79 0%,#ff4f79 54%,#20c6d7 54%,#20c6d7 100%)"
-        nav_bg = "rgba(255,255,255,.10)"
-        nav_active = "linear-gradient(135deg,#ff4f79,#ff8a00)"
+        # A calm dark slate rather than saturated blue: long reading sessions
+        # need low chroma. Accents are desaturated to sit on it without
+        # vibrating, which is what made red text on blue hard to read.
+        app_bg = "linear-gradient(180deg,#141821 0%,#191d28 50%,#12161e 100%)"
+        sidebar_bg = "linear-gradient(180deg,#1a1f2b 0%,#141821 100%)"
+        panel_bg = "rgba(255,255,255,.055)"
+        panel_border = "rgba(255,255,255,.10)"
+        text = "#e8eaf0"
+        muted = "#a3abbb"
+        sidebar_text = "#e8eaf0"
+        metric_bg = "rgba(255,255,255,.07)"
+        hero = "linear-gradient(135deg,#c2410c 0%,#c2410c 54%,#0f766e 54%,#0f766e 100%)"
+        nav_bg = "rgba(255,255,255,.06)"
+        nav_active = "linear-gradient(135deg,#9a3412,#c2410c)"
         map_tiles = "dark"
-        ok_color = "#86efac"
-        geo_color = "#ffb454"
-        derived_color = "#c4b5fd"
+        ok_color = "#7ddba1"
+        geo_color = "#f0a868"
+        derived_color = "#b7a6f0"
+        field_bg = "rgba(255,255,255,.06)"
+        field_border = "rgba(255,255,255,.15)"
+        field_focus = "#f0a868"
+        field_glow = "rgba(240,168,104,.18)"
+        field_label = "#cbd3e1"
+        option_hover = "rgba(255,255,255,.09)"
+        option_hover_text = "#f5d0b0"
+        accent_grad = "linear-gradient(135deg,#9a3412,#c2410c)"
     else:
         # Cardiff University red, used as a soft warm tint rather than grey.
         app_bg = "linear-gradient(180deg,#fff6f6 0%,#fffafa 45%,#fff1f1 100%)"
@@ -1405,11 +1412,29 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         ok_color = "#15803d"
         geo_color = "#ea580c"
         derived_color = "#7c3aed"
+        field_bg = "#fffdfa"
+        field_border = "#fdba74"
+        field_focus = "#ea580c"
+        field_glow = "rgba(234,88,12,.14)"
+        field_label = "#7c2d12"
+        option_hover = "#fff7ed"
+        option_hover_text = "#9a3412"
+        accent_grad = "linear-gradient(135deg,#9a3412,#c2410c)"
 
     st.session_state.map_tiles = map_tiles
     st.markdown(
         f"""
 <style>
+:root {{
+  --field-bg:{field_bg};
+  --field-border:{field_border};
+  --field-focus:{field_focus};
+  --field-glow:{field_glow};
+  --field-label:{field_label};
+  --option-hover:{option_hover};
+  --option-hover-text:{option_hover_text};
+  --accent-grad:{accent_grad};
+}}
 .stApp {{ background:{app_bg} !important; color:{text} !important; }}
 section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div,
@@ -3172,8 +3197,6 @@ def page_scq_demonstrator(
         ),
         "Complete",
     )
-
-    visual_scq_runner_flow()
 
     scq_key = st.selectbox(
         t("select_scq"),
