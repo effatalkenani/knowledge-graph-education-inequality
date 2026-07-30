@@ -3073,12 +3073,60 @@ def page_policy_questions() -> None:
             unsafe_allow_html=True,
         )
 
-def render_result_reading(result_df: pd.DataFrame, scq_key: str) -> None:
-    """Turn the returned rows into a sentence a reader can quote.
+NATIONAL_SPREAD_CYPHER = {
+    "deprivation": """
+MATCH (l:LSOA)-[:LSOA_TOUCHES]-(n:LSOA)
+WHERE l.wimd_decile IS NOT NULL AND n.wimd_decile IS NOT NULL
+WITH l, max(n.wimd_decile) - min(n.wimd_decile) AS spread
+RETURN round(avg(spread),2) AS avg_spread, max(spread) AS max_spread,
+       count(l) AS lsoas
+""",
+    "fsm": """
+MATCH (l:LSOA)-[:LSOA_TOUCHES]-(n:LSOA)
+OPTIONAL MATCH (n)<-[:LOCATED_IN]-(s:School)
+WITH l, n, avg(s.fsm_pct) AS n_fsm
+WITH l, max(n_fsm) - min(n_fsm) AS spread
+WHERE spread IS NOT NULL
+RETURN round(avg(spread),2) AS avg_spread,
+       round(max(spread),1) AS max_spread, count(l) AS lsoas
+""",
+    "attendance": """
+MATCH (l:LSOA)-[:LSOA_TOUCHES]-(n:LSOA)
+OPTIONAL MATCH (n)<-[:LOCATED_IN]-(s:School)
+WITH l, n, avg(s.attendance_pct) AS n_att
+WITH l, max(n_att) - min(n_att) AS spread
+WHERE spread IS NOT NULL
+RETURN round(avg(spread),2) AS avg_spread,
+       round(max(spread),1) AS max_spread, count(l) AS lsoas
+""",
+}
 
-    The point is not to repeat the table but to state what the numbers show:
-    how tightly the returned areas resemble one another, which is the local
-    counterpart of the clustering Sandu et al. measure statistically.
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def national_spread(cfg_key: Tuple[str, str, str, str], measure: str) -> Dict[str, Any]:
+    """Wales-wide neighbour spread for one measure, so a single result can be
+    read against the national pattern instead of in isolation."""
+    cfg = {
+        "uri": cfg_key[0], "user": cfg_key[1],
+        "password": cfg_key[2], "database": cfg_key[3],
+    }
+    rows = run_cypher(cfg, NATIONAL_SPREAD_CYPHER[measure], {})
+    if rows.empty:
+        return {}
+    return rows.iloc[0].to_dict()
+
+
+def render_result_reading(
+    result_df: pd.DataFrame,
+    scq_key: str,
+    cfg: Dict[str, str] | None = None,
+) -> None:
+    """Read the returned rows against the Wales-wide pattern.
+
+    A single neighbourhood means little on its own, so each measure is shown
+    twice: the spread among the areas just returned, and the mean spread
+    across all 1,909 LSOAs. The comparison is what turns an example into
+    evidence.
     """
     if result_df is None or result_df.empty:
         return
@@ -3089,49 +3137,82 @@ def render_result_reading(result_df: pd.DataFrame, scq_key: str) -> None:
                 return pd.to_numeric(result_df[name], errors="coerce").dropna()
         return pd.Series(dtype=float)
 
-    fsm = series("avg_school_fsm_pct", "fsm_pct")
-    att = series("avg_school_attendance_pct", "attendance_pct")
-    dec = series("wimd_decile")
-
-    parts: List[str] = []
-    if len(dec) >= 2:
-        parts.append(
-            f"WIMD deciles range {int(dec.min())}–{int(dec.max())} "
-            f"(mean {dec.mean():.1f})"
-        )
-    if len(fsm) >= 2:
-        parts.append(
-            f"mean school FSM {fsm.mean():.1f}% "
-            f"(spread {fsm.min():.1f}–{fsm.max():.1f})"
-        )
-    if len(att) >= 2:
-        parts.append(
-            f"mean attendance {att.mean():.1f}% "
-            f"(spread {att.min():.1f}–{att.max():.1f})"
-        )
-    if not parts:
+    measures = [
+        ("Deprivation decile", series("wimd_decile"), "deprivation", "", 0),
+        ("School FSM", series("avg_school_fsm_pct", "fsm_pct"), "fsm", "%", 1),
+        (
+            "Attendance",
+            series("avg_school_attendance_pct", "attendance_pct"),
+            "attendance",
+            "%",
+            1,
+        ),
+    ]
+    rows = [m for m in measures if len(m[1]) >= 2]
+    if not rows:
         return
 
-    reading = f"**{len(result_df)} areas returned.** " + "; ".join(parts) + "."
+    st.markdown(
+        f"<div style='font-weight:800;margin:14px 0 6px;'>"
+        f"{len(result_df)} areas returned — this neighbourhood against Wales"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(len(rows))
+    for col, (label, values, key, unit, dp) in zip(cols, rows):
+        spread = float(values.max() - values.min())
+        national = {}
+        if cfg is not None:
+            try:
+                national = national_spread(
+                    (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+                    key,
+                )
+            except Exception:
+                national = {}
+        nat = national.get("avg_spread")
+        delta = None
+        if nat is not None:
+            diff = spread - float(nat)
+            delta = f"{diff:+.{dp}f} vs Wales mean {float(nat):.2f}"
+        with col:
+            st.metric(
+                f"{label} spread",
+                f"{spread:.{dp}f}{unit}",
+                delta=delta,
+                delta_color="off",
+            )
+            st.caption(
+                f"here {values.min():.{dp}f}–{values.max():.{dp}f}{unit} "
+                f"(mean {values.mean():.{dp}f}{unit})"
+            )
+
+    dec = series("wimd_decile")
     if len(dec) >= 2:
         spread = int(dec.max()) - int(dec.min())
-        if spread <= 2:
-            reading += (
-                " The returned areas sit within a narrow deprivation band, "
-                "which is what spatial clustering of disadvantage looks "
-                "like locally."
+        if spread >= 6:
+            st.info(
+                "This neighbourhood sits on a sharp social boundary: its "
+                "neighbours span six or more deprivation deciles. Across "
+                "Wales 792 of 1,909 areas (41.5%) do the same."
             )
-        elif spread >= 6:
-            reading += (
-                " The returned areas span a wide deprivation range, so this "
-                "neighbourhood sits on a boundary between contrasting "
-                "areas rather than inside a uniform cluster."
+        elif spread <= 2:
+            st.info(
+                "This neighbourhood is internally consistent: its neighbours "
+                "sit within a narrow deprivation band, which is what local "
+                "clustering of disadvantage looks like."
             )
-    st.info(reading)
-    st.caption(
-        "Figures are computed from the rows below. They describe this "
-        "neighbourhood only and are not a statistical test of clustering."
-    )
+
+    with st.expander("How these figures are calculated"):
+        st.caption(
+            "Left figure: the range among the areas returned above. Right "
+            "figure: the mean of that same range computed for every LSOA in "
+            "Wales, so one result can be read against the national pattern."
+        )
+        for label, _values, key, _unit, _dp in rows:
+            st.markdown(f"**{label} — Wales-wide**")
+            st.code(NATIONAL_SPREAD_CYPHER[key].strip(), language="cypher")
 
 
 def render_answer_map(
@@ -3811,7 +3892,7 @@ def page_scq_demonstrator(
                     params.get("lsoa_b"),
                 ],
             )
-            render_result_reading(result_df, scq_key)
+            render_result_reading(result_df, scq_key, cfg)
             display_df(result_df)
 
         if SCQ_WARRANT.get(scq_key) or SCQ_NO_WARRANT.get(scq_key):
