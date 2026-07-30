@@ -1904,6 +1904,21 @@ def render_task_card(t: Dict[str, Any]) -> None:
     )
 
 
+# Card colour key, shared by every map card: each label keeps its own accent
+# colour and its value inherits the same colour, so cards stay scannable.
+C_HEAD = "#0b2a5b"
+C_MUTED = "#64748b"
+C_DEP = "#ff4f79"
+C_WIMD = "#7c3aed"
+C_FSM = "#ea580c"
+C_ATT = "#0891b2"
+C_PUP = "#0f766e"
+C_PTR = "#b45309"
+C_BUD = "#15803d"
+C_PERF = "#2563eb"
+C_TRAN = "#db2777"
+
+
 # LSOA boundaries are stored in the graph as WKT in British National Grid
 # (EPSG:27700) because load_to_neo4j.py reprojects everything to BNG before
 # doing point-in-polygon. deck.gl needs lon/lat, so grid metres are converted
@@ -2319,20 +2334,6 @@ def render_school_map(
         pitch=0,
         bearing=0,
     )
-
-    # Colour key: each label keeps its own accent colour and the value
-    # inherits the same colour, so the card is scannable at a glance.
-    C_HEAD = "#0b2a5b"
-    C_MUTED = "#64748b"
-    C_DEP = "#ff4f79"
-    C_WIMD = "#7c3aed"
-    C_FSM = "#ea580c"
-    C_ATT = "#0891b2"
-    C_PUP = "#0f766e"
-    C_PTR = "#b45309"
-    C_BUD = "#15803d"
-    C_PERF = "#2563eb"
-    C_TRAN = "#db2777"
 
     def cell(label: str, value_key: str, colour: str) -> str:
         return (
