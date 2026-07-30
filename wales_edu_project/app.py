@@ -4406,7 +4406,6 @@ def page_map(cfg: Dict[str, str]) -> None:
         ),
         "Supporting view",
     )
-    visual_scq_runner_flow()
 
     la_opts = safe_options(cfg, """
     MATCH (s:School)
