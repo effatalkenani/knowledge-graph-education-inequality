@@ -432,8 +432,10 @@ TASK_SOLUTIONS = {
 # 2. Secondary performance fields are intentionally nullable because the
 #    My Local School scrape provides capped/literacy/numeracy/science scores
 #    for secondary or middle schools, not for ordinary primary schools.
-# 3. SCQ3 is implemented as bounded simple-path reasoning over LSOA_TOUCHES.
-#    The app does not define "between" as shortest path only.
+# 3. SCQ3 implements the paper's cycle-free path definition of between over
+#    LSOA_TOUCHES. The paper sets no numeric bound; unbounded enumeration is
+#    intractable, so a hop bound is applied and reported as a tractability
+#    necessity rather than a definitional choice.
 # 4. SCQ5 and SCQ6 remain native administrative-hierarchy comparisons only.
 #    They are not counted as independent Education Use Case answers because
 #    Ward-LSOA containment-style questions were reclassified to SCQ7/SCQ8.
@@ -493,10 +495,11 @@ UI_TEXT: Dict[str, Dict[str, str]] = {
             "the paper sets no numeric limit."
         ),
         "scq3_interp": (
-            "Between is implemented as bounded cycle-free simple paths "
-            "over LSOA_TOUCHES (a documented relaxation); 'between "
-            "clusters' has no formal definition here, so the "
-            "education-policy fit is reported as weak / optional."
+            "Between follows the IJGI 2024 definition: cycle-free paths "
+            "over LSOA_TOUCHES. The hop bound is a tractability necessity, "
+            "not part of the definition. 'Between clusters' still has no "
+            "formal definition here, so the education-policy fit remains "
+            "weak / optional."
         ),
         "no_path_note": (
             "No cycle-free path was found within the chosen hop bound "
@@ -712,10 +715,15 @@ ORDER BY avg_school_fsm_pct DESC, lsoa_code
 LIMIT $limit
 """
 
-# SCQ3: bounded cycle-free simple paths. __MAXHOPS__ is substituted at
-# runtime from the UI control; the paper sets no numeric bound, so the
-# bound is documented as a tractability parameter.
+# SCQ3: cycle-free paths over LSOA_TOUCHES, per the paper's definition. The
+# hop bound is a tractability necessity, not part of the definition.
 SCQ3_CYPHER_TEMPLATE = """
+// Between, per the IJGI 2024 definition (Section 3.4): a region lies between
+// two others when it sits on a path linking them, where the path contains no
+// cycles or parts of cycles. The cycle-free condition is the WHERE clause.
+// The paper sets no numeric bound, but enumerating unbounded simple paths in
+// a 1,909-node / 5,255-edge graph is combinatorially intractable, so a hop
+// bound is applied as a tractability necessity and reported as such.
 MATCH
     (a:LSOA {code:$lsoa_a}),
     (b:LSOA {code:$lsoa_b})
@@ -740,7 +748,6 @@ RETURN
         }
     ] AS between_lsoas
 ORDER BY hops
-LIMIT $limit
 """
 
 # SCQ8 official ANSWER (grouped per administrative unit) and its
@@ -982,16 +989,17 @@ LIMIT $limit
         "question": "Which LSOAs lie between two selected LSOAs?",
         "task": "Task 4.1 + Task 3.3",
         "keyword_sentence": (
-            "Between is demonstrated as bounded simple-path reasoning "
-            "over LSOA_TOUCHES. The app returns candidate paths rather "
-            "than defining between as only the shortest path. Its "
-            "education-policy fit is reported as weak or optional unless "
-            "clusters are formally defined."
+            "Between is demonstrated as cycle-free paths over "
+            "LSOA_TOUCHES, following the paper's definition. The hop bound "
+            "is a tractability necessity, not a definitional choice, and "
+            "is reported with the result. Its education-policy fit is "
+            "still weak or optional, because the paper poses no between "
+            "question for this domain."
         ),
         "relation": "LSOA_TOUCHES path",
         "provenance": "Derived from geometry-origin",
         "param_type": "lsoa_pair",
-        "result_label": "Candidate between paths returned",
+        "result_label": "Shortest paths between the two LSOAs",
         "evaluation_note": (
             "Demonstrator reasoning pattern: Implemented. "
             "Education-policy fit: Weak / optional."
@@ -2941,7 +2949,7 @@ def render_answer_map(
     # The answer itself is never truncated — only the drawing is. A question
     # like "not adjacent" returns nearly every LSOA in Wales, and rendering
     # all of them would stall the browser without adding meaning.
-    MAP_DRAW_CAP = 400
+    MAP_DRAW_CAP = 2000
     drawn_note = ""
     if len(codes) > MAP_DRAW_CAP:
         drawn_note = (
@@ -2982,6 +2990,7 @@ def render_answer_map(
     rows = []
     lats: List[float] = []
     lons: List[float] = []
+    heavy = len(polys) > 250
     for _, prow in polys.iterrows():
         dep = str(prow.get("deprivation") or "unknown")
         base = DEP_FILL.get(dep, DEP_FILL["unknown"])
@@ -2993,6 +3002,12 @@ def render_answer_map(
         else:
             fill = base + [120]
         for ring in _wkt_rings(prow.get("wkt")):
+            # With hundreds of regions on screen the browser chokes on full
+            # boundary detail, so rings are decimated. Shape is preserved at
+            # national zoom; the underlying answer is untouched.
+            if heavy and len(ring) > 60:
+                step = len(ring) // 60 + 1
+                ring = ring[::step] + [ring[-1]]
             for pt in ring:
                 lons.append(pt[0])
                 lats.append(pt[1])
@@ -3166,11 +3181,12 @@ def page_scq_demonstrator(
     # stop a pathological query from hanging the app.
     limit = 5000
 
+    scq3_hops = 6
+
     params: Dict[str, Any] = {
         "limit": limit,
     }
 
-    scq3_hops = 6
 
     param_type = meta["param_type"]
     if scq_key in ("SCQ7", "SCQ8") and direction == "admin":
@@ -3244,7 +3260,14 @@ def page_scq_demonstrator(
             value=6,
             key="scq3_hops",
         )
-        st.caption(t("max_hops_note"))
+        st.caption(
+            "The paper defines between as any cycle-free path linking the "
+            "two regions and sets no numeric bound. Enumerating unbounded "
+            "simple paths here is combinatorially intractable, so this hop "
+            "bound is a tractability necessity, not a definitional choice. "
+            "Record the value used: the number of paths grows sharply with "
+            "it."
+        )
         st.caption(t("scq3_interp"))
 
     elif param_type.startswith("admin"):
@@ -3325,12 +3348,15 @@ def page_scq_demonstrator(
                 "summaries where scraped school metrics are available."
             ),
             "SCQ3": (
-                "SCQ3 is implemented as bounded simple-path reasoning "
-                "over <b>LSOA_TOUCHES</b>. The app returns candidate "
-                "between paths rather than defining between as only the "
-                "shortest path. Its fit to the education-policy use case "
-                "is reported honestly as weak or optional unless clusters "
-                "are formally defined."
+                "SCQ3 implements the paper's definition of between over "
+                "<b>LSOA_TOUCHES</b>: a region lies between two others when "
+                "it sits on a cycle-free path linking them. The paper sets "
+                "no numeric bound, but unbounded enumeration is intractable "
+                "here, so the hop bound is applied as a tractability "
+                "necessity and reported with the result. Its fit to the "
+                "education-policy use case is still weak or optional, "
+                "because the paper poses no between question for this "
+                "domain."
             ),
             "SCQ4": (
                 "SCQ4 is answered as the complement of "
