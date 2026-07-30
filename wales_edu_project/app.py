@@ -1327,19 +1327,21 @@ def sidebar_config() -> Dict[str, str]:
     # and are intentionally removed from the submission navigation. Their
     # page functions remain below, uncalled: to restore one for a supervision
     # demo, add its name back to this list.
-    pages = ["Policy Questions", "SCQ Demonstrator", "Evaluation", "Cross-hierarchy", "Map"]
+    # Cross-hierarchy was merged into the demonstrator: its seam diagram,
+    # counts and finding now appear directly under SCQ7 and SCQ8, where the
+    # questions they explain are answered. page_cross_hierarchy remains in
+    # the code, uncalled, if the standalone view is ever wanted again.
+    pages = ["Policy Questions", "SCQ Demonstrator", "Evaluation", "Map"]
     labels = {
         "Policy Questions": "Policy Questions",
         "SCQ Demonstrator": "SCQ Demonstrator",
         "Evaluation": "Evaluation",
-        "Cross-hierarchy": "Cross-hierarchy",
         "Map": "Map Explorer",
     }
     icons = {
         "Policy Questions": "Policy Questions",
         "SCQ Demonstrator": "SCQ Demonstrator",
         "Evaluation": "Evaluation",
-        "Cross-hierarchy": "Cross-hierarchy",
         "Map": "Map Explorer",
     }
     if "page" not in st.session_state or st.session_state.page not in pages:
@@ -3534,6 +3536,20 @@ def page_scq_demonstrator(
             )
             display_df(result_df)
 
+        if scq_key in {"SCQ7", "SCQ8"}:
+            st.markdown("---")
+            st.markdown("#### The cross-hierarchy seam behind this answer")
+            st.caption(
+                "SCQ7 and SCQ8 are the only questions that cross from the "
+                "administrative hierarchy into the statistical one. "
+                "YAGO2geo holds no relation across that boundary, so the "
+                "answer above rests on a bridge built here from geometry. "
+                "Its size and provenance are shown below — which is why "
+                "these two questions are answerable in the demonstrator yet "
+                "still count as native failures."
+            )
+            render_seam_context(cfg)
+
         if scq_key in {
             "SCQ1",
             "SCQ2",
@@ -3575,6 +3591,17 @@ def page_scq_demonstrator(
         st.error(
             f"Query failed: {error}"
         )
+
+@st.cache_data(show_spinner=False)
+def load_report_html(path: str) -> str:
+    """Read the completeness report once per session.
+
+    The file is ~20 MB, so it is cached and only read when the reader asks
+    to see it rather than on every rerun of the page.
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
 
 def page_evaluation() -> None:
     # Evaluation page rule:
@@ -3733,21 +3760,37 @@ def page_evaluation() -> None:
             "</div>",
             unsafe_allow_html=True,
         )
-        st.markdown(
-            "[Open the full report on GitHub]"
-            "(https://github.com/effatalkenani/knowledge-graph-education-"
-            "inequality/blob/main/wales_edu_project/"
-            "yago2geo_completeness_local.html)"
-        )
         report_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             "yago2geo_completeness_local.html",
         )
         if os.path.exists(report_path):
             size_mb = os.path.getsize(report_path) / 1e6
-            st.caption(
-                f"The report is also in this repository ({size_mb:.1f} MB); "
-                "it is linked rather than embedded because of its size."
+            show_report = st.checkbox(
+                f"Show the full report inline ({size_mb:.1f} MB)",
+                value=False,
+                help=(
+                    "The report is large, so it loads only when you ask for "
+                    "it. It is also downloadable and lives in the repository "
+                    "beside the app."
+                ),
+            )
+            if show_report:
+                with st.spinner("Loading the completeness report..."):
+                    report_html = load_report_html(report_path)
+                components.html(report_html, height=760, scrolling=True)
+                st.download_button(
+                    "Download the report",
+                    data=report_html,
+                    file_name="yago2geo_completeness_local.html",
+                    mime="text/html",
+                )
+        else:
+            st.markdown(
+                "[Open the full report on GitHub]"
+                "(https://github.com/effatalkenani/knowledge-graph-education-"
+                "inequality/blob/main/wales_edu_project/"
+                "yago2geo_completeness_local.html)"
             )
 
     if "eval_tab" not in st.session_state:
@@ -3863,19 +3906,10 @@ def page_evaluation() -> None:
         unsafe_allow_html=True,
     )
 
-def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
-    hero()
-
-    task_badge(
-        "Cross-hierarchy Seam",
-        (
-            "Evaluate the seam between administrative hierarchy and "
-            "statistical hierarchy using INTERSECTS and near relations "
-            "between AdminUnit and LSOA."
-        ),
-        "Complete",
-    )
-
+def render_seam_context(cfg: Dict[str, str]) -> None:
+    """The cross-hierarchy seam: the bridge diagram, its live counts and
+    the finding. Shown wherever SCQ7 or SCQ8 is being answered, so the
+    question, its verdict and the bridge that carries it sit together."""
     visual_cross_hierarchy_bridge()
 
     # ------------------------------------------------------------------
@@ -3957,6 +3991,22 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
         ),
         unsafe_allow_html=True,
     )
+
+
+def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
+    hero()
+
+    task_badge(
+        "Cross-hierarchy Seam",
+        (
+            "Evaluate the seam between administrative hierarchy and "
+            "statistical hierarchy using INTERSECTS and near relations "
+            "between AdminUnit and LSOA."
+        ),
+        "Complete",
+    )
+
+    render_seam_context(cfg)
 
     # ------------------------------------------------------------------
     # Parameterised SCQ7 query:
@@ -5533,8 +5583,6 @@ def main() -> None:
         page_scq_demonstrator(cfg)
     elif page == "Evaluation":
         page_evaluation()
-    elif page == "Cross-hierarchy":
-        page_cross_hierarchy(cfg)
     elif page == "Map":
         page_map(cfg)
 
