@@ -859,6 +859,160 @@ LIMIT $limit
 # geometric cost, kept separate from the provenance triad. Provenance answers
 # "where did the relation come from"; mode answers "how was it computed and
 # what did it cost". Only Native counts toward model completeness.
+# Literature grounding, quoted verbatim with page numbers, so each question
+# shows the published finding that makes it a real analyst question rather
+# than a template fitted to the instrument. Sandu et al. supply the WARRANT
+# for asking; their statistical method (Moran's I, LISA, GWR) is a different
+# notion of proximity and is deliberately NOT imported.
+SCQ_WARRANT = {
+    "SCQ1": {
+        "quote": (
+            "Moran's I value (0.30, p &lt; 0.001) confirmed spatial "
+            "clustering of educational outcomes."
+        ),
+        "page": "p. 8",
+        "why": (
+            "Attainment is spatially clustered, so neighbouring areas are "
+            "expected to resemble one another. That makes \"which "
+            "neighbouring areas share similar conditions\" a question an "
+            "inequality analyst genuinely asks."
+        ),
+        "method_note": (
+            "Sandu et al. measure the strength of that clustering "
+            "statistically. This demonstrator instead asks whether the "
+            "graph can identify the neighbours at all — their spatial-"
+            "weights proximity is a third notion of nearness and stays "
+            "outside the completeness scoring."
+        ),
+    },
+    "SCQ2": {
+        "quote": (
+            "LISA ... identified distinct ... clusters of high achievement "
+            "and clusters of low achievement."
+        ),
+        "page": "p. 8",
+        "why": (
+            "Low-attainment areas form identifiable clusters, so asking "
+            "what lies near such a cluster is a real policy question."
+        ),
+        "method_note": (
+            "Their clusters are statistical (LISA / Getis-Ord). The "
+            "clusters here are connected components of adjacency — the "
+            "same word, a different construct."
+        ),
+    },
+    "SCQ4": {
+        "quote": (
+            "pupils residing in urban areas ... 15% lower odds of "
+            "achieving the CSI."
+        ),
+        "page": "p. 6, Table 2",
+        "why": (
+            "Outcomes differ by settlement context, so identifying areas "
+            "that do NOT adjoin a given area is relevant to spatial "
+            "targeting."
+        ),
+        "method_note": (
+            "Sandu et al. use a rural-urban flag, which this graph does "
+            "not hold; the warrant here is the existence of contextual "
+            "difference, not the flag itself."
+        ),
+    },
+    "SCQ7": {
+        "quote": (
+            "10% higher eFSM corresponds to CSI achievement rates being "
+            "2.96% lower."
+        ),
+        "page": "p. 7, Table 3",
+        "why": (
+            "Free-school-meal eligibility is the strongest negative "
+            "predictor at LSOA level, so linking schools to the "
+            "deprivation of the statistical area they sit in is central "
+            "to the use case."
+        ),
+        "method_note": (
+            "Their analysis is OLS regression at LSOA level; this asks "
+            "only whether the graph can make the cross-hierarchy link."
+        ),
+    },
+    "SCQ8": {
+        "quote": (
+            "10% higher ... SEN ... related to achievement rates being "
+            "2.93% lower."
+        ),
+        "page": "p. 7, Table 3",
+        "why": (
+            "Disadvantage indicators vary across small geographies, so "
+            "reaching nearby administrative units from a statistical one "
+            "is a genuine analytical need."
+        ),
+        "method_note": (
+            "SEN is not held in this graph, so school-level indicators "
+            "stand in. The warrant is the spatial variation of "
+            "disadvantage, not the SEN measure itself."
+        ),
+    },
+}
+
+# Three SCQ forms carry no warrant from the education-inequality
+# literature. They are recorded here with the reason left visible rather
+# than filled with a manufactured question, because an honest empty cell is
+# itself a finding about the fit between the instrument and the domain.
+SCQ_NO_WARRANT = {
+    "SCQ3": {
+        "status": "No natural question in this domain",
+        "reason": (
+            "Sandu et al. pose no \"between\" question, and the wider "
+            "education-inequality literature for Wales frames disadvantage "
+            "in terms of concentration and gradient rather than "
+            "betweenness. An analyst asks where disadvantage clusters, not "
+            "which area lies between two others."
+        ),
+        "consequence": (
+            "The form is implemented and executable, so the instrument is "
+            "exercised in full, but its policy fit is recorded as weak "
+            "rather than manufactured into a question the literature does "
+            "not ask."
+        ),
+    },
+    "SCQ5": {
+        "status": "Not applicable to the education use case",
+        "reason": (
+            "Containment questions in this use case would run from ward to "
+            "LSOA, but LSOAs do not nest inside wards — they intersect "
+            "them. The form is therefore reclassified to SCQ7 rather than "
+            "answered here."
+        ),
+        "consequence": (
+            "SCQ5 is demonstrated over the native administrative hierarchy "
+            "instead, where containment genuinely holds. It stays in the "
+            "eight-question denominator; dropping it would flatter the "
+            "score."
+        ),
+    },
+    "SCQ6": {
+        "status": "Not applicable to the education use case",
+        "reason": (
+            "The inverse of SCQ5, and reclassified for the same reason: "
+            "statistical geography does not nest inside administrative "
+            "geography."
+        ),
+        "consequence": (
+            "Demonstrated over the native administrative hierarchy and "
+            "retained in the denominator."
+        ),
+    },
+}
+
+
+SANDU_REFERENCE = (
+    "Sandu, A., Huxley, K., Keating, J., Whiffen, T. and French, R. 2026. "
+    "Mapping educational inequalities in Wales: spatial and socio-economic "
+    "determinants of pupils' attainment. <i>Population, Space and Place</i> "
+    "32(2), e70225. doi: 10.1002/psp.70225"
+)
+
+
 SCQ_ANSWER_MODE = {
     "SCQ1": ("Computed-then-stored", "Paid once", "No"),
     "SCQ2": ("Computed-then-stored", "Paid once", "No"),
@@ -2919,6 +3073,67 @@ def page_policy_questions() -> None:
             unsafe_allow_html=True,
         )
 
+def render_result_reading(result_df: pd.DataFrame, scq_key: str) -> None:
+    """Turn the returned rows into a sentence a reader can quote.
+
+    The point is not to repeat the table but to state what the numbers show:
+    how tightly the returned areas resemble one another, which is the local
+    counterpart of the clustering Sandu et al. measure statistically.
+    """
+    if result_df is None or result_df.empty:
+        return
+
+    def series(*names: str) -> pd.Series:
+        for name in names:
+            if name in result_df.columns:
+                return pd.to_numeric(result_df[name], errors="coerce").dropna()
+        return pd.Series(dtype=float)
+
+    fsm = series("avg_school_fsm_pct", "fsm_pct")
+    att = series("avg_school_attendance_pct", "attendance_pct")
+    dec = series("wimd_decile")
+
+    parts: List[str] = []
+    if len(dec) >= 2:
+        parts.append(
+            f"WIMD deciles range {int(dec.min())}–{int(dec.max())} "
+            f"(mean {dec.mean():.1f})"
+        )
+    if len(fsm) >= 2:
+        parts.append(
+            f"mean school FSM {fsm.mean():.1f}% "
+            f"(spread {fsm.min():.1f}–{fsm.max():.1f})"
+        )
+    if len(att) >= 2:
+        parts.append(
+            f"mean attendance {att.mean():.1f}% "
+            f"(spread {att.min():.1f}–{att.max():.1f})"
+        )
+    if not parts:
+        return
+
+    reading = f"**{len(result_df)} areas returned.** " + "; ".join(parts) + "."
+    if len(dec) >= 2:
+        spread = int(dec.max()) - int(dec.min())
+        if spread <= 2:
+            reading += (
+                " The returned areas sit within a narrow deprivation band, "
+                "which is what spatial clustering of disadvantage looks "
+                "like locally."
+            )
+        elif spread >= 6:
+            reading += (
+                " The returned areas span a wide deprivation range, so this "
+                "neighbourhood sits on a boundary between contrasting "
+                "areas rather than inside a uniform cluster."
+            )
+    st.info(reading)
+    st.caption(
+        "Figures are computed from the rows below. They describe this "
+        "neighbourhood only and are not a statistical test of clustering."
+    )
+
+
 def render_answer_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
@@ -3217,6 +3432,44 @@ def page_scq_demonstrator(
     with left:
         st.subheader(scq_question(scq_key, meta))
         st.write(meta["keyword_sentence"])
+        gap = SCQ_NO_WARRANT.get(scq_key)
+        if gap:
+            st.markdown(
+                "<div style='border-right:3px solid #64748b;"
+                "background:rgba(100,116,139,.07);border-radius:8px;"
+                "padding:11px 14px;margin:10px 0;'>"
+                "<div style='font-size:11px;font-weight:800;"
+                "letter-spacing:.06em;opacity:.75;margin-bottom:5px;'>"
+                "NO QUESTION FROM THE LITERATURE</div>"
+                f"<div style='font-weight:700;margin-bottom:5px;'>"
+                f"{gap['status']}</div>"
+                f"<div>{gap['reason']}</div>"
+                f"<div style='font-size:12.5px;opacity:.8;margin-top:7px;'>"
+                f"<b>How it is handled:</b> {gap['consequence']}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+        warrant = SCQ_WARRANT.get(scq_key)
+        if warrant:
+            st.markdown(
+                "<div style='border-right:3px solid #c2410c;"
+                "background:rgba(194,65,12,.05);border-radius:8px;"
+                "padding:11px 14px;margin:10px 0;'>"
+                "<div style='font-size:11px;font-weight:800;"
+                "letter-spacing:.06em;opacity:.75;margin-bottom:5px;'>"
+                "WHY THIS IS A REAL QUESTION</div>"
+                f"<div style='font-style:italic;'>&ldquo;{warrant['quote']}"
+                f"&rdquo;</div>"
+                f"<div style='font-size:12px;opacity:.75;margin:3px 0 8px;'>"
+                f"Sandu et al. (2026), {warrant['page']}</div>"
+                f"<div>{warrant['why']}</div>"
+                f"<div style='font-size:12.5px;opacity:.8;margin-top:7px;'>"
+                f"<b>Method note:</b> {warrant['method_note']}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
         mode, cost, counts = SCQ_ANSWER_MODE.get(
             scq_key, ("Computed-then-stored", "Paid once", "No")
         )
@@ -3558,7 +3811,17 @@ def page_scq_demonstrator(
                     params.get("lsoa_b"),
                 ],
             )
+            render_result_reading(result_df, scq_key)
             display_df(result_df)
+
+        if SCQ_WARRANT.get(scq_key) or SCQ_NO_WARRANT.get(scq_key):
+            st.markdown("---")
+            st.markdown(
+                "<div style='font-size:12.5px;opacity:.75;line-height:1.9'>"
+                f"<b>Reference</b><br/>{SANDU_REFERENCE}"
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
         if scq_key in {"SCQ7", "SCQ8"}:
             st.markdown("---")
@@ -4445,7 +4708,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             "Standard search",
             "Cluster search",
         ],
-        index=0,
+        index=1,
         label_visibility="collapsed",
         help=(
             "Standard search shows every school passing the filters below, "
@@ -4477,7 +4740,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         "School Capped 9 average (secondary only)",
         "High FSM and low attendance (compound)",
     ]
-    cluster_variable = CLUSTER_VARIABLES[0]
+    cluster_variable = "School FSM average"
     cluster_domain_label = "Overall (WIMD 2019)"
     cluster_dep_levels = ["High"]
     cluster_rank_min = cluster_rank_max = None
@@ -4500,6 +4763,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         cluster_variable = st.sidebar.selectbox(
             "Cluster on",
             CLUSTER_VARIABLES,
+            index=CLUSTER_VARIABLES.index("School FSM average"),
             help=(
                 "Deprivation options use LSOA-level WIMD values. School "
                 "options average the metric over the schools LOCATED_IN each "
