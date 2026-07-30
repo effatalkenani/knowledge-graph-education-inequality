@@ -926,54 +926,46 @@ SCQ_WARRANT = {
             + hl("evident across the country") + "."
         ),
         "page": "2026, p. 8",
-        "quote2": (
-            "A notable " + hl("cold spot cluster") + " in South-East Wales "
-            + hl("aligns with the low proportion")
-            + " observed in that region on the choropleth map."
-        ),
-        "page2": "2026, p. 8",
         "why": (
-            "Derived from, not quoted from, these findings. The first "
-            "warrants the <b>form</b>: statistically significant clusters "
-            "of low and high attainment are found across Wales, so asking "
-            "what lies near such a cluster follows from the literature. "
-            "The second warrants the <b>content</b>: those clusters coincide spatially with "
-            "areas of concentrated disadvantage, which is why deprivation "
-            "and school indicators are surfaced for every nearby area."
+            "This finding warrants only part of the question. It "
+            "establishes that clusters of low and high attainment exist "
+            "across Wales, so a question about clusters is about something "
+            "real rather than hypothetical. It does <b>not</b> warrant the "
+            "proximity element: the paper classifies areas as inside or "
+            "outside a cluster and never asks what lies near one."
         ),
         "method_note": (
-            "Their clusters are statistical, from hot-spot analysis of "
-            "the Gi* statistic. The "
+            "The near relation comes from the evaluation instrument, not "
+            "from this paper: two regions are near when they are disjoint "
+            "and joined by a path of two touches edges. Their clusters are "
+            "statistical, from hot-spot analysis of the Gi* statistic; the "
             "clusters here are connected components of adjacency — the "
-            "same word, a different construct."
+            "same word, a different construct, and their spatial-weights "
+            "proximity stays outside the completeness scoring."
         ),
     },
     "SCQ4": {
         "quote": (
-            "pupils residing in " + hl("urban areas")
-            + " ... " + hl("15% lower odds") + " of achieving the CSI."
-        ),
-        "page": "2026, p. 6, Table 2",
-        "quote2": (
             hl("10% higher deprivation")
             + " corresponding to achievement rates being "
             + hl("1.94% lower") + "."
         ),
-        "page2": "2026, p. 7, Table 3",
+        "page": "2026, p. 7, Table 3",
         "why": (
-            "Derived from, not quoted from, these findings. The first "
-            "warrants the <b>form</b>: outcomes differ by settlement "
-            "context, so identifying areas that do not adjoin a given area "
-            "is relevant to spatial targeting. The second warrants the "
-            "<b>content</b>: deprivation is associated with "
-            "attainment, so the deprivation profile of non-adjacent areas "
-            "is what makes the complement informative rather than merely "
-            "large."
+            "This finding warrants the <b>content</b> only: deprivation is "
+            "associated with attainment, so the deprivation profile of the "
+            "areas returned is what makes the answer informative. The "
+            "<b>form</b> is not warranted by this paper — a "
+            "non-adjacency question is not posed there. It comes from the "
+            "evaluation instrument, where not-touches is the complement of "
+            "touches and is included so that all eight forms are exercised."
         ),
         "method_note": (
-            "Sandu et al. use a rural-urban flag, which this graph does "
-            "not hold; the warrant here is the existence of contextual "
-            "difference, not the flag itself."
+            "The complement of a small neighbour set is almost the whole "
+            "country: for a typical LSOA the answer is about 1,900 of "
+            "1,909 areas. The count is therefore reported in full while "
+            "the map draws a sample, and the result is read as a property "
+            "of the form rather than as a policy finding."
         ),
     },
     "SCQ7": {
