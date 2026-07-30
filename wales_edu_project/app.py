@@ -905,10 +905,20 @@ SCQ_WARRANT = {
             "LISA ... identified distinct ... clusters of high achievement "
             "and clusters of low achievement."
         ),
-        "page": "p. 8",
+        "page": "2026, p. 8",
+        "quote2": (
+            "A notable cold spot cluster in South-East Wales aligns with "
+            "the low proportion observed in that region on the choropleth "
+            "map."
+        ),
+        "page2": "2026, p. 8",
         "why": (
-            "Low-attainment areas form identifiable clusters, so asking "
-            "what lies near such a cluster is a real policy question."
+            "The first finding warrants the <b>form</b>: low-attainment "
+            "areas form identifiable clusters, so asking what lies near "
+            "such a cluster is a real policy question. The second warrants "
+            "the <b>content</b>: those clusters coincide spatially with "
+            "areas of concentrated disadvantage, which is why deprivation "
+            "and school indicators are surfaced for every nearby area."
         ),
         "method_note": (
             "Their clusters are statistical (LISA / Getis-Ord). The "
@@ -921,11 +931,20 @@ SCQ_WARRANT = {
             "pupils residing in urban areas ... 15% lower odds of "
             "achieving the CSI."
         ),
-        "page": "p. 6, Table 2",
+        "page": "2026, p. 6, Table 2",
+        "quote2": (
+            "10% higher deprivation corresponding to achievement rates "
+            "being 1.94% lower."
+        ),
+        "page2": "2026, p. 7, Table 3",
         "why": (
-            "Outcomes differ by settlement context, so identifying areas "
-            "that do NOT adjoin a given area is relevant to spatial "
-            "targeting."
+            "The first finding warrants the <b>form</b>: outcomes differ by "
+            "settlement context, so identifying areas that do not adjoin a "
+            "given area is relevant to spatial targeting. The second "
+            "warrants the <b>content</b>: deprivation is associated with "
+            "attainment, so the deprivation profile of non-adjacent areas "
+            "is what makes the complement informative rather than merely "
+            "large."
         ),
         "method_note": (
             "Sandu et al. use a rural-urban flag, which this graph does "
@@ -938,12 +957,21 @@ SCQ_WARRANT = {
             "10% higher eFSM corresponds to CSI achievement rates being "
             "2.96% lower."
         ),
-        "page": "p. 7, Table 3",
+        "page": "2026, p. 7, Table 3",
+        "quote2": (
+            "All four forms of household deprivation as measured by the "
+            "Census dataset were negatively associated with pupils' "
+            "achieving the CSI."
+        ),
+        "page2": "2026, p. 7",
         "why": (
-            "Free-school-meal eligibility is the strongest negative "
-            "predictor at LSOA level, so linking schools to the "
-            "deprivation of the statistical area they sit in is central "
-            "to the use case."
+            "The first finding warrants the <b>form</b>: free-school-meal "
+            "eligibility is the strongest negative predictor at LSOA "
+            "level, so linking a school to the statistical area it sits in "
+            "is central to the use case. The second warrants the "
+            "<b>content</b>: deprivation acts through several dimensions "
+            "at once, which is why the intersected area's WIMD profile is "
+            "returned alongside the school indicators."
         ),
         "method_note": (
             "Their analysis is OLS regression at LSOA level; this asks "
@@ -955,11 +983,20 @@ SCQ_WARRANT = {
             "10% higher ... SEN ... related to achievement rates being "
             "2.93% lower."
         ),
-        "page": "p. 7, Table 3",
+        "page": "2026, p. 7, Table 3",
+        "quote2": (
+            "The spatial analysis highlights significant variations in how "
+            "these factors impact attainment across Wales."
+        ),
+        "page2": "2026, p. 1",
         "why": (
-            "Disadvantage indicators vary across small geographies, so "
-            "reaching nearby administrative units from a statistical one "
-            "is a genuine analytical need."
+            "The first finding warrants the <b>form</b>: disadvantage "
+            "indicators vary across small geographies, so reaching nearby "
+            "administrative units from a statistical one is a genuine "
+            "analytical need. The second warrants the <b>content</b>: "
+            "because the effect of those factors is not uniform across "
+            "Wales, the indicators of nearby areas — not national averages "
+            "— are what an analyst needs to see."
         ),
         "method_note": (
             "SEN is not held in this graph, so school-level indicators "
