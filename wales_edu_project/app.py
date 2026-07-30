@@ -877,11 +877,13 @@ SCQ_WARRANT = {
         ),
         "page2": "2026, p. 7, Table 3",
         "why": (
-            "The first finding warrants the <b>form</b> of the question: "
-            "because outcomes cluster spatially, neighbouring areas are "
-            "expected to resemble one another, so asking which areas "
-            "adjoin a given area is a question an inequality analyst "
-            "genuinely asks. The second warrants its <b>content</b>: free "
+            "The question is <b>derived from</b> these findings rather than "
+            "quoted from them: the paper reports results, not question "
+            "forms. The first warrants the <b>form</b> — because outcomes "
+            "cluster spatially, adjacency is a meaningful unit of "
+            "analysis, so asking which areas adjoin a given area follows "
+            "from the literature even though it is not posed there in "
+            "these terms. The second warrants the <b>content</b> — free "
             "school meal eligibility is the strongest negative predictor "
             "in that analysis, which is why FSM is the evidence surfaced "
             "for each neighbouring area."
@@ -913,9 +915,10 @@ SCQ_WARRANT = {
         ),
         "page2": "2026, p. 8",
         "why": (
-            "The first finding warrants the <b>form</b>: low-attainment "
-            "areas form identifiable clusters, so asking what lies near "
-            "such a cluster is a real policy question. The second warrants "
+            "Derived from, not quoted from, these findings. The first "
+            "warrants the <b>form</b>: low-attainment areas form "
+            "identifiable clusters, so asking what lies near such a "
+            "cluster follows from the literature. The second warrants "
             "the <b>content</b>: those clusters coincide spatially with "
             "areas of concentrated disadvantage, which is why deprivation "
             "and school indicators are surfaced for every nearby area."
@@ -938,10 +941,11 @@ SCQ_WARRANT = {
         ),
         "page2": "2026, p. 7, Table 3",
         "why": (
-            "The first finding warrants the <b>form</b>: outcomes differ by "
-            "settlement context, so identifying areas that do not adjoin a "
-            "given area is relevant to spatial targeting. The second "
-            "warrants the <b>content</b>: deprivation is associated with "
+            "Derived from, not quoted from, these findings. The first "
+            "warrants the <b>form</b>: outcomes differ by settlement "
+            "context, so identifying areas that do not adjoin a given area "
+            "is relevant to spatial targeting. The second warrants the "
+            "<b>content</b>: deprivation is associated with "
             "attainment, so the deprivation profile of non-adjacent areas "
             "is what makes the complement informative rather than merely "
             "large."
@@ -965,11 +969,11 @@ SCQ_WARRANT = {
         ),
         "page2": "2026, p. 7",
         "why": (
-            "The first finding warrants the <b>form</b>: free-school-meal "
-            "eligibility is the strongest negative predictor at LSOA "
-            "level, so linking a school to the statistical area it sits in "
-            "is central to the use case. The second warrants the "
-            "<b>content</b>: deprivation acts through several dimensions "
+            "Derived from, not quoted from, these findings. The first "
+            "warrants the <b>form</b>: free-school-meal eligibility is the "
+            "strongest negative predictor at LSOA level, so linking a "
+            "school to the statistical area it sits in is central to the "
+            "use case. The second warrants the <b>content</b>: deprivation acts through several dimensions "
             "at once, which is why the intersected area's WIMD profile is "
             "returned alongside the school indicators."
         ),
@@ -990,10 +994,11 @@ SCQ_WARRANT = {
         ),
         "page2": "2026, p. 1",
         "why": (
-            "The first finding warrants the <b>form</b>: disadvantage "
-            "indicators vary across small geographies, so reaching nearby "
-            "administrative units from a statistical one is a genuine "
-            "analytical need. The second warrants the <b>content</b>: "
+            "Derived from, not quoted from, these findings. The first "
+            "warrants the <b>form</b>: disadvantage indicators vary across "
+            "small geographies, so reaching nearby administrative units "
+            "from a statistical one is a genuine analytical need. The "
+            "second warrants the <b>content</b>: "
             "because the effect of those factors is not uniform across "
             "Wales, the indicators of nearby areas — not national averages "
             "— are what an analyst needs to see."
