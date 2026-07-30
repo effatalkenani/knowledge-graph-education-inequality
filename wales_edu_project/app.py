@@ -875,7 +875,8 @@ def hl(text: str) -> str:
 # Literature grounding, quoted verbatim with page numbers, so each question
 # shows the published finding that makes it a real analyst question rather
 # than a template fitted to the instrument. Sandu et al. supply the WARRANT
-# for asking; their statistical method (Moran's I, LISA, GWR) is a different
+# for asking; their statistical method (Moran's I, hot-spot analysis, GWR)
+# is a different
 # notion of proximity and is deliberately NOT imported.
 SCQ_WARRANT = {
     "SCQ1": {
@@ -919,9 +920,10 @@ SCQ_WARRANT = {
     },
     "SCQ2": {
         "quote": (
-            "LISA ... identified distinct ... "
-            + hl("clusters of high achievement and clusters of low achievement")
-            + "."
+            hl("Statistically significant clusters")
+            + " of low proportions (cold spots shown in blue) and high "
+            + "proportions (hot spots shown in red) are "
+            + hl("evident across the country") + "."
         ),
         "page": "2026, p. 8",
         "quote2": (
@@ -932,15 +934,16 @@ SCQ_WARRANT = {
         "page2": "2026, p. 8",
         "why": (
             "Derived from, not quoted from, these findings. The first "
-            "warrants the <b>form</b>: low-attainment areas form "
-            "identifiable clusters, so asking what lies near such a "
-            "cluster follows from the literature. The second warrants "
-            "the <b>content</b>: those clusters coincide spatially with "
+            "warrants the <b>form</b>: statistically significant clusters "
+            "of low and high attainment are found across Wales, so asking "
+            "what lies near such a cluster follows from the literature. "
+            "The second warrants the <b>content</b>: those clusters coincide spatially with "
             "areas of concentrated disadvantage, which is why deprivation "
             "and school indicators are surfaced for every nearby area."
         ),
         "method_note": (
-            "Their clusters are statistical (LISA / Getis-Ord). The "
+            "Their clusters are statistical, from hot-spot analysis of "
+            "the Gi* statistic. The "
             "clusters here are connected components of adjacency — the "
             "same word, a different construct."
         ),
@@ -4926,7 +4929,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             "Geometry-origin. LSOA_TOUCHES is computed from boundary "
             "geometry, not asserted by YAGO2geo, so cluster results do not "
             "count towards native model completeness. This is also not the "
-            "statistical (Gi*/LISA) cluster used by Sandu et al."
+            "statistical hot-spot cluster used by Sandu et al."
         )
         cluster_variable = st.sidebar.selectbox(
             "Cluster on",
