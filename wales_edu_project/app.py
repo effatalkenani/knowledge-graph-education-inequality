@@ -1327,25 +1327,26 @@ def sidebar_config() -> Dict[str, str]:
     # and are intentionally removed from the submission navigation. Their
     # page functions remain below, uncalled: to restore one for a supervision
     # demo, add its name back to this list.
-    # Cross-hierarchy was merged into the demonstrator: its seam diagram,
-    # counts and finding now appear directly under SCQ7 and SCQ8, where the
-    # questions they explain are answered. page_cross_hierarchy remains in
-    # the code, uncalled, if the standalone view is ever wanted again.
-    pages = ["Policy Questions", "SCQ Demonstrator", "Evaluation", "Map"]
+    # Two pages were removed from the delivered site on purpose:
+    #   Cross-hierarchy — merged into the demonstrator, where its seam
+    #     diagram and counts now sit directly under SCQ7 and SCQ8.
+    #   Policy Questions — the derivation of the eight questions from the
+    #     education-inequality literature is an argument made in the
+    #     dissertation text, not a screen to click through.
+    # Both page functions remain in the code, uncalled.
+    pages = ["SCQ Demonstrator", "Evaluation", "Map"]
     labels = {
-        "Policy Questions": "Policy Questions",
         "SCQ Demonstrator": "SCQ Demonstrator",
         "Evaluation": "Evaluation",
         "Map": "Map Explorer",
     }
     icons = {
-        "Policy Questions": "Policy Questions",
         "SCQ Demonstrator": "SCQ Demonstrator",
         "Evaluation": "Evaluation",
         "Map": "Map Explorer",
     }
     if "page" not in st.session_state or st.session_state.page not in pages:
-        st.session_state.page = "Policy Questions"
+        st.session_state.page = "SCQ Demonstrator"
 
     def _set_page(page_name: str) -> None:
         st.session_state.page = page_name
@@ -5577,9 +5578,7 @@ def main() -> None:
     cfg = sidebar_config()
     apply_dashboard_theme(bool(cfg.get("dark_theme")))
     page = cfg.pop("page")
-    if page == "Policy Questions":
-        page_policy_questions()
-    elif page == "SCQ Demonstrator":
+    if page == "SCQ Demonstrator":
         page_scq_demonstrator(cfg)
     elif page == "Evaluation":
         page_evaluation()
