@@ -3605,11 +3605,15 @@ def page_evaluation() -> None:
             "is separated from the native administrative comparison. "
             "For the LSOA-based education questions, YAGO2geo has no "
             "native LSOA↔LSOA or AdminUnit↔LSOA coverage; SCQ5 and SCQ6 "
-            "are therefore reclassified / n/a rather than counted as "
-            "independent education answers. The demonstrator still runs "
-            "the implemented SCQ forms using geometry-origin and derived "
-            "relations, while <b>SpCom = 3/6 = 0.50</b> records the "
-            "corrected native model baseline."
+            "are reclassified / n/a for the education use case, but they "
+            "are kept in the denominator: dropping a question would "
+            "flatter the score. One scorecard, one definition, all eight "
+            "SCQs. The demonstrator still runs the implemented forms "
+            "using geometry-origin and derived relations, while "
+            "<b>SpCom = 0/8 = 0.00</b> records the native education "
+            "baseline and <b>SpCom = 6/8 = 0.75</b> records the same "
+            "forms over the native administrative hierarchy. That "
+            "contrast is the finding."
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -3626,22 +3630,35 @@ def page_evaluation() -> None:
 
     with m2:
         st.metric(
-            label="Native SpCom",
-            value="3/6 = 0.50",
+            label="Native SpCom — education",
+            value="0/8 = 0.00",
+            help=(
+                "All eight SCQs are in the denominator, including SCQ5 and "
+                "SCQ6, which are reclassified rather than dropped. No "
+                "education question is answered by a native YAGO2geo "
+                "relation."
+            ),
         )
 
     with m3:
         st.metric(
-            label="Implemented forms",
-            value="8 mixed-scope SCQs",
+            label="Native SpCom — administrative",
+            value="6/8 = 0.75",
+            help=(
+                "The same eight forms scored over the administrative "
+                "hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and "
+                "SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay "
+                "native failures."
+            ),
         )
 
     # Formal IJGI SpCom equation
     st.latex(
-        r"SpCom(O)"
+        r"SpCom_{education}(O)"
         r"=\frac{SR_s}{Size_{R_s}(\Omega)}"
-        r"=\frac{3}{6}"
-        r"=0.50"
+        r"=\frac{0}{8}=0.00"
+        r"\qquad"
+        r"SpCom_{administrative}(O)=\frac{6}{8}=0.75"
     )
 
     st.markdown(
