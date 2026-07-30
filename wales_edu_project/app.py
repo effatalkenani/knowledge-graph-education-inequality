@@ -859,6 +859,19 @@ LIMIT $limit
 # geometric cost, kept separate from the provenance triad. Provenance answers
 # "where did the relation come from"; mode answers "how was it computed and
 # what did it cost". Only Native counts toward model completeness.
+def hl(text: str) -> str:
+    """Mark the words in a quotation that carry the warrant.
+
+    Highlighting is a reading aid, not an edit: the quotation stays verbatim
+    and only its decisive terms are picked out, so a reader can see at a
+    glance which words justify the question.
+    """
+    return (
+        "<mark style='background:rgba(234,88,12,.22);"
+        "padding:0 3px;border-radius:3px;'>" + text + "</mark>"
+    )
+
+
 # Literature grounding, quoted verbatim with page numbers, so each question
 # shows the published finding that makes it a real analyst question rather
 # than a template fitted to the instrument. Sandu et al. supply the WARRANT
@@ -867,13 +880,15 @@ LIMIT $limit
 SCQ_WARRANT = {
     "SCQ1": {
         "quote": (
-            "Moran's I value (0.30, p &lt; 0.001) confirmed spatial "
-            "clustering of educational outcomes."
+            "Moran's I value (0.30, p &lt; 0.001) confirmed "
+            + hl("spatial clustering")
+            + " of educational outcomes."
         ),
         "page": "2026, p. 8",
         "quote2": (
-            "10% higher eFSM corresponds to CSI achievement rates being "
-            "2.96% lower."
+            hl("10% higher eFSM")
+            + " corresponds to CSI achievement rates being "
+            + hl("2.96% lower") + "."
         ),
         "page2": "2026, p. 7, Table 3",
         "why": (
@@ -904,14 +919,15 @@ SCQ_WARRANT = {
     },
     "SCQ2": {
         "quote": (
-            "LISA ... identified distinct ... clusters of high achievement "
-            "and clusters of low achievement."
+            "LISA ... identified distinct ... "
+            + hl("clusters of high achievement and clusters of low achievement")
+            + "."
         ),
         "page": "2026, p. 8",
         "quote2": (
-            "A notable cold spot cluster in South-East Wales aligns with "
-            "the low proportion observed in that region on the choropleth "
-            "map."
+            "A notable " + hl("cold spot cluster") + " in South-East Wales "
+            + hl("aligns with the low proportion")
+            + " observed in that region on the choropleth map."
         ),
         "page2": "2026, p. 8",
         "why": (
@@ -931,13 +947,14 @@ SCQ_WARRANT = {
     },
     "SCQ4": {
         "quote": (
-            "pupils residing in urban areas ... 15% lower odds of "
-            "achieving the CSI."
+            "pupils residing in " + hl("urban areas")
+            + " ... " + hl("15% lower odds") + " of achieving the CSI."
         ),
         "page": "2026, p. 6, Table 2",
         "quote2": (
-            "10% higher deprivation corresponding to achievement rates "
-            "being 1.94% lower."
+            hl("10% higher deprivation")
+            + " corresponding to achievement rates being "
+            + hl("1.94% lower") + "."
         ),
         "page2": "2026, p. 7, Table 3",
         "why": (
@@ -958,14 +975,16 @@ SCQ_WARRANT = {
     },
     "SCQ7": {
         "quote": (
-            "10% higher eFSM corresponds to CSI achievement rates being "
-            "2.96% lower."
+            hl("10% higher eFSM")
+            + " corresponds to CSI achievement rates being "
+            + hl("2.96% lower") + "."
         ),
         "page": "2026, p. 7, Table 3",
         "quote2": (
-            "All four forms of household deprivation as measured by the "
-            "Census dataset were negatively associated with pupils' "
-            "achieving the CSI."
+            hl("All four forms of household deprivation")
+            + " as measured by the Census dataset were "
+            + hl("negatively associated")
+            + " with pupils' achieving the CSI."
         ),
         "page2": "2026, p. 7",
         "why": (
@@ -989,8 +1008,10 @@ SCQ_WARRANT = {
         ),
         "page": "2026, p. 7, Table 3",
         "quote2": (
-            "The spatial analysis highlights significant variations in how "
-            "these factors impact attainment across Wales."
+            "The spatial analysis highlights "
+            + hl("significant variations")
+            + " in how these factors impact attainment "
+            + hl("across Wales") + "."
         ),
         "page2": "2026, p. 1",
         "why": (
