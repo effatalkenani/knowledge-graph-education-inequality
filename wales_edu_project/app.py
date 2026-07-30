@@ -16,6 +16,7 @@ Task 7  Dissertation writing (not implemented in the app)
 import base64
 import json
 import math
+import re
 from html import escape
 from typing import Any, Dict, List, Tuple
 
@@ -2026,7 +2027,9 @@ def cluster_polygons(
         """
         MATCH (l:LSOA)
         WHERE l.code IN $codes AND l.wkt IS NOT NULL
-        RETURN l.code AS code, l.name AS name, l.wkt AS wkt
+        RETURN l.code AS code, l.name AS name, l.wkt AS wkt,
+               coalesce(l.deprivation, 'unknown') AS deprivation,
+               l.wimd_decile AS wimd_decile
         """,
         {"codes": list(codes)},
     )
@@ -2390,16 +2393,23 @@ def render_school_map(
 
     layers = []
     if polygon_df is not None and not polygon_df.empty:
+        DEP_FILL = {
+            "high_deprivation": [225, 29, 72],
+            "medium_deprivation": [255, 138, 0],
+            "low_deprivation": [34, 197, 94],
+            "unknown": [148, 163, 184],
+        }
+        DEP_LABEL = {
+            "high_deprivation": "High",
+            "medium_deprivation": "Medium",
+            "low_deprivation": "Low",
+            "unknown": "Unknown",
+        }
         poly_rows = []
-        sizes = polygon_df.get("cluster_size")
-        max_size = float(sizes.max()) if sizes is not None and len(sizes) else 1.0
         for _, prow in polygon_df.iterrows():
+            dep_key = str(prow.get("deprivation") or "unknown")
+            base = DEP_FILL.get(dep_key, DEP_FILL["unknown"])
             for ring in _wkt_rings(prow.get("wkt")):
-                weight = (
-                    float(prow.get("cluster_size", 1)) / max_size
-                    if max_size > 0
-                    else 0.0
-                )
                 # Deeper red for bigger clusters, in the manner of a
                 # choropleth: the shade encodes cluster size.
                 poly_rows.append(
@@ -2412,12 +2422,15 @@ def render_school_map(
                         "schools_list": prow.get("schools_list", "—"),
                         "fsm_avg": prow.get("fsm_avg", "N/A"),
                         "att_avg": prow.get("att_avg", "N/A"),
-                        "fill": [
-                            225,
-                            int(90 - 60 * weight),
-                            int(110 - 70 * weight),
-                            int(90 + 90 * weight),
-                        ],
+                        "deprivation_label": DEP_LABEL.get(
+                            dep_key, "Unknown"
+                        ),
+                        "wimd_label": (
+                            f"decile {int(prow['wimd_decile'])}"
+                            if pd.notna(prow.get("wimd_decile"))
+                            else "N/A"
+                        ),
+                        "fill": base + [150],
                     }
                 )
         if poly_rows:
@@ -2452,6 +2465,13 @@ def render_school_map(
                 f"<div style='font-size:10.5px;color:{C_MUTED};"
                 "margin:2px 0 8px;'>{code} &middot; cluster of "
                 "{cluster_size} LSOAs</div>"
+                f"<div style='background:rgba(248,250,252,.75);"
+                "border-radius:8px;padding:5px 7px;margin-bottom:5px;'>"
+                f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+                "text-transform:uppercase;letter-spacing:.05em;'>"
+                "Deprivation</div>"
+                f"<div style='font-size:13px;font-weight:800;color:{C_DEP};'>"
+                "{deprivation_label} &middot; {wimd_label}</div></div>"
                 "<div style='display:grid;grid-template-columns:1fr 1fr;"
                 "gap:5px;'>"
                 f"<div style='background:rgba(248,250,252,.75);"
@@ -2502,9 +2522,13 @@ def render_school_map(
     if polygons_only:
         st.markdown(
             "<div class='map-note'>"
-            "<b>Cluster shading:</b> deeper red means a larger cluster "
-            "(more connected LSOAs). Shading does not show deprivation "
-            "intensity. Hover a region for its own figures."
+            "<b>Cluster regions by deprivation level:</b> "
+            "<span style='color:#e11d48;font-size:16px;'>&#9679;</span> High "
+            "&nbsp; <span style='color:#ff8a00;font-size:16px;'>&#9679;</span>"
+            " Medium &nbsp; "
+            "<span style='color:#22c55e;font-size:16px;'>&#9679;</span> Low "
+            "&nbsp; <span style='color:#94a3b8;font-size:16px;'>&#9679;</span>"
+            " Unknown &nbsp;&middot;&nbsp; hover a region for its figures."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -2861,6 +2885,114 @@ def page_policy_questions() -> None:
             unsafe_allow_html=True,
         )
 
+def render_answer_map(
+    cfg: Dict[str, str],
+    result_df: pd.DataFrame,
+    focus_code: str | None = None,
+) -> None:
+    """Draw the LSOAs in an SCQ answer as coloured regions.
+
+    Answer regions are shaded by deprivation level; the LSOA the question
+    was asked about is outlined so the spatial relation is visible. Nothing
+    is filtered here: the map shows exactly the rows the question returned.
+    """
+    if result_df is None or result_df.empty:
+        return
+
+    code_pattern = re.compile(r"^W\d{8}$")
+    codes: List[str] = []
+    for col in result_df.columns:
+        values = [str(v) for v in result_df[col].dropna().tolist()[:40]]
+        if values and all(code_pattern.match(v) for v in values):
+            codes.extend(
+                str(v) for v in result_df[col].dropna().tolist()
+            )
+    if focus_code:
+        codes.append(str(focus_code))
+    codes = sorted(set(codes))
+    if not codes:
+        return
+
+    try:
+        polys = cluster_polygons(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            tuple(codes),
+        )
+    except Exception:
+        return
+    if polys.empty:
+        return
+
+    DEP_FILL = {
+        "high_deprivation": [225, 29, 72],
+        "medium_deprivation": [255, 138, 0],
+        "low_deprivation": [34, 197, 94],
+        "unknown": [148, 163, 184],
+    }
+    rows = []
+    lats: List[float] = []
+    lons: List[float] = []
+    for _, prow in polys.iterrows():
+        dep = str(prow.get("deprivation") or "unknown")
+        base = DEP_FILL.get(dep, DEP_FILL["unknown"])
+        is_focus = focus_code is not None and str(prow["code"]) == str(focus_code)
+        for ring in _wkt_rings(prow.get("wkt")):
+            for pt in ring:
+                lons.append(pt[0])
+                lats.append(pt[1])
+            rows.append(
+                {
+                    "polygon": ring,
+                    "fill": base + ([210] if is_focus else [130]),
+                    "line": [17, 24, 39, 255] if is_focus else base + [200],
+                    "width": 3 if is_focus else 1,
+                }
+            )
+    if not rows or not lats:
+        return
+
+    layer = pdk.Layer(
+        "PolygonLayer",
+        data=rows,
+        get_polygon="polygon",
+        get_fill_color="fill",
+        get_line_color="line",
+        get_line_width="width",
+        line_width_min_pixels=1,
+        stroked=True,
+        filled=True,
+        pickable=False,
+    )
+    view = pdk.ViewState(
+        latitude=sum(lats) / len(lats),
+        longitude=sum(lons) / len(lons),
+        zoom=9.2,
+        pitch=0,
+        bearing=0,
+    )
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=[layer],
+            initial_view_state=view,
+            map_style="light",
+            parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
+        ),
+        use_container_width=True,
+    )
+    st.markdown(
+        "<div class='map-note'>"
+        "<b>Answer regions by deprivation level:</b> "
+        "<span style='color:#e11d48;font-size:16px;'>&#9679;</span> High &nbsp; "
+        "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
+        "<span style='color:#22c55e;font-size:16px;'>&#9679;</span> Low &nbsp; "
+        "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
+        "&nbsp;&middot;&nbsp; the dark outline is the LSOA the question was "
+        "asked about."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def page_scq_demonstrator(
     cfg: Dict[str, str],
 ) -> None:
@@ -3187,6 +3319,9 @@ def page_scq_demonstrator(
             with tab_answer:
                 st.metric(answer_metric, len(result_df))
                 st.caption(answer_caption)
+                render_answer_map(
+                    cfg, result_df, params.get("lsoa")
+                )
                 display_df(result_df)
                 if SHOW_QUERIES:
                     with st.expander(t("show_query")):
@@ -3210,6 +3345,7 @@ def page_scq_demonstrator(
                 len(result_df),
             )
 
+            render_answer_map(cfg, result_df, params.get("lsoa"))
             display_df(result_df)
 
         if scq_key in {
@@ -3979,6 +4115,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         "Deprivation rank",
         "School FSM average",
         "School attendance average",
+        "School Capped 9 average (secondary only)",
         "High FSM and low attendance (compound)",
     ]
     cluster_variable = CLUSTER_VARIABLES[0]
@@ -3987,6 +4124,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     cluster_rank_min = cluster_rank_max = None
     cluster_fsm_min = cluster_fsm_max = None
     cluster_att_min = cluster_att_max = None
+    cluster_cap_min = cluster_cap_max = None
     cluster_inputs_ok = True
     cluster_view = "Bounded pool"
     band_cut1 = band_cut2 = None
@@ -4096,6 +4234,20 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "Mean over the schools LOCATED_IN each LSOA; FSM coverage "
                 "is 96.6% of schools."
             )
+        elif cluster_variable == "School Capped 9 average (secondary only)":
+            cluster_cap_min = cluster_bound(
+                "Mean Capped 9 from", "All", 245.1, 453.1, "cl_cap_min"
+            )
+            cluster_cap_max = cluster_bound(
+                "Mean Capped 9 to", "300", 245.1, 453.1, "cl_cap_max"
+            )
+            st.sidebar.warning(
+                "Capped 9 exists for 205 of 1,453 schools (14.1%, secondary "
+                "only), so very few LSOAs carry a value and even fewer touch "
+                "each other. Expect small, scattered clusters. Report these "
+                "as attainment clusters among secondary schools, never as "
+                "attainment clusters across Wales."
+            )
         elif cluster_variable == "School attendance average":
             cluster_att_min = cluster_bound(
                 "Mean attendance % from", "All", 79.1, 98.1, "cl_att_min"
@@ -4128,6 +4280,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             (cluster_rank_min, cluster_rank_max, "Domain rank"),
             (cluster_fsm_min, cluster_fsm_max, "FSM"),
             (cluster_att_min, cluster_att_max, "Attendance"),
+            (cluster_cap_min, cluster_cap_max, "Capped 9"),
         ):
             if low is not None and high is not None and low > high:
                 st.sidebar.error(f"{label}: From is above To.")
@@ -4143,29 +4296,10 @@ def page_map(cfg: Dict[str, str]) -> None:
         # Cluster reach, named with the evaluation instrument's own
         # proximity vocabulary instead of a raw hop count: touches = 1 hop,
         # graph-near = 2 hops (the paper's near), far = more than 2.
-        CLUSTER_REACH = {
-            "1 step (partial: neighbours only)": 1,
-            "2 steps (partial)": 2,
-            "4 steps (recommended: closest to full clusters)": 4,
-        }
-        reach_label = st.sidebar.selectbox(
-            "Search depth for connected clusters",
-            list(CLUSTER_REACH.keys()),
-            index=2,
-            help=(
-                "How many touches-steps the search walks while growing a "
-                "cluster. Every step must stay inside the pool, so this is "
-                "not a jump across non-qualifying areas: it is a limit on "
-                "how far the connected-component search reaches. 4 steps "
-                "comes closest to true connected clusters and is the "
-                "recommended setting. 1 and 2 steps under-merge and split "
-                "real patches — useful as a documented sensitivity check "
-                "(record how cluster counts and sizes change), not as the "
-                "headline figure. The bound exists because Cypher cannot "
-                "take a variable-length bound as a parameter without APOC."
-            ),
-        )
-        cluster_depth = CLUSTER_REACH[reach_label]
+        # Clusters are true connected components via APOC, so there is no
+        # depth to choose. This value is only used by the fallback query if
+        # APOC is unavailable on the target database.
+        cluster_depth = 4
         min_cluster_size = st.sidebar.number_input(
             "Smallest cluster to show (LSOAs)",
             min_value=1,
@@ -4431,6 +4565,7 @@ def page_map(cfg: Dict[str, str]) -> None:
                 f"AND NOT {neighbour_has_stop})"
             )
     cluster_df = pd.DataFrame()
+    cluster_exact = True
     cluster_codes: List[str] = []
     cluster_cypher = ""
     cluster_params: Dict[str, Any] = {"min_size": int(min_cluster_size)}
@@ -4548,7 +4683,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             pool_match = (
                 "MATCH (l:LSOA)\n"
                 "WHERE l.deprivation IN $dep_levels\n"
-                "WITH collect(l.code) AS pool_codes"
+                "WITH collect(l) AS pool_nodes, collect(l.code) AS pool_codes"
             )
             cluster_pool_label = (
                 "deprivation level " + " / ".join(cluster_dep_levels)
@@ -4584,7 +4719,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             pool_match = (
                 "MATCH (l:LSOA)\n"
                 f"WHERE l.{domain_prop} IS NOT NULL AND {clause}\n"
-                "WITH collect(l.code) AS pool_codes"
+                "WITH collect(l) AS pool_nodes, collect(l.code) AS pool_codes"
             )
             cluster_pool_label = (
                 f"{cluster_domain_label} rank {lab} "
@@ -4603,10 +4738,39 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
                 "WITH l, avg(s.fsm_pct) AS pool_metric\n"
                 f"WHERE pool_metric IS NOT NULL AND {clause}\n"
-                "WITH collect(l.code) AS pool_codes"
+                "WITH collect(l) AS pool_nodes, collect(l.code) AS pool_codes"
             )
             cluster_pool_label = (
                 f"mean school FSM {lab}% (LSOAs with no schools drop out)"
+            )
+        elif cluster_variable == "School Capped 9 average (secondary only)":
+            if cluster_cap_min is None and cluster_cap_max is None:
+                st.warning("Set at least one Capped 9 bound.")
+                return
+            cap_lsoas = int(
+                scalar(
+                    cfg,
+                    "MATCH (l:LSOA)<-[:LOCATED_IN]-(s:School) "
+                    "WHERE s.capped9_score IS NOT NULL "
+                    "RETURN count(DISTINCT l)",
+                    default=0,
+                )
+                or 0
+            )
+            clause, lab = range_clause(
+                "pool_metric", cluster_cap_min, cluster_cap_max,
+                "cap_lo", "cap_hi",
+            )
+            pool_match = (
+                "MATCH (l:LSOA)\n"
+                "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
+                "WITH l, avg(s.capped9_score) AS pool_metric\n"
+                f"WHERE pool_metric IS NOT NULL AND {clause}\n"
+                "WITH collect(l) AS pool_nodes, collect(l.code) AS pool_codes"
+            )
+            cluster_pool_label = (
+                f"mean Capped 9 {lab} — secondary only, and only "
+                f"{cap_lsoas:,} of 1,909 LSOAs carry any Capped 9 value"
             )
         elif cluster_variable == "School attendance average":
             if cluster_att_min is None and cluster_att_max is None:
@@ -4621,7 +4785,7 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\n"
                 "WITH l, avg(s.attendance_pct) AS pool_metric\n"
                 f"WHERE pool_metric IS NOT NULL AND {clause}\n"
-                "WITH collect(l.code) AS pool_codes"
+                "WITH collect(l) AS pool_nodes, collect(l.code) AS pool_codes"
             )
             cluster_pool_label = (
                 f"mean school attendance {lab}% "
@@ -4655,20 +4819,44 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "avg(s.attendance_pct) AS mean_att\n"
                 "WHERE mean_fsm IS NOT NULL AND mean_att IS NOT NULL\n"
                 f"AND {fsm_clause} AND {att_clause}\n"
-                "WITH collect(l.code) AS pool_codes"
+                "WITH collect(l) AS pool_nodes, collect(l.code) AS pool_codes"
             )
             cluster_pool_label = (
                 f"mean FSM {fsm_lab}% AND mean attendance {att_lab}%"
             )
 
         if cluster_view == "Bounded pool":
+            # Exact connected components via APOC: no depth bound, so a
+            # cluster is the full maximal set of touching pool members.
             cluster_cypher = f"""
 // Adjacency cluster over the computed LSOA_TOUCHES graph.
 // Pool: {cluster_pool_label}
 // Geometry-origin: LSOA_TOUCHES is derived from boundary geometry and is not
 // asserted by YAGO2geo, so this does not count towards model completeness.
-// Documented assumption: the traversal depth is a fixed bound of {int(cluster_depth)},
-// because Cypher cannot take a variable-length bound as a parameter.
+// Clusters are exact connected components: apoc.path.subgraphNodes explores
+// the whole component with traversal restricted to the pool, so there is no
+// depth parameter and no truncation.
+{pool_match}
+UNWIND pool_nodes AS seed
+CALL apoc.path.subgraphNodes(seed, {{
+    relationshipFilter: 'LSOA_TOUCHES',
+    whitelistNodes: pool_nodes
+}}) YIELD node
+WITH seed, collect(DISTINCT node.code) AS reach
+WITH reach,
+     reduce(smallest = head(reach), c IN reach |
+            CASE WHEN c < smallest THEN c ELSE smallest END) AS cluster_id
+WITH cluster_id, head(collect(reach)) AS members
+WHERE size(members) >= $min_size
+RETURN cluster_id,
+       size(members) AS cluster_size,
+       members
+ORDER BY cluster_size DESC, cluster_id
+"""
+
+            fallback_cypher = f"""
+// Fallback used only if APOC is unavailable: bounded expansion, which
+// truncates large components at {int(cluster_depth)} steps.
 {pool_match}
 UNWIND pool_codes AS seed_code
 MATCH (seed:LSOA {{code: seed_code}})
@@ -4685,27 +4873,40 @@ RETURN cluster_id,
        members
 ORDER BY cluster_size DESC, cluster_id
 """
+            cluster_exact = True
             try:
-                with st.spinner(
-                    "Building adjacency clusters over LSOA_TOUCHES..."
-                ):
+                with st.spinner("Finding connected clusters..."):
                     cluster_df = run_cypher(
                         cfg, cluster_cypher, cluster_params
                     )
-            except Exception as exc:
-                st.error(f"Cluster query failed: {exc}")
-                if SHOW_QUERIES:
-                    st.code(cluster_cypher, language="cypher")
-                return
+            except Exception:
+                cluster_exact = False
+                try:
+                    with st.spinner(
+                        "APOC unavailable — using bounded expansion..."
+                    ):
+                        cluster_df = run_cypher(
+                            cfg, fallback_cypher, cluster_params
+                        )
+                    st.warning(
+                        "APOC is not available on this database, so clusters "
+                        f"were built with a {int(cluster_depth)}-step bound "
+                        "and very large components may be split. Record this "
+                        "in the research log if these figures are used."
+                    )
+                    cluster_cypher = fallback_cypher
+                except Exception as exc:
+                    st.error(f"Cluster query failed: {exc}")
+                    if SHOW_QUERIES:
+                        st.code(cluster_cypher, language="cypher")
+                    return
             if cluster_df.empty:
                 st.warning(
                     "No cluster reached the smallest size you asked for "
                     f"({int(min_cluster_size)} LSOAs) with the current "
                     "settings, so there is nothing to draw. Lower "
-                    "'Smallest cluster to show', widen the pool (for "
-                    "example add another deprivation level), or raise the "
-                    "search depth to 4 steps so connected patches merge "
-                    "instead of splitting."
+                    "'Smallest cluster to show', or widen the pool — for "
+                    "example add another deprivation level."
                 )
                 if SHOW_QUERIES:
                     st.code(cluster_cypher, language="cypher")
@@ -4838,7 +5039,13 @@ ORDER BY cluster_size DESC, cluster_id
         st.markdown(
             f"{provenance_badge('Geometry-origin')} "
             f"**{len(cluster_df):,} adjacency clusters** covering "
-            f"**{len(cluster_codes):,} LSOAs** — pool: {cluster_pool_label}.",
+            f"**{len(cluster_codes):,} LSOAs** — pool: "
+            f"{cluster_pool_label}"
+            + (
+                ", exact connected components."
+                if cluster_exact
+                else f", bounded at {int(cluster_depth)} steps."
+            ),
             unsafe_allow_html=True,
         )
 
@@ -4999,8 +5206,15 @@ ORDER BY cluster_size DESC, cluster_id
             st.caption(
                 "An adjacency cluster is a connected group of LSOAs that "
                 "all meet the threshold and are joined by computed "
-                "LSOA_TOUCHES edges (traversal depth "
-                f"{int(cluster_depth)}). It is not the statistical cluster "
+                "LSOA_TOUCHES edges. "
+                + (
+                    "Clusters are exact connected components — the whole "
+                    "component is explored, with no depth limit. "
+                    if cluster_exact
+                    else f"APOC was unavailable, so a "
+                    f"{int(cluster_depth)}-step bound was used. "
+                )
+                + "It is not the statistical cluster "
                 "used by Sandu et al., which comes from a Moran's I "
                 "spatial-weights matrix and stays outside the completeness "
                 "scoring."
