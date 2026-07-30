@@ -2942,6 +2942,25 @@ def render_answer_map(
         if c
     }
     codes.extend(focus_set)
+
+    # For a complement answer the meaning sits in what is MISSING, so the
+    # excluded neighbours are fetched too and drawn in outline only. Without
+    # them the gap reads as a rendering fault rather than as the answer.
+    excluded: set[str] = set()
+    if focus_set:
+        try:
+            neighbour_rows = run_cypher(
+                cfg,
+                "MATCH (x:LSOA)-[:LSOA_TOUCHES]-(y:LSOA) "
+                "WHERE x.code IN $focus RETURN DISTINCT y.code AS code",
+                {"focus": sorted(focus_set)},
+            )
+            neighbours = {str(c) for c in neighbour_rows["code"].tolist()}
+            if neighbours and not neighbours.issubset(set(codes)):
+                excluded = neighbours - set(codes)
+                codes.extend(excluded)
+        except Exception:
+            excluded = set()
     codes = sorted(set(codes))
     if not codes:
         return
@@ -2991,14 +3010,19 @@ def render_answer_map(
     lats: List[float] = []
     lons: List[float] = []
     heavy = len(polys) > 250
+    focus_lats: List[float] = []
+    focus_lons: List[float] = []
     for _, prow in polys.iterrows():
         dep = str(prow.get("deprivation") or "unknown")
         base = DEP_FILL.get(dep, DEP_FILL["unknown"])
         is_focus = str(prow["code"]) in focus_set
+        is_excluded = str(prow["code"]) in excluded
         if is_focus:
             # Same colour family, clearly darker, so the selected LSOA is
             # unmistakable without changing what its colour means.
             fill = [max(0, int(c * 0.55)) for c in base] + [245]
+        elif is_excluded:
+            fill = [255, 255, 255, 40]
         else:
             fill = base + [120]
         for ring in _wkt_rings(prow.get("wkt")):
@@ -3011,12 +3035,20 @@ def render_answer_map(
             for pt in ring:
                 lons.append(pt[0])
                 lats.append(pt[1])
+                if is_focus:
+                    focus_lons.append(pt[0])
+                    focus_lats.append(pt[1])
             rows.append(
                 {
                     "polygon": ring,
                     "fill": fill,
-                    "line": [17, 24, 39, 255] if is_focus else base + [200],
-                    "width": 4 if is_focus else 1,
+                    "line": (
+                        [17, 24, 39, 255]
+                        if is_focus
+                        else [124, 58, 237, 235] if is_excluded
+                        else base + [200]
+                    ),
+                    "width": 4 if is_focus else 3 if is_excluded else 1,
                     "name": prow.get("name") or prow.get("code"),
                     "code": prow.get("code"),
                     "dep_label": DEP_LABEL.get(dep, "Unknown"),
@@ -3028,6 +3060,8 @@ def render_answer_map(
                     "role": (
                         "One of the LSOAs you selected"
                         if is_focus
+                        else "Excluded — it borders your LSOA"
+                        if is_excluded
                         else "In the answer"
                     ),
                 }
@@ -3049,15 +3083,24 @@ def render_answer_map(
         auto_highlight=True,
         highlight_color=[124, 58, 237, 190],
     )
-    # Fit the view to the answer: a single LSOA zooms in close, a scattered
-    # answer zooms out enough to hold all of it.
-    span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
-    zoom = 12.4 if span < 0.02 else 11.0 if span < 0.06 else (
-        9.8 if span < 0.2 else 8.6 if span < 0.6 else 7.2
-    )
+    # Framing rule: when the answer is large (a complement question colours
+    # nearly all of Wales) the useful view is the neighbourhood of the LSOA
+    # that was asked about, not the whole country — otherwise the gap that
+    # carries the meaning is invisible. Small answers are framed whole.
+    if focus_lats and len(rows) > 60:
+        centre_lat = (max(focus_lats) + min(focus_lats)) / 2
+        centre_lon = (max(focus_lons) + min(focus_lons)) / 2
+        zoom = 11.2
+    else:
+        span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
+        zoom = 12.4 if span < 0.02 else 11.0 if span < 0.06 else (
+            9.8 if span < 0.2 else 8.6 if span < 0.6 else 7.2
+        )
+        centre_lat = (max(lats) + min(lats)) / 2
+        centre_lon = (max(lons) + min(lons)) / 2
     view = pdk.ViewState(
-        latitude=(max(lats) + min(lats)) / 2,
-        longitude=(max(lons) + min(lons)) / 2,
+        latitude=centre_lat,
+        longitude=centre_lon,
         zoom=zoom,
         pitch=0,
         bearing=0,
@@ -3105,8 +3148,9 @@ def render_answer_map(
         "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
         "<span style='color:#22c55e;font-size:16px;'>&#9679;</span> Low &nbsp; "
         "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
-        "&nbsp;&middot;&nbsp; the darker outlined region is the LSOA you "
-        "selected. Hover any region for its details."
+        "&nbsp;&middot;&nbsp; the dark region is the LSOA you selected; "
+        "regions outlined in purple and left unfilled are excluded from the "
+        "answer. Hover any region for its details."
         "</div>",
         unsafe_allow_html=True,
     )
