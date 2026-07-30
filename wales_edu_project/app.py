@@ -2900,13 +2900,31 @@ def render_answer_map(
         return
 
     code_pattern = re.compile(r"^W\d{8}$")
+
+    def harvest(value: Any, sink: List[str]) -> None:
+        """Pull LSOA codes out of scalars, lists and maps alike.
+
+        SCQ3 returns a list of node maps per path rather than a plain code
+        column, so a recursive walk is needed to find the codes at all.
+        """
+        if value is None:
+            return
+        if isinstance(value, str):
+            if code_pattern.match(value):
+                sink.append(value)
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                harvest(item, sink)
+            return
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                harvest(item, sink)
+
     codes: List[str] = []
     for col in result_df.columns:
-        values = [str(v) for v in result_df[col].dropna().tolist()[:40]]
-        if values and all(code_pattern.match(v) for v in values):
-            codes.extend(
-                str(v) for v in result_df[col].dropna().tolist()
-            )
+        for value in result_df[col].tolist():
+            harvest(value, codes)
     if focus_code:
         codes.append(str(focus_code))
     codes = sorted(set(codes))
@@ -2929,6 +2947,12 @@ def render_answer_map(
         "low_deprivation": [34, 197, 94],
         "unknown": [148, 163, 184],
     }
+    DEP_LABEL = {
+        "high_deprivation": "High",
+        "medium_deprivation": "Medium",
+        "low_deprivation": "Low",
+        "unknown": "Unknown",
+    }
     rows = []
     lats: List[float] = []
     lons: List[float] = []
@@ -2936,6 +2960,12 @@ def render_answer_map(
         dep = str(prow.get("deprivation") or "unknown")
         base = DEP_FILL.get(dep, DEP_FILL["unknown"])
         is_focus = focus_code is not None and str(prow["code"]) == str(focus_code)
+        if is_focus:
+            # Same colour family, clearly darker, so the selected LSOA is
+            # unmistakable without changing what its colour means.
+            fill = [max(0, int(c * 0.55)) for c in base] + [245]
+        else:
+            fill = base + [120]
         for ring in _wkt_rings(prow.get("wkt")):
             for pt in ring:
                 lons.append(pt[0])
@@ -2943,9 +2973,22 @@ def render_answer_map(
             rows.append(
                 {
                     "polygon": ring,
-                    "fill": base + ([210] if is_focus else [130]),
+                    "fill": fill,
                     "line": [17, 24, 39, 255] if is_focus else base + [200],
-                    "width": 3 if is_focus else 1,
+                    "width": 4 if is_focus else 1,
+                    "name": prow.get("name") or prow.get("code"),
+                    "code": prow.get("code"),
+                    "dep_label": DEP_LABEL.get(dep, "Unknown"),
+                    "wimd_label": (
+                        f"decile {int(prow['wimd_decile'])}"
+                        if pd.notna(prow.get("wimd_decile"))
+                        else "N/A"
+                    ),
+                    "role": (
+                        "The LSOA you selected"
+                        if is_focus
+                        else "In the answer"
+                    ),
                 }
             )
     if not rows or not lats:
@@ -2961,20 +3004,55 @@ def render_answer_map(
         line_width_min_pixels=1,
         stroked=True,
         filled=True,
-        pickable=False,
+        pickable=True,
+        auto_highlight=True,
+        highlight_color=[124, 58, 237, 190],
+    )
+    # Fit the view to the answer: a single LSOA zooms in close, a scattered
+    # answer zooms out enough to hold all of it.
+    span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
+    zoom = 12.4 if span < 0.02 else 11.0 if span < 0.06 else (
+        9.8 if span < 0.2 else 8.6 if span < 0.6 else 7.2
     )
     view = pdk.ViewState(
-        latitude=sum(lats) / len(lats),
-        longitude=sum(lons) / len(lons),
-        zoom=9.2,
+        latitude=(max(lats) + min(lats)) / 2,
+        longitude=(max(lons) + min(lons)) / 2,
+        zoom=zoom,
         pitch=0,
         bearing=0,
     )
+    answer_tooltip = {
+        "html": (
+            "<div style='font-family:Segoe UI,Arial,sans-serif;width:225px;"
+            "background:rgba(255,255,255,.82);backdrop-filter:blur(3px);"
+            "border:1px solid rgba(136,19,55,.35);border-radius:14px;"
+            "padding:10px 12px;box-shadow:0 10px 26px rgba(15,23,42,.16);'>"
+            f"<div style='font-size:13.5px;font-weight:900;color:{C_HEAD};"
+            "line-height:1.3;'>{name}</div>"
+            f"<div style='font-size:10.5px;color:{C_MUTED};"
+            "margin:2px 0 8px;'>{code} &middot; {role}</div>"
+            "<div style='background:rgba(248,250,252,.75);border-radius:8px;"
+            "padding:5px 7px;'>"
+            f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+            "text-transform:uppercase;letter-spacing:.05em;'>Deprivation"
+            "</div>"
+            f"<div style='font-size:13px;font-weight:800;color:{C_DEP};'>"
+            "{dep_label} &middot; {wimd_label}</div></div>"
+            "</div>"
+        ),
+        "style": {
+            "backgroundColor": "transparent",
+            "color": "#0f172a",
+            "zIndex": "9999",
+        },
+    }
+    st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
     st.pydeck_chart(
         pdk.Deck(
             layers=[layer],
             initial_view_state=view,
             map_style="light",
+            tooltip=answer_tooltip,
             parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
         ),
         use_container_width=True,
@@ -2986,8 +3064,8 @@ def render_answer_map(
         "<span style='color:#ff8a00;font-size:16px;'>&#9679;</span> Medium &nbsp; "
         "<span style='color:#22c55e;font-size:16px;'>&#9679;</span> Low &nbsp; "
         "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
-        "&nbsp;&middot;&nbsp; the dark outline is the LSOA the question was "
-        "asked about."
+        "&nbsp;&middot;&nbsp; the darker outlined region is the LSOA you "
+        "selected. Hover any region for its details."
         "</div>",
         unsafe_allow_html=True,
     )
