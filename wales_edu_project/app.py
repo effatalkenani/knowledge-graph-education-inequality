@@ -1867,16 +1867,12 @@ def hero() -> None:
     )
 
 
-def task_badge(task: str, keyword_sentence: str, status: str = "Complete") -> None:
-    cls = (
-        "done" if ("Complete" in status or "Done" in status)
-        else "current" if ("In progress" in status or "Current" in status)
-        else "next"
-    )
+def task_badge(task: str, keyword_sentence: str, status: str = "") -> None:
+    """Page header. The status argument is accepted but no longer shown:
+    progress labels belong in the research log, not on a delivered site."""
     st.markdown(
         f"""
 <div class="task-card">
-  <span class="badge {cls}">{status}</span>
   <h3>{task}</h3>
   <div>{keyword_sentence}</div>
 </div>
@@ -2793,7 +2789,7 @@ def visual_knowledge_pyramid() -> None:
 def visual_cross_hierarchy_bridge() -> None:
     st.markdown("""
 <div class="visual-card">
-  <h3>Cross-hierarchy Bridge — the main Task 6 finding</h3>
+  <h3>Cross-hierarchy Bridge — the main finding</h3>
   <div class="bridge-wrap">
     <div class="bridge-side"><b>Administrative geography</b><br><span class="step-text">Unitary Authority<br>Ward<br>Community</span></div>
     <div class="bridge-mid-light"><div>INTERSECTS</div><div>GRAPH_NEAR</div></div>
@@ -3653,13 +3649,17 @@ def page_evaluation() -> None:
         )
 
     # Formal IJGI SpCom equation
-    st.latex(
-        r"SpCom_{education}(O)"
-        r"=\frac{SR_s}{Size_{R_s}(\Omega)}"
-        r"=\frac{0}{8}=0.00"
-        r"\qquad"
-        r"SpCom_{administrative}(O)=\frac{6}{8}=0.75"
-    )
+    eq1, eq2 = st.columns(2)
+    with eq1:
+        st.caption("Education use case")
+        st.latex(
+            r"SpCom(O)=\frac{SR_s}{Size_{R_s}(\Omega)}=\frac{0}{8}=0.00"
+        )
+    with eq2:
+        st.caption("Administrative hierarchy")
+        st.latex(
+            r"SpCom(O)=\frac{SR_s}{Size_{R_s}(\Omega)}=\frac{6}{8}=0.75"
+        )
 
     st.markdown(
         (
@@ -3795,7 +3795,7 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
             "statistical hierarchy using INTERSECTS and near relations "
             "between AdminUnit and LSOA."
         ),
-        "In progress",
+        "Complete",
     )
 
     visual_cross_hierarchy_bridge()
@@ -3997,6 +3997,7 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         "for this LSOA."
                     )               
                 else:
+                    render_answer_map(cfg, df7, selected7[0])
                     display_df(df7)
 
             else:
@@ -4052,6 +4053,7 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                     if df8.empty:
                         st.info(t("no_results_8"))
                     else:
+                        render_answer_map(cfg, df8, selected8[0])
                         display_df(df8)
                     if SHOW_QUERIES:
                         with st.expander(t("show_query")):
