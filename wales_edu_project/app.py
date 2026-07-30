@@ -870,19 +870,34 @@ SCQ_WARRANT = {
             "Moran's I value (0.30, p &lt; 0.001) confirmed spatial "
             "clustering of educational outcomes."
         ),
-        "page": "p. 8",
+        "page": "2026, p. 8",
+        "quote2": (
+            "10% higher eFSM corresponds to CSI achievement rates being "
+            "2.96% lower."
+        ),
+        "page2": "2026, p. 7, Table 3",
         "why": (
-            "Attainment is spatially clustered, so neighbouring areas are "
-            "expected to resemble one another. That makes \"which "
-            "neighbouring areas share similar conditions\" a question an "
-            "inequality analyst genuinely asks."
+            "The first finding warrants the <b>form</b> of the question: "
+            "because outcomes cluster spatially, neighbouring areas are "
+            "expected to resemble one another, so asking which areas "
+            "adjoin a given area is a question an inequality analyst "
+            "genuinely asks. The second warrants its <b>content</b>: free "
+            "school meal eligibility is the strongest negative predictor "
+            "in that analysis, which is why FSM is the evidence surfaced "
+            "for each neighbouring area."
         ),
         "method_note": (
-            "Sandu et al. measure the strength of that clustering "
-            "statistically. This demonstrator instead asks whether the "
-            "graph can identify the neighbours at all — their spatial-"
-            "weights proximity is a third notion of nearness and stays "
-            "outside the completeness scoring."
+            "Sandu et al. (2026) measure the strength of that clustering "
+            "statistically; this demonstrator asks only whether the graph "
+            "can identify the neighbours at all, so their spatial-weights "
+            "proximity is a third notion of nearness and stays outside the "
+            "completeness scoring. Their analysis also uses pupil-level "
+            "CSI attainment, which this graph does not hold, so "
+            "school-level indicators stand in — the authors state that "
+            "school-level characteristics were excluded from their "
+            "small-area measures because they are recorded at a different "
+            "granularity (2026, p. 4), so the two levels are complementary "
+            "rather than equivalent."
         ),
     },
     "SCQ2": {
@@ -1006,10 +1021,10 @@ SCQ_NO_WARRANT = {
 
 
 SANDU_REFERENCE = (
-    "Sandu, A., Huxley, K., Keating, J., Whiffen, T. and French, R. 2026. "
-    "Mapping educational inequalities in Wales: spatial and socio-economic "
-    "determinants of pupils' attainment. <i>Population, Space and Place</i> "
-    "32(2), e70225. doi: 10.1002/psp.70225"
+    "Sandu, A. et al. 2026. Mapping educational inequalities in Wales: "
+    "spatial and socio-economic determinants of pupils' attainment. "
+    "<i>Population, Space and Place</i> 32(2), e70225. "
+    "doi: 10.1002/psp.70225"
 )
 
 
@@ -3533,6 +3548,18 @@ def page_scq_demonstrator(
 
         warrant = SCQ_WARRANT.get(scq_key)
         if warrant:
+            def cited(quote: str, page: str) -> str:
+                return (
+                    f"<div style='font-style:italic;'>&ldquo;{quote}"
+                    "&rdquo;</div>"
+                    "<div style='font-size:12px;opacity:.75;"
+                    f"margin:3px 0 8px;'>(Sandu <i>et al.</i>, {page})</div>"
+                )
+
+            quotes_html = cited(warrant["quote"], warrant["page"])
+            if warrant.get("quote2"):
+                quotes_html += cited(warrant["quote2"], warrant["page2"])
+
             st.markdown(
                 "<div style='border-right:3px solid #c2410c;"
                 "background:rgba(194,65,12,.05);border-radius:8px;"
@@ -3540,12 +3567,9 @@ def page_scq_demonstrator(
                 "<div style='font-size:11px;font-weight:800;"
                 "letter-spacing:.06em;opacity:.75;margin-bottom:5px;'>"
                 "WHY THIS IS A REAL QUESTION</div>"
-                f"<div style='font-style:italic;'>&ldquo;{warrant['quote']}"
-                f"&rdquo;</div>"
-                f"<div style='font-size:12px;opacity:.75;margin:3px 0 8px;'>"
-                f"Sandu et al. (2026), {warrant['page']}</div>"
+                f"{quotes_html}"
                 f"<div>{warrant['why']}</div>"
-                f"<div style='font-size:12.5px;opacity:.8;margin-top:7px;'>"
+                "<div style='font-size:12.5px;opacity:.8;margin-top:7px;'>"
                 f"<b>Method note:</b> {warrant['method_note']}</div>"
                 "</div>",
                 unsafe_allow_html=True,
