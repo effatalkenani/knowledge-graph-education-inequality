@@ -16,6 +16,7 @@ Task 7  Dissertation writing (not implemented in the app)
 import base64
 import json
 import math
+import os
 import re
 from html import escape
 from typing import Any, Dict, List, Tuple
@@ -3671,6 +3672,83 @@ def page_evaluation() -> None:
         ),
         unsafe_allow_html=True,
     )
+
+    with st.expander(
+        "Independent completeness audit of YAGO2geo — summary and full report",
+        expanded=False,
+    ):
+        st.markdown(
+            "This audit is run **outside** the demonstrator by a separate "
+            "read-only script. It does not ask whether a question can be "
+            "answered; it asks whether the relations YAGO2geo claims to hold "
+            "are actually present and correct. Adjacency is recomputed from "
+            "boundary geometry for every pair of administrative units and "
+            "compared against what YAGO2geo natively asserts."
+        )
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric(
+            "Matched of reference",
+            "84,309 / 84,348",
+            help=(
+                "Reference pairs are computed from geometry across four "
+                "comparisons: Ward-Ward 22,309, Community-Community 32,357, "
+                "Ward-Community 27,958, UnitaryAuthority-Ward 1,724."
+            ),
+        )
+        a2.metric(
+            "False assertions",
+            "6",
+            help=(
+                "Pairs YAGO2geo asserts as touching whose boundaries are "
+                "48.9 m to 2.6 km apart. A limit of accuracy, not coverage."
+            ),
+        )
+        a3.metric(
+            "Inexpressible overlaps",
+            "12,639",
+            help=(
+                "Ward-Community pairs that genuinely overlap rather than "
+                "touch. The ontology has no overlaps property between "
+                "sibling classes, so these real relations cannot be stated. "
+                "A limit of expressiveness."
+            ),
+        )
+        a4.metric(
+            "Dual representations",
+            "1,131",
+            help=(
+                "The same real-world unit stored twice under two naming "
+                "schemes, inflating the reference set. A limit of identity."
+            ),
+        )
+        st.markdown(
+            "<div class='solutionbox'>"
+            "<b>Why this matters for the evaluation:</b> completeness is not "
+            "\"the relation type is present\" but \"all the instances that "
+            "should exist do exist\". These figures separate three different "
+            "kinds of limit — <b>coverage</b> (relations absent), "
+            "<b>accuracy</b> (relations present but wrong) and "
+            "<b>expressiveness</b> (real relations the ontology cannot "
+            "state). Only the first is visible from inside the demonstrator."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "[Open the full report on GitHub]"
+            "(https://github.com/effatalkenani/knowledge-graph-education-"
+            "inequality/blob/main/wales_edu_project/"
+            "yago2geo_completeness_local.html)"
+        )
+        report_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "yago2geo_completeness_local.html",
+        )
+        if os.path.exists(report_path):
+            size_mb = os.path.getsize(report_path) / 1e6
+            st.caption(
+                f"The report is also in this repository ({size_mb:.1f} MB); "
+                "it is linked rather than embedded because of its size."
+            )
 
     if "eval_tab" not in st.session_state:
         st.session_state.eval_tab = "Visual evaluation"
