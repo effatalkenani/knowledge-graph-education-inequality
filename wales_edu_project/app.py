@@ -2889,7 +2889,7 @@ def page_policy_questions() -> None:
 def render_answer_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
-    focus_code: str | None = None,
+    focus_code: Any = None,
 ) -> None:
     """Draw the LSOAs in an SCQ answer as coloured regions.
 
@@ -2926,8 +2926,14 @@ def render_answer_map(
     for col in result_df.columns:
         for value in result_df[col].tolist():
             harvest(value, codes)
-    if focus_code:
-        codes.append(str(focus_code))
+    focus_set = {
+        str(c)
+        for c in (
+            focus_code if isinstance(focus_code, (list, tuple, set)) else [focus_code]
+        )
+        if c
+    }
+    codes.extend(focus_set)
     codes = sorted(set(codes))
     if not codes:
         return
@@ -2943,8 +2949,12 @@ def render_answer_map(
             "the map for speed. The count above and the table below are the "
             "full answer."
         )
-        keep = [c for c in codes if focus_code and c == str(focus_code)]
-        keep += [c for c in codes if c not in keep][: MAP_DRAW_CAP - len(keep)]
+        keep = [c for c in codes if c in focus_set]
+        rest = [c for c in codes if c not in focus_set]
+        # Even stride, not the first N: taking the first N by code would
+        # show only one corner of Wales and misrepresent the answer.
+        stride = max(1, len(rest) // max(1, MAP_DRAW_CAP - len(keep)))
+        keep += rest[::stride][: MAP_DRAW_CAP - len(keep)]
         codes = keep
 
     try:
@@ -2975,7 +2985,7 @@ def render_answer_map(
     for _, prow in polys.iterrows():
         dep = str(prow.get("deprivation") or "unknown")
         base = DEP_FILL.get(dep, DEP_FILL["unknown"])
-        is_focus = focus_code is not None and str(prow["code"]) == str(focus_code)
+        is_focus = str(prow["code"]) in focus_set
         if is_focus:
             # Same colour family, clearly darker, so the selected LSOA is
             # unmistakable without changing what its colour means.
@@ -3001,7 +3011,7 @@ def render_answer_map(
                         else "N/A"
                     ),
                     "role": (
-                        "The LSOA you selected"
+                        "One of the LSOAs you selected"
                         if is_focus
                         else "In the answer"
                     ),
@@ -3415,7 +3425,13 @@ def page_scq_demonstrator(
                 st.metric(answer_metric, len(result_df))
                 st.caption(answer_caption)
                 render_answer_map(
-                    cfg, result_df, params.get("lsoa")
+                    cfg,
+                    result_df,
+                    [
+                        params.get("lsoa"),
+                        params.get("lsoa_a"),
+                        params.get("lsoa_b"),
+                    ],
                 )
                 display_df(result_df)
                 if SHOW_QUERIES:
@@ -3440,7 +3456,15 @@ def page_scq_demonstrator(
                 len(result_df),
             )
 
-            render_answer_map(cfg, result_df, params.get("lsoa"))
+            render_answer_map(
+                cfg,
+                result_df,
+                [
+                    params.get("lsoa"),
+                    params.get("lsoa_a"),
+                    params.get("lsoa_b"),
+                ],
+            )
             display_df(result_df)
 
         if scq_key in {
