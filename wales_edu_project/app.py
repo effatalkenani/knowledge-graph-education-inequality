@@ -1557,6 +1557,10 @@ def render_scq_evidence(scq_key: str) -> None:
         unsafe_allow_html=True,
     )
 
+    tab_warrant, tab_questions = st.tabs(
+        ["Literature warrant", "Questions this relation answers"]
+    )
+
     cards = []
     for row in ev["rows"]:
         verdict = row.get("verdict", "None")
@@ -1583,22 +1587,22 @@ def render_scq_evidence(scq_key: str) -> None:
             + "</div>"
         )
 
-    st.markdown(
-        "<div class='ev-block'>"
-        "<div class='ev-title'>Literature warrant</div>"
-        + "".join(cards)
-        + "<div class='ev-assess'><b>Critical assessment.</b> "
-        + ev["assessment"]
-        + "</div></div>",
-        unsafe_allow_html=True,
-    )
+    with tab_warrant:
+        st.markdown(
+            "<div class='ev-block'>"
+            + "".join(cards)
+            + "<div class='ev-assess'><b>Critical assessment.</b> "
+            + ev["assessment"]
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
 
-    items = "".join(f"<li>{q}</li>" for q in ev["questions"])
-    st.markdown(
-        "<div class='ev-qs'><div class='ev-title'>Questions this relation "
-        "answers</div><ol>" + items + "</ol></div>",
-        unsafe_allow_html=True,
-    )
+    with tab_questions:
+        items = "".join(f"<li>{q}</li>" for q in ev["questions"])
+        st.markdown(
+            "<div class='ev-qs'><ol>" + items + "</ol></div>",
+            unsafe_allow_html=True,
+        )
 
 
 SCQ_ANSWER_MODE = {
@@ -2706,9 +2710,13 @@ def admin_options(
         name + coalesce(' | ' + type, '') AS label
 
     ORDER BY label
-    LIMIT 500
+    LIMIT 20000
     """
 
+    # The former cap of 500 silently truncated an alphabetically sorted list
+    # of roughly 19,000 units, so anything past the early letters could not
+    # be selected at all. The selectbox is type-to-search, so the full list
+    # is usable.
     return safe_options(cfg, query)
 
 def choose_lsoa_pair(cfg: Dict[str, str]) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
@@ -4678,10 +4686,19 @@ def render_admin_containment_map(
     if not lats:
         return
 
+    # The children of a unitary authority tile it completely, so a pale
+    # container drawn underneath disappears entirely. Its boundary is
+    # therefore redrawn, unfilled, on top of everything.
+    outline_rows = [
+        {**item, "fill": [0, 0, 0, 0], "width": 6}
+        for item in containers
+    ]
+
     layers = []
     # Containers first so the contained units sit on top of them.
     for rows_, layer_id in ((containers, "admin-container"),
-                            (contained, "admin-contained")):
+                            (contained, "admin-contained"),
+                            (outline_rows, "admin-container-outline")):
         if rows_:
             layers.append(
                 pdk.Layer(
@@ -4792,7 +4809,11 @@ def page_scq_demonstrator(
     with left:
         st.subheader(scq_question(scq_key, meta))
         st.write(meta["keyword_sentence"])
-        render_scq_evidence(scq_key)
+        with st.expander(
+            "Literature warrant and the questions this relation answers",
+            expanded=False,
+        ):
+            render_scq_evidence(scq_key)
 
         mode, cost, counts = SCQ_ANSWER_MODE.get(
             scq_key, ("Computed-then-stored", "Paid once", "No")
