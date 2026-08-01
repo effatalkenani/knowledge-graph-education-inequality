@@ -4176,7 +4176,16 @@ def page_scq_demonstrator(
         st.markdown(f"### {t('parameters')}")
         st.json(params)
 
-    if not run_query:
+    # Clicking a region fires a Streamlit rerun, and on a rerun a button
+    # reports False again — which used to wipe the answer and send the page
+    # back to its empty state. The fact that this question has been run is
+    # therefore held in session state: once run, the answer survives reruns
+    # and re-executes against whatever parameters are currently selected.
+    run_state_key = f"scq_ran_{scq_key}"
+    if run_query:
+        st.session_state[run_state_key] = True
+
+    if not st.session_state.get(run_state_key):
         return
 
     try:
