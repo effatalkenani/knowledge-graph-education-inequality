@@ -2311,6 +2311,287 @@ def cluster_polygons(
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Per-LSOA school detail
+# ---------------------------------------------------------------------------
+# The hover card stays a fixed size and reports only counts and means, because
+# it must not grow with the number of schools. School identities live in a
+# panel below the map, opened by selecting a region. Wales-wide the maximum is
+# five schools in one LSOA, so the panel never needs paging.
+@st.cache_data(show_spinner=False, ttl=600)
+def schools_in_lsoas(
+    cfg_key: Tuple[str, str, str, str], codes: Tuple[str, ...]
+) -> pd.DataFrame:
+    """Every school located in the given LSOAs, one row per school."""
+    cfg = {
+        "uri": cfg_key[0], "user": cfg_key[1],
+        "password": cfg_key[2], "database": cfg_key[3],
+    }
+    return run_cypher(
+        cfg,
+        """
+        MATCH (l:LSOA)<-[:LOCATED_IN]-(s:School)
+        WHERE l.code IN $codes
+        RETURN l.code AS lsoa_code,
+               coalesce(l.name, l.LSOA_Name, l.code) AS lsoa_name,
+               coalesce(l.deprivation, 'unknown') AS deprivation,
+               l.wimd_decile AS wimd_decile,
+               coalesce(s.name, s.school_name, s.code) AS school,
+               coalesce(s.phase_group, s.phase, s.school_type) AS phase,
+               s.language_medium AS language_medium,
+               coalesce(s.pupils_2025, s.pupils) AS pupils,
+               s.fsm_pct AS fsm_pct,
+               s.attendance_pct AS attendance_pct,
+               s.capped9_score AS capped9_score
+        ORDER BY lsoa_code, coalesce(s.fsm_pct, -1) DESC, school
+        """,
+        {"codes": list(codes)},
+    )
+
+
+def school_names_by_lsoa(
+    cfg: Dict[str, str], codes: List[str]
+) -> Dict[str, str]:
+    """Map each LSOA code to its school names, for the results table."""
+    if not codes:
+        return {}
+    try:
+        rows = schools_in_lsoas(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            tuple(sorted(set(codes))),
+        )
+    except Exception:
+        return {}
+    if rows.empty:
+        return {}
+    return {
+        str(code): "; ".join(str(n) for n in grp["school"].tolist())
+        for code, grp in rows.groupby(rows["lsoa_code"].astype(str))
+    }
+
+
+def add_school_names_column(
+    cfg: Dict[str, str], df: pd.DataFrame
+) -> pd.DataFrame:
+    """Add a Schools column naming the schools behind each row's count."""
+    if df is None or df.empty or "lsoa_code" not in df.columns:
+        return df
+    if "school_count" not in df.columns:
+        return df
+    codes = [str(c) for c in df["lsoa_code"].dropna().tolist()]
+    names = school_names_by_lsoa(cfg, codes)
+    if not names:
+        return df
+    out = df.copy()
+    out["schools"] = (
+        out["lsoa_code"].astype(str).map(names).fillna("No school in this LSOA")
+    )
+    return out
+
+
+def _detail_metric(label: str, value: str, colour: str, note: str = "") -> str:
+    note_html = (
+        f"<div style='font-size:9.5px;color:{C_MUTED};margin-top:1px;'>"
+        f"{escape(note)}</div>" if note else ""
+    )
+    return (
+        "<div style='background:#f8fafc;border:1px solid #eef2f7;"
+        "border-radius:9px;padding:6px 8px;'>"
+        f"<div style='color:{colour};font-weight:800;font-size:9.5px;"
+        "text-transform:uppercase;letter-spacing:.04em;'>"
+        f"{escape(label)}</div>"
+        f"<div style='color:{colour};font-weight:900;font-size:13px;"
+        f"margin-top:1px;'>{escape(value)}</div>{note_html}</div>"
+    )
+
+
+def render_lsoa_school_panel(
+    cfg: Dict[str, str], lsoa_code: str
+) -> None:
+    """Open one LSOA: its own figures, then a card per school inside it.
+
+    Deliberately below the map rather than inside the hover card. A card that
+    grew with the number of schools would cover the region it describes; a
+    panel can be as tall as it needs to be.
+    """
+    if not lsoa_code:
+        return
+    try:
+        rows = schools_in_lsoas(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            (str(lsoa_code),),
+        )
+    except Exception as exc:
+        st.warning(f"Could not load the schools for {lsoa_code}: {exc}")
+        return
+
+    DEP_LABEL = {
+        "high_deprivation": "High",
+        "medium_deprivation": "Medium",
+        "low_deprivation": "Low",
+        "unknown": "Unknown",
+    }
+    DEP_COLOUR = {
+        "high_deprivation": "#e11d48",
+        "medium_deprivation": "#ff8a00",
+        "low_deprivation": "#22c55e",
+        "unknown": "#94a3b8",
+    }
+
+    if rows.empty:
+        st.markdown(
+            "<div style='background:#fff;border:1px solid #e5e7eb;"
+            "border-radius:14px;padding:14px 16px;margin:.5rem 0;'>"
+            f"<div style='font-weight:900;color:{C_HEAD};font-size:15px;'>"
+            f"{escape(str(lsoa_code))}</div>"
+            f"<div style='color:{C_MUTED};font-size:12.5px;margin-top:4px;'>"
+            "No school is located inside this LSOA. Its deprivation figures "
+            "still count in the answer; only school indicators are absent."
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    head = rows.iloc[0]
+    dep_key = str(head.get("deprivation") or "unknown")
+    dep_colour = DEP_COLOUR.get(dep_key, "#94a3b8")
+    decile = head.get("wimd_decile")
+    decile_txt = (
+        f"decile {int(float(decile))}" if pd.notna(decile) else "decile N/A"
+    )
+
+    def mean_of(col: str) -> Tuple[str, int]:
+        vals = pd.to_numeric(rows.get(col, pd.Series(dtype=float)),
+                             errors="coerce").dropna()
+        if vals.empty:
+            return "N/A", 0
+        return f"{vals.mean():.1f}", int(len(vals))
+
+    fsm_mean, fsm_n = mean_of("fsm_pct")
+    att_mean, att_n = mean_of("attendance_pct")
+    cap_mean, cap_n = mean_of("capped9_score")
+    total = len(rows)
+
+    # A mean over one school is not a mean, and 73% of Welsh LSOAs hold
+    # exactly one school, so the number behind every figure is stated.
+    def basis(n: int) -> str:
+        if n == 0:
+            return "no value recorded"
+        if n == 1:
+            return "one school"
+        return f"mean of {n} schools"
+
+    header = (
+        "<div style='background:#fff;border:1px solid #e5e7eb;"
+        "border-radius:16px;padding:14px 16px;margin:.6rem 0 .5rem;"
+        "box-shadow:0 6px 18px rgba(15,23,42,.05);'>"
+        "<div style='display:flex;align-items:baseline;gap:10px;"
+        "flex-wrap:wrap;'>"
+        f"<div style='font-size:16px;font-weight:900;color:{C_HEAD};'>"
+        f"{escape(str(head.get('lsoa_name') or lsoa_code))}</div>"
+        f"<div style='font-size:11.5px;color:{C_MUTED};'>"
+        f"{escape(str(lsoa_code))}</div>"
+        f"<div style='margin-left:auto;font-size:11.5px;font-weight:800;"
+        f"color:#fff;background:{dep_colour};border-radius:999px;"
+        f"padding:2px 10px;'>"
+        f"{escape(DEP_LABEL.get(dep_key, 'Unknown'))} &middot; "
+        f"{escape(decile_txt)}</div></div>"
+        "<div style='display:grid;grid-template-columns:repeat(4,1fr);"
+        "gap:6px;margin-top:10px;'>"
+        + _detail_metric("Schools", str(total), C_HEAD)
+        + _detail_metric(
+            "FSM", "N/A" if fsm_mean == "N/A" else f"{fsm_mean}%",
+            C_FSM, basis(fsm_n))
+        + _detail_metric(
+            "Attendance", "N/A" if att_mean == "N/A" else f"{att_mean}%",
+            C_ATT, basis(att_n))
+        + _detail_metric("Capped 9", cap_mean, C_PERF, basis(cap_n))
+        + "</div></div>"
+    )
+    st.markdown(header, unsafe_allow_html=True)
+
+    def val(v: Any, suffix: str = "") -> str:
+        return "N/A" if pd.isna(v) else f"{float(v):.1f}{suffix}"
+
+    cards = []
+    for _, r in rows.iterrows():
+        pupils = r.get("pupils")
+        pupils_txt = "N/A" if pd.isna(pupils) else f"{int(float(pupils)):,}"
+        sub = " · ".join(
+            str(x) for x in [r.get("phase"), r.get("language_medium")]
+            if x and str(x) != "nan"
+        )
+        cards.append(
+            "<div style='background:#fff;border:1px solid #e5e7eb;"
+            "border-left:4px solid " + dep_colour + ";border-radius:14px;"
+            "padding:12px 13px;'>"
+            f"<div style='font-size:13.5px;font-weight:900;color:{C_HEAD};"
+            f"line-height:1.3;'>{escape(str(r.get('school') or ''))}</div>"
+            f"<div style='font-size:10.5px;color:{C_MUTED};"
+            f"margin:2px 0 8px;'>{escape(sub) or '&nbsp;'}</div>"
+            "<div style='display:grid;grid-template-columns:1fr 1fr;"
+            "gap:5px;'>"
+            + _detail_metric("FSM", val(r.get("fsm_pct"), "%"), C_FSM)
+            + _detail_metric(
+                "Attendance", val(r.get("attendance_pct"), "%"), C_ATT)
+            + _detail_metric("Capped 9", val(r.get("capped9_score")), C_PERF)
+            + _detail_metric("Pupils", pupils_txt, C_PUP)
+            + "</div></div>"
+        )
+
+    columns = 3 if total >= 3 else max(1, total)
+    st.markdown(
+        f"<div style='display:grid;grid-template-columns:repeat({columns},"
+        "minmax(0,1fr));gap:10px;margin-bottom:.6rem;'>"
+        + "".join(cards)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    if cap_n == 0:
+        st.caption(
+            "Capped 9 is published for secondary schools only, so it is "
+            "absent here rather than missing."
+        )
+
+
+def lsoa_detail_selector(
+    cfg: Dict[str, str],
+    codes: List[str],
+    labels: Dict[str, str],
+    key: str,
+) -> None:
+    """Choose one LSOA and open its school panel; empty choice closes it.
+
+    Clicking a region directly needs a Streamlit version that supports
+    selection events on pydeck charts, which cannot be assumed on the
+    deployment, so the selector is the reliable path and always present.
+    """
+    if not codes:
+        return
+    options = [""] + sorted(set(str(c) for c in codes if c))
+    if len(options) <= 1:
+        return
+
+    def fmt(code: str) -> str:
+        if not code:
+            return "Select an area to see its schools"
+        name = labels.get(code)
+        return f"{name} | {code}" if name else code
+
+    chosen = st.selectbox(
+        "Schools inside an area",
+        options,
+        format_func=fmt,
+        key=key,
+        help=(
+            "The card on the map reports how many schools an area holds and "
+            "their averages. Open an area here to see the schools themselves."
+        ),
+    )
+    if chosen:
+        render_lsoa_school_panel(cfg, chosen)
+
+
 def provenance_badge(provenance: str) -> str:
     p = provenance.lower()
     cls = "native" if "native" in p and "geometry" not in p else "geometry" if "geometry" in p else "derived"
@@ -2680,7 +2961,10 @@ def render_school_map(
                         "code": prow.get("code"),
                         "cluster_size": int(prow.get("cluster_size", 0)),
                         "schools_count": prow.get("schools_count", 0),
-                        "schools_list": prow.get("schools_list", "—"),
+                        "schools_basis": prow.get(
+                            "schools_basis", "Open the area below for its "
+                            "schools"
+                        ),
                         "fsm_avg": prow.get("fsm_avg", "N/A"),
                         "att_avg": prow.get("att_avg", "N/A"),
                         "deprivation_label": DEP_LABEL.get(
@@ -2756,8 +3040,8 @@ def render_school_map(
                 f"<div style='font-size:13px;font-weight:800;"
                 f"color:{C_ATT};'>{{att_avg}}</div></div>"
                 "</div>"
-                f"<div style='font-size:10.5px;color:{C_MUTED};"
-                "margin-top:7px;line-height:1.45;'>{schools_list}</div>"
+                f"<div style='font-size:10px;color:{C_MUTED};"
+                "margin-top:7px;line-height:1.4;'>{schools_basis}</div>"
                 "</div>"
             ),
             "style": {
@@ -3942,14 +4226,37 @@ def page_scq_demonstrator(
                         params.get("lsoa_b"),
                     ],
                 )
-                display_df(result_df)
+                display_df(add_school_names_column(cfg, result_df))
                 if SHOW_QUERIES:
                     with st.expander(t("show_query")):
                         st.code(active_cypher.strip(), language="cypher")
 
             with tab_evidence:
                 st.metric(t("metric_pairs"), len(evidence_df))
-                display_df(evidence_df)
+                if "nearby_lsoa_code" in evidence_df.columns:
+                    ev = evidence_df.rename(
+                        columns={"nearby_lsoa_code": "lsoa_code"}
+                    )
+                    ev = add_school_names_column(cfg, ev).rename(
+                        columns={"lsoa_code": "nearby_lsoa_code"}
+                    )
+                    lsoa_detail_selector(
+                        cfg,
+                        [str(c) for c in ev["nearby_lsoa_code"].dropna()],
+                        dict(
+                            zip(
+                                ev["nearby_lsoa_code"].astype(str),
+                                ev.get(
+                                    "nearby_lsoa_name",
+                                    ev["nearby_lsoa_code"],
+                                ).astype(str),
+                            )
+                        ),
+                        key="detail_SCQ8_evidence",
+                    )
+                    display_df(ev)
+                else:
+                    display_df(evidence_df)
                 if SHOW_QUERIES:
                     with st.expander(t("show_query")):
                         st.code(evidence_cypher.strip(), language="cypher")
@@ -3974,8 +4281,22 @@ def page_scq_demonstrator(
                     params.get("lsoa_b"),
                 ],
             )
+            if "lsoa_code" in result_df.columns:
+                lsoa_detail_selector(
+                    cfg,
+                    [str(c) for c in result_df["lsoa_code"].dropna()],
+                    dict(
+                        zip(
+                            result_df["lsoa_code"].astype(str),
+                            result_df.get(
+                                "lsoa_name", result_df["lsoa_code"]
+                            ).astype(str),
+                        )
+                    ),
+                    key=f"detail_{scq_key}",
+                )
             render_result_reading(result_df, scq_key, cfg)
-            display_df(result_df)
+            display_df(add_school_names_column(cfg, result_df))
 
         if SCQ_WARRANT.get(scq_key) or SCQ_NO_WARRANT.get(scq_key):
             st.markdown("---")
@@ -5886,13 +6207,9 @@ ORDER BY cluster_size DESC, cluster_id
             if not polygon_df.empty:
                 summary_rows = []
                 for code, grp in map_df.groupby(map_df["lsoa_code"].astype(str)):
-                    name_col = (
-                        "school" if "school" in grp.columns else "name"
-                    )
-                    names = [
-                        str(n) for n in grp[name_col].head(4).tolist()
-                    ] if name_col in grp.columns else []
-                    more = len(grp) - len(names)
+                    # School names are no longer gathered here: the hover
+                    # card must not grow with the number of schools, so
+                    # identities live in the panel opened below the map.
                     fsm_vals = pd.to_numeric(
                         grp["fsm_pct"] if "fsm_pct" in grp.columns
                         else pd.Series(dtype=float),
@@ -5903,12 +6220,22 @@ ORDER BY cluster_size DESC, cluster_id
                         else pd.Series(dtype=float),
                         errors="coerce",
                     )
+                    n_fsm = int(fsm_vals.notna().sum())
+                    n_att = int(att_vals.notna().sum())
+                    # 73% of Welsh LSOAs hold exactly one school, so a
+                    # "mean" is often a single value. The basis is stated
+                    # rather than left to be assumed.
+                    basis = (
+                        f"FSM from {n_fsm} school"
+                        + ("s" if n_fsm != 1 else "")
+                        + f", attendance from {n_att}"
+                        + " \u00b7 open the area below for the schools"
+                    )
                     summary_rows.append(
                         {
                             "code": code,
                             "schools_count": int(len(grp)),
-                            "schools_list": ", ".join(names)
-                            + (f" and {more} more" if more > 0 else ""),
+                            "schools_basis": basis,
                             "fsm_avg": (
                                 f"{fsm_vals.mean():.1f}%"
                                 if fsm_vals.notna().any()
@@ -5926,7 +6253,7 @@ ORDER BY cluster_size DESC, cluster_id
                     columns=[
                         "code",
                         "schools_count",
-                        "schools_list",
+                        "schools_basis",
                         "fsm_avg",
                         "att_avg",
                     ],
@@ -5937,9 +6264,9 @@ ORDER BY cluster_size DESC, cluster_id
                 polygon_df["schools_count"] = (
                     polygon_df["schools_count"].fillna(0).astype(int)
                 )
-                polygon_df["schools_list"] = polygon_df["schools_list"].fillna(
-                    "No school inside this LSOA"
-                )
+                polygon_df["schools_basis"] = polygon_df[
+                    "schools_basis"
+                ].fillna("No school inside this LSOA")
                 polygon_df["fsm_avg"] = polygon_df["fsm_avg"].fillna("N/A")
                 polygon_df["att_avg"] = polygon_df["att_avg"].fillna("N/A")
         except Exception as exc:
@@ -5978,10 +6305,24 @@ ORDER BY cluster_size DESC, cluster_id
             )
     if cluster_only:
         st.caption(
-            "Cluster regions are shaded by size — hover a region to see the "
-            "schools inside it. School pins return in Standard search."
+            "Cluster regions are shaded by deprivation level. Hover a region "
+            "for its counts and averages, then open it below to see the "
+            "schools by name. School pins return in Standard search."
         )
     render_school_map(map_df, selected_school, polygon_df, cluster_only)
+
+    if cluster_only and polygon_df is not None and not polygon_df.empty:
+        lsoa_detail_selector(
+            cfg,
+            [str(c) for c in polygon_df["code"].dropna()],
+            dict(
+                zip(
+                    polygon_df["code"].astype(str),
+                    polygon_df["name"].fillna(polygon_df["code"]).astype(str),
+                )
+            ),
+            key="detail_cluster_map",
+        )
 
     if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
