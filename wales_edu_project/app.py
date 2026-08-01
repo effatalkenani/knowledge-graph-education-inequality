@@ -4695,10 +4695,15 @@ def render_admin_containment_map(
     ]
 
     layers = []
-    # Containers first so the contained units sit on top of them.
-    for rows_, layer_id in ((containers, "admin-container"),
-                            (contained, "admin-contained"),
-                            (outline_rows, "admin-container-outline")):
+    # Containers first so the contained units sit on top of them. The outline
+    # copy sits above everything and must NOT be pickable: deck.gl picks by
+    # polygon area, not by stroke, so a transparent container drawn on top
+    # would swallow every hover and report the parent for each child.
+    for rows_, layer_id, pickable in (
+        (containers, "admin-container", True),
+        (contained, "admin-contained", True),
+        (outline_rows, "admin-container-outline", False),
+    ):
         if rows_:
             layers.append(
                 pdk.Layer(
@@ -4712,8 +4717,8 @@ def render_admin_containment_map(
                     line_width_min_pixels=1,
                     stroked=True,
                     filled=True,
-                    pickable=True,
-                    auto_highlight=True,
+                    pickable=pickable,
+                    auto_highlight=pickable,
                     highlight_color=[251, 191, 36, 170],
                 )
             )
