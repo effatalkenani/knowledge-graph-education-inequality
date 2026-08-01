@@ -2179,6 +2179,66 @@ C_PERF = "#2563eb"
 C_TRAN = "#db2777"
 
 
+def _school_card_fields(summary: Dict[str, Any]) -> Dict[str, str]:
+    """Hover-card strings for one LSOA's schools, fixed in number.
+
+    The card never lists school names: it would grow with the number of
+    schools and cover the region it describes. Names live in the panel
+    opened by clicking the region.
+    """
+    if not summary:
+        return {
+            "schools_n": "0",
+            "fsm_txt": "N/A",
+            "fsm_basis": "no school in this LSOA",
+            "att_txt": "N/A",
+            "att_basis": "no school in this LSOA",
+            "cap_txt": "N/A",
+            "cap_basis": "no school in this LSOA",
+        }
+    return {
+        "schools_n": str(int(summary.get("school_count") or 0)),
+        "fsm_txt": _fmt_mean(summary.get("fsm_avg"), summary.get("fsm_n"), "%"),
+        "fsm_basis": _mean_basis(summary.get("fsm_n")),
+        "att_txt": _fmt_mean(summary.get("att_avg"), summary.get("att_n"), "%"),
+        "att_basis": _mean_basis(summary.get("att_n")),
+        "cap_txt": _fmt_mean(summary.get("cap_avg"), summary.get("cap_n")),
+        "cap_basis": _mean_basis(summary.get("cap_n")),
+    }
+
+
+def _school_tooltip_block() -> str:
+    """The schools half of a region hover card: four fixed cells."""
+    def cell(label: str, value_key: str, basis_key: str, colour: str) -> str:
+        return (
+            "<div style='background:rgba(248,250,252,.75);border-radius:8px;"
+            "padding:5px 7px;'>"
+            f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+            "text-transform:uppercase;letter-spacing:.05em;'>"
+            f"{label}</div>"
+            f"<div style='font-size:13px;font-weight:800;color:{colour};'>"
+            "{" + value_key + "}</div>"
+            f"<div style='font-size:8.5px;color:{C_MUTED};'>"
+            "{" + basis_key + "}</div></div>"
+        )
+
+    return (
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:5px;'>"
+        + "<div style='background:rgba(248,250,252,.75);border-radius:8px;"
+          "padding:5px 7px;'>"
+        + f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
+          "text-transform:uppercase;letter-spacing:.05em;'>Schools</div>"
+        + f"<div style='font-size:13px;font-weight:800;color:{C_HEAD};'>"
+          "{schools_n}</div></div>"
+        + cell("FSM", "fsm_txt", "fsm_basis", C_FSM)
+        + cell("Attendance", "att_txt", "att_basis", C_ATT)
+        + cell("Capped 9", "cap_txt", "cap_basis", C_PERF)
+        + "</div>"
+        + f"<div style='font-size:9.5px;color:{C_MUTED};margin-top:7px;'>"
+          "Click the region to see the schools by name.</div>"
+    )
+
+
 # LSOA boundaries are stored in the graph as WKT in British National Grid
 # (EPSG:27700) because load_to_neo4j.py reprojects everything to BNG before
 # doing point-in-polygon. deck.gl needs lon/lat, so grid metres are converted
@@ -2349,46 +2409,6 @@ def schools_in_lsoas(
     )
 
 
-def school_names_by_lsoa(
-    cfg: Dict[str, str], codes: List[str]
-) -> Dict[str, str]:
-    """Map each LSOA code to its school names, for the results table."""
-    if not codes:
-        return {}
-    try:
-        rows = schools_in_lsoas(
-            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
-            tuple(sorted(set(codes))),
-        )
-    except Exception:
-        return {}
-    if rows.empty:
-        return {}
-    return {
-        str(code): "; ".join(str(n) for n in grp["school"].tolist())
-        for code, grp in rows.groupby(rows["lsoa_code"].astype(str))
-    }
-
-
-def add_school_names_column(
-    cfg: Dict[str, str], df: pd.DataFrame
-) -> pd.DataFrame:
-    """Add a Schools column naming the schools behind each row's count."""
-    if df is None or df.empty or "lsoa_code" not in df.columns:
-        return df
-    if "school_count" not in df.columns:
-        return df
-    codes = [str(c) for c in df["lsoa_code"].dropna().tolist()]
-    names = school_names_by_lsoa(cfg, codes)
-    if not names:
-        return df
-    out = df.copy()
-    out["schools"] = (
-        out["lsoa_code"].astype(str).map(names).fillna("No school in this LSOA")
-    )
-    return out
-
-
 def _detail_metric(label: str, value: str, colour: str, note: str = "") -> str:
     note_html = (
         f"<div style='font-size:9.5px;color:{C_MUTED};margin-top:1px;'>"
@@ -2554,42 +2574,84 @@ def render_lsoa_school_panel(
         )
 
 
-def lsoa_detail_selector(
-    cfg: Dict[str, str],
-    codes: List[str],
-    labels: Dict[str, str],
-    key: str,
-) -> None:
-    """Choose one LSOA and open its school panel; empty choice closes it.
+def deck_chart_with_click(deck: Any, key: str) -> Dict[str, Any] | None:
+    """Render a deck and return the object the reader clicked, if any.
 
-    Clicking a region directly needs a Streamlit version that supports
-    selection events on pydeck charts, which cannot be assumed on the
-    deployment, so the selector is the reliable path and always present.
+    Selection events on pydeck charts arrived in a later Streamlit release
+    than the one this app was first written against, so the call is guarded:
+    on an older runtime the chart still renders and the click simply does
+    nothing, with one line on screen saying why.
     """
-    if not codes:
-        return
-    options = [""] + sorted(set(str(c) for c in codes if c))
-    if len(options) <= 1:
-        return
+    try:
+        event = st.pydeck_chart(
+            deck,
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="single-object",
+            key=key,
+        )
+    except TypeError:
+        st.pydeck_chart(deck, use_container_width=True)
+        st.caption(
+            "Clicking a region needs Streamlit 1.39 or later. Add "
+            "`streamlit>=1.39` to requirements.txt to enable it."
+        )
+        return None
+    try:
+        objects = event.selection["objects"]
+    except Exception:
+        return None
+    for _layer_id, picked in (objects or {}).items():
+        if picked:
+            return dict(picked[0])
+    return None
 
-    def fmt(code: str) -> str:
-        if not code:
-            return "Select an area to see its schools"
-        name = labels.get(code)
-        return f"{name} | {code}" if name else code
 
-    chosen = st.selectbox(
-        "Schools inside an area",
-        options,
-        format_func=fmt,
-        key=key,
-        help=(
-            "The card on the map reports how many schools an area holds and "
-            "their averages. Open an area here to see the schools themselves."
-        ),
+@st.cache_data(show_spinner=False, ttl=600)
+def lsoa_school_summary(
+    cfg_key: Tuple[str, str, str, str], codes: Tuple[str, ...]
+) -> pd.DataFrame:
+    """School count and metric means per LSOA, with the basis of each mean.
+
+    The count of schools carrying a value is returned alongside the mean
+    because 802 of the 1,094 Welsh LSOAs that hold a school hold exactly
+    one: a "mean" there is a single value, and the card says so.
+    """
+    cfg = {
+        "uri": cfg_key[0], "user": cfg_key[1],
+        "password": cfg_key[2], "database": cfg_key[3],
+    }
+    return run_cypher(
+        cfg,
+        """
+        MATCH (l:LSOA) WHERE l.code IN $codes
+        OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
+        RETURN l.code AS code,
+               count(DISTINCT s) AS school_count,
+               round(avg(s.fsm_pct), 1) AS fsm_avg,
+               count(s.fsm_pct) AS fsm_n,
+               round(avg(s.attendance_pct), 1) AS att_avg,
+               count(s.attendance_pct) AS att_n,
+               round(avg(s.capped9_score), 1) AS cap_avg,
+               count(s.capped9_score) AS cap_n
+        """,
+        {"codes": list(codes)},
     )
-    if chosen:
-        render_lsoa_school_panel(cfg, chosen)
+
+
+def _fmt_mean(value: Any, n: Any, suffix: str = "") -> str:
+    if pd.isna(value) or not n:
+        return "N/A"
+    return f"{float(value):.1f}{suffix}"
+
+
+def _mean_basis(n: Any) -> str:
+    n = int(n or 0)
+    if n == 0:
+        return "no value recorded"
+    if n == 1:
+        return "one school"
+    return f"mean of {n} schools"
 
 
 def provenance_badge(provenance: str) -> str:
@@ -2760,7 +2822,7 @@ def render_school_map(
     selected_school: Tuple[str, str],
     polygon_df: pd.DataFrame | None = None,
     polygons_only: bool = False,
-) -> None:
+) -> str | None:
     """Render the Wales school map with pydeck (deck.gl).
 
     Why pydeck and not Folium: pydeck ships inside Streamlit itself, so no
@@ -2982,6 +3044,7 @@ def render_school_map(
             layers.append(
                 pdk.Layer(
                     "PolygonLayer",
+                    id="cluster-regions",
                     data=poly_rows,
                     get_polygon="polygon",
                     get_fill_color="fill",
@@ -3041,7 +3104,8 @@ def render_school_map(
                 f"color:{C_ATT};'>{{att_avg}}</div></div>"
                 "</div>"
                 f"<div style='font-size:10px;color:{C_MUTED};"
-                "margin-top:7px;line-height:1.4;'>{schools_basis}</div>"
+                "margin-top:7px;line-height:1.4;'>{schools_basis}<br>"
+                "Click the region to see the schools by name.</div>"
                 "</div>"
             ),
             "style": {
@@ -3062,7 +3126,11 @@ def render_school_map(
         # Light canvas instead of the deck.gl default black background.
         parameters={"clearColor": [0.972, 0.980, 0.992, 1]},
     )
-    st.pydeck_chart(deck, use_container_width=True)
+    picked_region = None
+    if polygons_only:
+        picked_region = deck_chart_with_click(deck, key="cluster_map")
+    else:
+        st.pydeck_chart(deck, use_container_width=True)
 
     if polygons_only:
         st.markdown(
@@ -3121,6 +3189,8 @@ def render_school_map(
             """,
             unsafe_allow_html=True,
         )
+
+    return str(picked_region.get("code")) if picked_region else None
 
 
 
@@ -3576,7 +3646,8 @@ def render_answer_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
     focus_code: Any = None,
-) -> None:
+    key: str = "answer_map",
+) -> str | None:
     """Draw the LSOAs in an SCQ answer as coloured regions.
 
     Answer regions are shaded by deprivation level; the LSOA the question
@@ -3584,7 +3655,7 @@ def render_answer_map(
     is filtered here: the map shows exactly the rows the question returned.
     """
     if result_df is None or result_df.empty:
-        return
+        return None
 
     code_pattern = re.compile(r"^W\d{8}$")
 
@@ -3641,7 +3712,7 @@ def render_answer_map(
             excluded = set()
     codes = sorted(set(codes))
     if not codes:
-        return
+        return None
 
     # The answer itself is never truncated — only the drawing is. A question
     # like "not adjacent" returns nearly every LSOA in Wales, and rendering
@@ -3668,9 +3739,22 @@ def render_answer_map(
             tuple(codes),
         )
     except Exception:
-        return
+        return None
     if polys.empty:
-        return
+        return None
+
+    # School figures for every drawn region, so the hover card carries the
+    # education evidence and not only the deprivation label.
+    school_by_code: Dict[str, Dict[str, Any]] = {}
+    try:
+        sdf = lsoa_school_summary(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            tuple(codes),
+        )
+        for _, srow in sdf.iterrows():
+            school_by_code[str(srow["code"])] = srow.to_dict()
+    except Exception:
+        school_by_code = {}
 
     DEP_FILL = {
         "high_deprivation": [225, 29, 72],
@@ -3742,13 +3826,17 @@ def render_answer_map(
                         if is_excluded
                         else "In the answer"
                     ),
+                    **_school_card_fields(
+                        school_by_code.get(str(prow["code"]), {})
+                    ),
                 }
             )
     if not rows or not lats:
-        return
+        return None
 
     layer = pdk.Layer(
         "PolygonLayer",
+        id="answer-regions",
         data=rows,
         get_polygon="polygon",
         get_fill_color="fill",
@@ -3794,13 +3882,14 @@ def render_answer_map(
             f"<div style='font-size:10.5px;color:{C_MUTED};"
             "margin:2px 0 8px;'>{code} &middot; {role}</div>"
             "<div style='background:rgba(248,250,252,.75);border-radius:8px;"
-            "padding:5px 7px;'>"
+            "padding:5px 7px;margin-bottom:5px;'>"
             f"<div style='font-size:9px;font-weight:800;color:{C_MUTED};"
             "text-transform:uppercase;letter-spacing:.05em;'>Deprivation"
             "</div>"
             f"<div style='font-size:13px;font-weight:800;color:{C_DEP};'>"
             "{dep_label} &middot; {wimd_label}</div></div>"
-            "</div>"
+            + _school_tooltip_block()
+            + "</div>"
         ),
         "style": {
             "backgroundColor": "transparent",
@@ -3809,7 +3898,7 @@ def render_answer_map(
         },
     }
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
-    st.pydeck_chart(
+    picked = deck_chart_with_click(
         pdk.Deck(
             layers=[layer],
             initial_view_state=view,
@@ -3817,7 +3906,7 @@ def render_answer_map(
             tooltip=answer_tooltip,
             parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
         ),
-        use_container_width=True,
+        key=key,
     )
     st.markdown(
         "<div class='map-note'>"
@@ -3828,12 +3917,14 @@ def render_answer_map(
         "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
         "&nbsp;&middot;&nbsp; the dark region is the LSOA you selected; "
         "regions outlined in purple and left unfilled are excluded from the "
-        "answer. Hover any region for its details."
+        "answer. Hover a region for its figures, or click it to open the "
+        "schools inside it."
         "</div>",
         unsafe_allow_html=True,
     )
     if drawn_note:
         st.caption(drawn_note)
+    return str(picked.get("code")) if picked else None
 
 
 def page_scq_demonstrator(
@@ -4217,7 +4308,7 @@ def page_scq_demonstrator(
             with tab_answer:
                 st.metric(answer_metric, len(result_df))
                 st.caption(answer_caption)
-                render_answer_map(
+                clicked = render_answer_map(
                     cfg,
                     result_df,
                     [
@@ -4225,38 +4316,18 @@ def page_scq_demonstrator(
                         params.get("lsoa_a"),
                         params.get("lsoa_b"),
                     ],
+                    key="map_SCQ8_answer",
                 )
-                display_df(add_school_names_column(cfg, result_df))
+                if clicked:
+                    render_lsoa_school_panel(cfg, clicked)
+                display_df(result_df)
                 if SHOW_QUERIES:
                     with st.expander(t("show_query")):
                         st.code(active_cypher.strip(), language="cypher")
 
             with tab_evidence:
                 st.metric(t("metric_pairs"), len(evidence_df))
-                if "nearby_lsoa_code" in evidence_df.columns:
-                    ev = evidence_df.rename(
-                        columns={"nearby_lsoa_code": "lsoa_code"}
-                    )
-                    ev = add_school_names_column(cfg, ev).rename(
-                        columns={"lsoa_code": "nearby_lsoa_code"}
-                    )
-                    lsoa_detail_selector(
-                        cfg,
-                        [str(c) for c in ev["nearby_lsoa_code"].dropna()],
-                        dict(
-                            zip(
-                                ev["nearby_lsoa_code"].astype(str),
-                                ev.get(
-                                    "nearby_lsoa_name",
-                                    ev["nearby_lsoa_code"],
-                                ).astype(str),
-                            )
-                        ),
-                        key="detail_SCQ8_evidence",
-                    )
-                    display_df(ev)
-                else:
-                    display_df(evidence_df)
+                display_df(evidence_df)
                 if SHOW_QUERIES:
                     with st.expander(t("show_query")):
                         st.code(evidence_cypher.strip(), language="cypher")
@@ -4272,7 +4343,7 @@ def page_scq_demonstrator(
                 len(result_df),
             )
 
-            render_answer_map(
+            clicked = render_answer_map(
                 cfg,
                 result_df,
                 [
@@ -4280,23 +4351,12 @@ def page_scq_demonstrator(
                     params.get("lsoa_a"),
                     params.get("lsoa_b"),
                 ],
+                key=f"map_{scq_key}",
             )
-            if "lsoa_code" in result_df.columns:
-                lsoa_detail_selector(
-                    cfg,
-                    [str(c) for c in result_df["lsoa_code"].dropna()],
-                    dict(
-                        zip(
-                            result_df["lsoa_code"].astype(str),
-                            result_df.get(
-                                "lsoa_name", result_df["lsoa_code"]
-                            ).astype(str),
-                        )
-                    ),
-                    key=f"detail_{scq_key}",
-                )
+            if clicked:
+                render_lsoa_school_panel(cfg, clicked)
             render_result_reading(result_df, scq_key, cfg)
-            display_df(add_school_names_column(cfg, result_df))
+            display_df(result_df)
 
         if SCQ_WARRANT.get(scq_key) or SCQ_NO_WARRANT.get(scq_key):
             st.markdown("---")
@@ -4896,7 +4956,11 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         "for this LSOA."
                     )               
                 else:
-                    render_answer_map(cfg, df7, selected7[0])
+                    clicked7 = render_answer_map(
+                        cfg, df7, selected7[0], key="map_cross_scq7"
+                    )
+                    if clicked7:
+                        render_lsoa_school_panel(cfg, clicked7)
                     display_df(df7)
 
             else:
@@ -4952,7 +5016,11 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                     if df8.empty:
                         st.info(t("no_results_8"))
                     else:
-                        render_answer_map(cfg, df8, selected8[0])
+                        clicked8 = render_answer_map(
+                            cfg, df8, selected8[0], key="map_cross_scq8"
+                        )
+                        if clicked8:
+                            render_lsoa_school_panel(cfg, clicked8)
                         display_df(df8)
                     if SHOW_QUERIES:
                         with st.expander(t("show_query")):
@@ -6306,23 +6374,14 @@ ORDER BY cluster_size DESC, cluster_id
     if cluster_only:
         st.caption(
             "Cluster regions are shaded by deprivation level. Hover a region "
-            "for its counts and averages, then open it below to see the "
-            "schools by name. School pins return in Standard search."
+            "for its counts and averages, then click it to see the schools "
+            "by name. School pins return in Standard search."
         )
-    render_school_map(map_df, selected_school, polygon_df, cluster_only)
-
-    if cluster_only and polygon_df is not None and not polygon_df.empty:
-        lsoa_detail_selector(
-            cfg,
-            [str(c) for c in polygon_df["code"].dropna()],
-            dict(
-                zip(
-                    polygon_df["code"].astype(str),
-                    polygon_df["name"].fillna(polygon_df["code"]).astype(str),
-                )
-            ),
-            key="detail_cluster_map",
-        )
+    clicked_region = render_school_map(
+        map_df, selected_school, polygon_df, cluster_only
+    )
+    if clicked_region:
+        render_lsoa_school_panel(cfg, clicked_region)
 
     if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
