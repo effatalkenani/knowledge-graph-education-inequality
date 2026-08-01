@@ -1086,6 +1086,521 @@ SANDU_REFERENCE = (
 )
 
 
+# =============================================================================
+# TASK 3 EVIDENCE — the warrant document, per question
+# =============================================================================
+# One entry per SCQ, holding exactly what the Task 3 document holds: the
+# instantiated question, the warrant rows with their verbatim quotations and
+# pages, the critical assessment, and the analyst questions the relation
+# supports. Kept as data rather than prose so the demonstrator and the
+# document cannot drift apart.
+#
+# Only two sources meet the scope set by the supervisor — Welsh and concerned
+# with educational attainment. Where a row reads NO WARRANT FOUND the source
+# was examined and nothing supporting was located; the cell stays empty rather
+# than being filled with an adjacent concept.
+
+SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
+    "SCQ1": {
+        "instantiation": (
+            "Which LSOAs directly border a selected LSOA, and what WIMD / "
+            "school FSM / attendance / performance evidence is visible in "
+            "those neighbouring areas?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "implying that "
+                    + hl("neighbouring areas")
+                    + " are more likely to have similar educational outcomes"
+                ),
+                "page": "p. 11",
+                "warrant": (
+                    "<b>FORM:</b> warrants the analytical significance of "
+                    "neighbouring areas (direct adjacency). "
+                    "<b>CONTENT:</b> identifies educational outcomes as the "
+                    "relevant variable."
+                ),
+                "verdict": "Partial",
+                "verdict_note": (
+                    "Warrants general adjacency, not the specific "
+                    "topological touches boundary"
+                ),
+            },
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "Moran&rsquo;s I value (0.30, p &lt; 0.001) confirmed "
+                    + hl("spatial clustering")
+                    + " of educational outcomes."
+                ),
+                "page": "p. 8",
+                "warrant": (
+                    "<b>FORM:</b> statistical warrant for spatial clustering, "
+                    "which implies that adjacent regions share "
+                    "characteristics. <b>CONTENT:</b> warrants educational "
+                    "outcomes."
+                ),
+                "verdict": "Partial",
+                "verdict_note": (
+                    "Clustering and autocorrelation are a statistical proxy "
+                    "for adjacency"
+                ),
+            },
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    hl("eFSM")
+                    + " demonstrates substantial spatial variation "
+                    "(GWR: &minus;0.55 to 0.01; OLS: &minus;0.30)"
+                ),
+                "page": "p. 9",
+                "warrant": (
+                    "<b>CONTENT:</b> warrants the use of eFSM as a critical "
+                    "variable for spatial analysis."
+                ),
+                "verdict": "Partial",
+                "verdict_note": "Warrants the content variable only",
+            },
+        ],
+        "assessment": (
+            "The literature provides strong warrants for the analytical "
+            "importance of neighbouring areas and for variables such as eFSM "
+            "and educational outcomes. The support is partial because the "
+            "paper works through statistical clustering, or through "
+            "neighbouring areas in a general sense, rather than the specific "
+            "topological touches relation the SCQ framework defines."
+        ),
+        "questions": [
+            "Which LSOAs directly border the selected LSOA?",
+            "What are the deprivation levels of the directly neighbouring "
+            "LSOAs?",
+            "Which neighbouring LSOAs have the highest school FSM levels?",
+            "Which neighbouring LSOAs have low school attendance?",
+            "How does secondary-school performance differ across directly "
+            "neighbouring LSOAs?",
+            "Do directly neighbouring LSOAs have similar or contrasting WIMD "
+            "profiles?",
+        ],
+    },
+    "SCQ2": {
+        "instantiation": (
+            "Which LSOAs are near a selected LSOA \u2014 disjoint but joined "
+            "by a path of two touches edges \u2014 and what are the WIMD / "
+            "FSM / attendance / performance profiles of these extended "
+            "neighbours?"
+        ),
+        "rows": [
+            {
+                "source": "Bandyopadhyay et al. (2023)",
+                "quote": (
+                    "higher " + hl("access to services")
+                    + ", were more likely to achieve PLP than their peers"
+                ),
+                "page": "p. 1",
+                "warrant": (
+                    "<b>CONTENT:</b> an ADR Wales study of 159,131 Welsh "
+                    "pupils finding access to services significantly "
+                    "associated with attainment for FSM children "
+                    "(aOR 1.26, 95% CI 1.07&ndash;1.48; p. 8, Table 4). "
+                    "Proximity is warranted as a variable that matters for "
+                    "educational outcomes in Wales. The measure is a "
+                    "composite accessibility index, not a topological "
+                    "relation, so the <b>FORM</b> remains unwarranted."
+                ),
+                "verdict": "Partial",
+                "verdict_note": "Warrants content only",
+            },
+        ],
+        "assessment": (
+            "The content of this question is warranted and its form is not. "
+            "Bandyopadhyay et al. establish that accessibility matters for "
+            "attainment in Wales, which is what makes the profiles returned "
+            "here worth reading. Their measure, however, is a composite "
+            "accessibility index built from travel times, while this question "
+            "asks which regions are reachable in two touches-steps. The same "
+            "word, near, carries a metric meaning in that literature and a "
+            "topological one in the instrument."
+        ),
+        "questions": [
+            "Which LSOAs are graph-near the selected LSOA?",
+            "Which graph-near LSOAs are highly deprived?",
+            "Which graph-near LSOAs show high FSM levels?",
+            "Do graph-near LSOAs show low attendance or low secondary "
+            "performance?",
+            "How do the educational profiles of graph-near LSOAs compare with "
+            "the selected LSOA?",
+        ],
+    },
+    "SCQ3": {
+        "instantiation": (
+            "Which LSOA lies on a cycle-free path between LSOA X and LSOA Y, "
+            "and what are the WIMD / FSM / attendance / performance profiles "
+            "of these intermediate LSOAs?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": None,
+                "warrant": "No betweenness relation is defined.",
+                "verdict": "None",
+            },
+            {
+                "source": "Bandyopadhyay et al. (2023)",
+                "quote": None,
+                "warrant": "No betweenness relation is defined.",
+                "verdict": "None",
+            },
+        ],
+        "assessment": (
+            "Neither source poses a question about a region lying between "
+            "two others."
+        ),
+        "questions": [
+            "Which LSOAs lie between LSOA X and LSOA Y?",
+            "What is the shortest cycle-free path between two selected "
+            "LSOAs?",
+            "Which intermediate LSOAs on the path are highly deprived?",
+            "Does the path between two areas pass through contrasting "
+            "deprivation contexts?",
+        ],
+    },
+    "SCQ4": {
+        "instantiation": (
+            "Which LSOAs do NOT share a boundary with a selected LSOA, and "
+            "what are the WIMD / FSM / attendance / performance profiles of "
+            "these non-adjacent LSOAs?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": None,
+                "warrant": "No non-adjacency relation is defined.",
+                "verdict": "None",
+            },
+            {
+                "source": "Bandyopadhyay et al. (2023)",
+                "quote": None,
+                "warrant": "No non-adjacency relation is defined.",
+                "verdict": "None",
+            },
+        ],
+        "assessment": (
+            "Neither source attaches analytical meaning to the complement of "
+            "adjacent areas."
+        ),
+        "questions": [
+            "Which LSOAs are not adjacent to the selected LSOA?",
+            "Which non-adjacent LSOAs have high FSM levels?",
+            "Which non-adjacent LSOAs have low attendance?",
+            "Which non-adjacent LSOAs have similar deprivation profiles to "
+            "the selected LSOA?",
+            "Are there non-adjacent areas with worse secondary performance "
+            "than the selected area?",
+        ],
+    },
+    "SCQ5": {
+        "instantiation": (
+            "Which LSOAs are contained within a selected administrative unit "
+            "\u2014 a Ward or a Unitary Authority \u2014 and what are the "
+            "WIMD / FSM / attendance / performance profiles of these LSOAs?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "spatial analysis is undertaken at the "
+                    + hl("LSOA level")
+                ),
+                "page": "p. 4",
+                "warrant": (
+                    "<b>FORM:</b> implies LSOAs are the small-area units "
+                    "within the study area."
+                ),
+                "verdict": "Partial",
+                "verdict_note": (
+                    "Warrants the scale, not the specific hierarchical "
+                    "containment"
+                ),
+            },
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "the final linked dataset consisted of data on 31,295 "
+                    "pupils, and 1,625 LSOAs."
+                ),
+                "page": "p. 4",
+                "warrant": (
+                    "<b>CONTENT:</b> warrants the use of LSOAs as the primary "
+                    "unit for measuring pupil data."
+                ),
+                "verdict": "Partial",
+                "verdict_note": "Warrants content only",
+            },
+        ],
+        "assessment": (
+            "Containment is used here to define the scope of the study and "
+            "the scale of analysis rather than to warrant a strict "
+            "hierarchical query. LSOAs in any case intersect administrative "
+            "units more often than they nest inside them, which makes strict "
+            "containment difficult to warrant from this source."
+        ),
+        "questions": [
+            "Which administrative parent contains the selected Ward?",
+            "Which administrative parent contains the selected Community?",
+            "Which Unitary Authority contains this Ward?",
+            "What is the administrative parent chain of the selected unit?",
+        ],
+    },
+    "SCQ6": {
+        "instantiation": (
+            "Which administrative units \u2014 Wards or Unitary Authorities "
+            "\u2014 contain a selected LSOA, and what are the WIMD / FSM / "
+            "attendance / performance profiles of those containing units?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "revealed that schools in more "
+                    + hl("affluent areas")
+                    + " often outperformed"
+                ),
+                "page": "p. 2",
+                "warrant": (
+                    "<b>FORM:</b> implies schools, and by extension LSOAs, "
+                    "are within areas. <b>CONTENT:</b> warrants school "
+                    "performance and affluence."
+                ),
+                "verdict": "Partial",
+                "verdict_note": "Within is used loosely here",
+            },
+        ],
+        "assessment": (
+            "Where within appears it is approximate regional belonging rather "
+            "than topological nesting \u2014 consistent with LSOAs being "
+            "statistical units that do not follow administrative boundaries."
+        ),
+        "questions": [
+            "Which Wards are contained within the selected Unitary Authority?",
+            "Which Communities are contained within the selected "
+            "administrative unit?",
+            "What administrative units are nested inside this authority?",
+            "How is the selected administrative unit decomposed into "
+            "lower-level units?",
+        ],
+    },
+    "SCQ7": {
+        "instantiation": (
+            "Which administrative units \u2014 Wards or Communities \u2014 "
+            "intersect a selected LSOA, and how do the administrative-level "
+            "variables compare to the LSOA-level WIMD / FSM / attendance / "
+            "performance?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "school-level characteristics &hellip; recorded at a "
+                    + hl("different granularity")
+                    + " were not included into these small-area measures."
+                ),
+                "page": "p. 4",
+                "warrant": (
+                    "<b>FORM:</b> warrants the analytical challenge of "
+                    "different granularity, which is what justifies a "
+                    "cross-hierarchy query. <b>CONTENT:</b> warrants "
+                    "small-area variables."
+                ),
+                "verdict": "Partial",
+                "verdict_note": (
+                    "Warrants the need to cross levels, not the intersect "
+                    "relation itself"
+                ),
+            },
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": (
+                    "Relying solely on administrative units such as school "
+                    "districts or LSOAs may therefore "
+                    + hl("obscure fine-grained variations")
+                ),
+                "page": "p. 3",
+                "warrant": (
+                    "<b>FORM:</b> warrants the need to move between "
+                    "administrative units and LSOAs."
+                ),
+                "verdict": "Partial",
+                "verdict_note": "Warrants cross-hierarchy enquiry",
+            },
+            {
+                "source": "Bandyopadhyay et al. (2023)",
+                "quote": (
+                    hl("multilevel modelling")
+                    + " at various levels such as &ndash; LSOA, household "
+                    "and school"
+                ),
+                "page": "Discussion",
+                "warrant": (
+                    "<b>FORM:</b> identifies aggregated single-level analysis "
+                    "as a limitation of its own design and calls explicitly "
+                    "for modelling across LSOA, household and school. The "
+                    "specific intersect relation between administrative and "
+                    "statistical units is not named."
+                ),
+                "verdict": "Partial",
+                "verdict_note": (
+                    "Warrants cross-level integration, not the intersect "
+                    "relation"
+                ),
+            },
+        ],
+        "assessment": (
+            "This is the strongest warranted form. The two quotations from "
+            "Sandu et al. work as a pincer: the first shows that folding one "
+            "level of data into another at a different granularity fails, "
+            "which is a technical necessity, while the second argues that "
+            "relying on a single hierarchy obscures critical variation, which "
+            "is an analytical one. The third row adds a second, independent "
+            "ADR Wales study naming the same need as a limitation of its own "
+            "work, so the requirement this question addresses is one the "
+            "field states about itself. What the literature warrants is the "
+            "need to work across levels; the intersect relation that meets "
+            "that need is supplied by geometry. The sources give the reason, "
+            "the knowledge graph gives the mechanism."
+        ),
+        "questions": [
+            "Which Wards or Communities intersect the selected LSOA?",
+            "Which LSOAs intersect the selected Ward or Community?",
+            "Which administrative units intersect highly deprived LSOAs?",
+            "Which Wards or Communities intersect LSOAs with high school FSM?",
+            "Which administrative units intersect LSOAs with low attendance?",
+            "Which administrative units intersect LSOAs with low "
+            "secondary-school performance?",
+            "How do school indicators vary across LSOAs intersecting the same "
+            "administrative unit?",
+        ],
+    },
+    "SCQ8": {
+        "instantiation": (
+            "Which administrative units are near, but disjoint from, a "
+            "selected LSOA, and what are their WIMD / FSM / attendance / "
+            "performance profiles compared to the LSOA?"
+        ),
+        "rows": [
+            {
+                "source": "Sandu et al. (2026)",
+                "quote": None,
+                "warrant": (
+                    "No nearness relation between areas is defined."
+                ),
+                "verdict": "None",
+            },
+            {
+                "source": "Bandyopadhyay et al. (2023)",
+                "quote": None,
+                "warrant": (
+                    "No nearness relation between areas is defined."
+                ),
+                "verdict": "None",
+            },
+        ],
+        "assessment": (
+            "Neither source defines a proximity relation between "
+            "administrative and statistical units."
+        ),
+        "questions": [
+            "Which Wards or Communities are near, but do not intersect, the "
+            "selected LSOA?",
+            "Which LSOAs are near, but do not intersect, the selected Ward or "
+            "Community?",
+            "Which nearby administrative units are connected to highly "
+            "deprived LSOAs?",
+            "Which nearby administrative units are associated with LSOAs "
+            "showing high FSM?",
+            "Which nearby areas show low attendance or low secondary "
+            "performance?",
+            "Do nearby but non-intersecting administrative areas show similar "
+            "or contrasting education profiles?",
+        ],
+    },
+}
+
+
+TASK3_REFERENCES = [
+    "Sandu, A., Huxley, K., Keating, J., Whiffen, T., &amp; French, R. "
+    "(2026). Mapping Educational Inequalities in Wales: Spatial and "
+    "Socio-Economic Determinants of Pupils&rsquo; Attainment. "
+    "<i>Population, Space and Place</i> 32:e70225. doi: 10.1002/psp.70225",
+    "Bandyopadhyay, A., Whiffen, T., Fry, R., &amp; Brophy, S. (2023). How "
+    "does the local area deprivation influence life chances for children in "
+    "poverty in Wales: a record linkage cohort study. "
+    "<i>SSM &ndash; Population Health</i> 22, 101370. "
+    "doi: 10.1016/j.ssmph.2023.101370",
+]
+
+
+def render_scq_evidence(scq_key: str) -> None:
+    """Show the Task 3 warrant for one question, then the questions it answers.
+
+    Colours come from theme variables rather than fixed hex values, so the
+    block reads correctly in both the light and the dark skin.
+    """
+    ev = SCQ_EVIDENCE.get(scq_key)
+    if not ev:
+        return
+
+    st.markdown(
+        "<div class='ev-inst'><span class='ev-inst-label'>Instantiation"
+        "</span>" + ev["instantiation"] + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    cards = []
+    for row in ev["rows"]:
+        verdict = row.get("verdict", "None")
+        cls = {"Full": "ev-full", "Partial": "ev-partial"}.get(
+            verdict, "ev-none"
+        )
+        if row.get("quote"):
+            quote_html = (
+                "<div class='ev-quote'>&ldquo;" + row["quote"]
+                + "&rdquo;</div>"
+                + "<div class='ev-page'>" + str(row.get("page", "")) + "</div>"
+            )
+        else:
+            quote_html = "<div class='ev-empty'>NO WARRANT FOUND</div>"
+        note = row.get("verdict_note")
+        cards.append(
+            f"<div class='ev-card {cls}'>"
+            "<div class='ev-head'>"
+            f"<span class='ev-source'>{row['source']}</span>"
+            f"<span class='ev-verdict {cls}'>{verdict}</span></div>"
+            + quote_html
+            + f"<div class='ev-warrant'>{row['warrant']}</div>"
+            + (f"<div class='ev-note'>{note}</div>" if note else "")
+            + "</div>"
+        )
+
+    st.markdown(
+        "<div class='ev-block'>"
+        "<div class='ev-title'>Literature warrant</div>"
+        + "".join(cards)
+        + "<div class='ev-assess'><b>Critical assessment.</b> "
+        + ev["assessment"]
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    items = "".join(f"<li>{q}</li>" for q in ev["questions"])
+    st.markdown(
+        "<div class='ev-qs'><div class='ev-title'>Questions this relation "
+        "answers</div><ol>" + items + "</ol></div>",
+        unsafe_allow_html=True,
+    )
+
+
 SCQ_ANSWER_MODE = {
     "SCQ1": ("Computed-then-stored", "Paid once", "No"),
     "SCQ2": ("Computed-then-stored", "Paid once", "No"),
@@ -1228,7 +1743,7 @@ LIMIT $limit
         "relation": "LSOA_TOUCHES path",
         "provenance": "Derived from geometry-origin",
         "param_type": "lsoa_pair",
-        "result_label": "Shortest paths between the two LSOAs",
+        "result_label": "Cycle-free paths found",
         "evaluation_note": (
             "Demonstrator reasoning pattern: Implemented. "
             "Education-policy fit: Weak / optional."
@@ -1622,6 +2137,15 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         option_hover = "rgba(255,255,255,.09)"
         option_hover_text = "#f5d0b0"
         accent_grad = "linear-gradient(135deg,#9a3412,#c2410c)"
+        ev_bg = "rgba(255,255,255,.045)"
+        ev_border = "rgba(255,255,255,.12)"
+        ev_quote_bg = "rgba(255,255,255,.06)"
+        ev_full = "#7ddba1"
+        ev_partial = "#f0a868"
+        ev_none = "#9aa4b5"
+        ev_full_bg = "rgba(125,219,161,.14)"
+        ev_partial_bg = "rgba(240,168,104,.14)"
+        ev_none_bg = "rgba(154,164,181,.14)"
     else:
         # Cardiff University red, used as a soft warm tint rather than grey.
         app_bg = "linear-gradient(180deg,#fff6f6 0%,#fffafa 45%,#fff1f1 100%)"
@@ -1647,6 +2171,15 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         option_hover = "#fff7ed"
         option_hover_text = "#9a3412"
         accent_grad = "linear-gradient(135deg,#9a3412,#c2410c)"
+        ev_bg = "#ffffff"
+        ev_border = "#e8d5cf"
+        ev_quote_bg = "#faf7f5"
+        ev_full = "#15803d"
+        ev_partial = "#a8620a"
+        ev_none = "#5f6875"
+        ev_full_bg = "rgba(21,128,61,.10)"
+        ev_partial_bg = "rgba(168,98,10,.10)"
+        ev_none_bg = "rgba(95,104,117,.10)"
 
     st.session_state.map_tiles = map_tiles
     st.markdown(
@@ -1868,6 +2401,99 @@ div[data-testid="stCodeBlock"] code {{
   color:{text} !important;
   border-color:{panel_border} !important;
 }}
+/* ---- Task 3 evidence block ---- */
+.ev-inst {{
+  background:{ev_quote_bg};
+  border:1px solid {ev_border};
+  border-left:4px solid {field_focus};
+  border-radius:10px;
+  padding:.7rem .9rem;
+  margin:.5rem 0 .8rem;
+  font-size:.94rem;
+  line-height:1.55rem;
+  color:{text};
+}}
+.ev-inst-label {{
+  display:block;
+  font-size:.66rem;
+  font-weight:800;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:{field_focus};
+  margin-bottom:.25rem;
+}}
+.ev-block, .ev-qs {{
+  background:{ev_bg};
+  border:1px solid {ev_border};
+  border-radius:12px;
+  padding:.85rem 1rem;
+  margin:.55rem 0;
+  color:{text};
+}}
+.ev-title {{
+  font-size:.68rem;
+  font-weight:800;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:{muted};
+  margin-bottom:.6rem;
+}}
+.ev-card {{
+  border:1px solid {ev_border};
+  border-left:4px solid {ev_none};
+  border-radius:10px;
+  padding:.65rem .8rem;
+  margin-bottom:.55rem;
+}}
+.ev-card.ev-full {{ border-left-color:{ev_full}; }}
+.ev-card.ev-partial {{ border-left-color:{ev_partial}; }}
+.ev-head {{
+  display:flex; align-items:center; gap:.6rem;
+  flex-wrap:wrap; margin-bottom:.4rem;
+}}
+.ev-source {{ font-weight:800; font-size:.86rem; color:{text}; }}
+.ev-verdict {{
+  margin-left:auto;
+  font-size:.68rem; font-weight:800;
+  letter-spacing:.06em; text-transform:uppercase;
+  padding:.15rem .55rem; border-radius:999px;
+}}
+.ev-verdict.ev-full {{ color:{ev_full}; background:{ev_full_bg}; }}
+.ev-verdict.ev-partial {{ color:{ev_partial}; background:{ev_partial_bg}; }}
+.ev-verdict.ev-none {{ color:{ev_none}; background:{ev_none_bg}; }}
+.ev-quote {{
+  font-style:italic;
+  background:{ev_quote_bg};
+  border-radius:8px;
+  padding:.45rem .65rem;
+  font-size:.9rem;
+  line-height:1.5rem;
+  color:{text};
+}}
+.ev-page {{ font-size:.74rem; color:{muted}; margin:.25rem 0 .45rem; }}
+.ev-empty {{
+  display:inline-block;
+  font-size:.7rem; font-weight:800; letter-spacing:.1em;
+  color:{ev_none}; background:{ev_none_bg};
+  border:1px dashed {ev_border};
+  padding:.28rem .6rem; border-radius:6px;
+  margin-bottom:.45rem;
+}}
+.ev-warrant {{ font-size:.88rem; line-height:1.5rem; color:{text}; }}
+.ev-note {{ font-size:.78rem; color:{muted}; margin-top:.3rem; }}
+.ev-assess {{
+  background:{ev_quote_bg};
+  border-radius:10px;
+  padding:.65rem .8rem;
+  font-size:.88rem;
+  line-height:1.55rem;
+  color:{text};
+}}
+.ev-qs ol {{ margin:0; padding-left:1.2rem; }}
+.ev-qs li {{ font-size:.9rem; line-height:1.6rem; margin-bottom:.2rem; color:{text}; }}
+.ev-qs li::marker {{ color:{field_focus}; font-weight:800; }}
+mark {{ color:inherit; }}
+
 .map-note {{
   background:{panel_bg} !important;
   border:1px solid {panel_border} !important;
@@ -3927,6 +4553,211 @@ def render_answer_map(
     return str(picked.get("code")) if picked else None
 
 
+@st.cache_data(show_spinner=False, ttl=1800)
+def admin_polygons(
+    cfg_key: Tuple[str, str, str, str], uris: Tuple[str, ...]
+) -> pd.DataFrame:
+    """Boundary polygons for administrative units, by URI."""
+    cfg = {
+        "uri": cfg_key[0], "user": cfg_key[1],
+        "password": cfg_key[2], "database": cfg_key[3],
+    }
+    return run_cypher(
+        cfg,
+        """
+        MATCH (a:AdminUnit)
+        WHERE a.uri IN $uris AND a.wkt IS NOT NULL
+        RETURN a.uri AS uri,
+               coalesce(a.name, a.uri) AS name,
+               coalesce(a.type, 'Unknown') AS type,
+               a.wkt AS wkt
+        """,
+        {"uris": list(uris)},
+    )
+
+
+# Containment reads at a glance only if the container is lighter than the
+# thing it contains: the contained unit is drawn on top, so a dark container
+# would simply hide it. Hue carries the administrative level, lightness
+# carries the role in the answer.
+ADMIN_FILL = {
+    "UnitaryAuthority": [124, 58, 237],
+    "Ward": [37, 99, 235],
+    "Community": [13, 148, 136],
+    "Unknown": [100, 116, 139],
+}
+
+
+def render_admin_containment_map(
+    cfg: Dict[str, str],
+    result_df: pd.DataFrame,
+    focus_uri: str | None,
+    focus_contains: bool,
+    key: str = "admin_map",
+) -> None:
+    """Draw a containment answer: container pale, contained solid on top.
+
+    focus_contains is True for SCQ6, where the selected unit is the parent
+    and the answer rows are its children, and False for SCQ5, where the
+    selected unit is the child and the answer rows are its parents.
+    """
+    if result_df is None or result_df.empty or "uri" not in result_df.columns:
+        return
+
+    row_uris = [str(u) for u in result_df["uri"].dropna().tolist()]
+    if not row_uris:
+        return
+
+    # Rendering every child of a unitary authority would mean hundreds of
+    # polygons; the table above is never truncated, only the drawing is.
+    DRAW_CAP = 400
+    drawn_note = ""
+    if len(row_uris) > DRAW_CAP:
+        drawn_note = (
+            f"Showing {DRAW_CAP:,} of {len(row_uris):,} units on the map for "
+            "speed. The count above and the table below are the full answer."
+        )
+        stride = max(1, len(row_uris) // DRAW_CAP)
+        row_uris = row_uris[::stride][:DRAW_CAP]
+
+    wanted = list(row_uris)
+    if focus_uri:
+        wanted.append(str(focus_uri))
+
+    try:
+        polys = admin_polygons(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            tuple(sorted(set(wanted))),
+        )
+    except Exception as exc:
+        st.caption(f"Boundaries could not be loaded: {exc}")
+        return
+    if polys.empty:
+        return
+
+    row_set = set(row_uris)
+    containers, contained = [], []
+    lats: List[float] = []
+    lons: List[float] = []
+
+    for _, prow in polys.iterrows():
+        uri = str(prow["uri"])
+        is_focus = focus_uri is not None and uri == str(focus_uri)
+        # Whoever does the containing is drawn pale, regardless of which
+        # side of the question it sits on.
+        is_container = is_focus if focus_contains else (uri in row_set)
+        base = ADMIN_FILL.get(str(prow.get("type")), ADMIN_FILL["Unknown"])
+        for ring in _wkt_rings(prow.get("wkt")):
+            if len(ring) > 400:
+                ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
+            for pt in ring:
+                lons.append(pt[0]); lats.append(pt[1])
+            item = {
+                "polygon": ring,
+                "name": prow.get("name"),
+                "type": prow.get("type"),
+                "role": (
+                    "Contains the selected unit"
+                    if (is_container and not is_focus)
+                    else "The unit you selected"
+                    if is_focus
+                    else "Inside the selected unit"
+                ),
+            }
+            if is_container:
+                item["fill"] = base + [45]
+                item["line"] = base + [255]
+                item["width"] = 5
+                containers.append(item)
+            else:
+                item["fill"] = base + [170]
+                item["line"] = [17, 24, 39, 220]
+                item["width"] = 2
+                contained.append(item)
+
+    if not lats:
+        return
+
+    layers = []
+    # Containers first so the contained units sit on top of them.
+    for rows_, layer_id in ((containers, "admin-container"),
+                            (contained, "admin-contained")):
+        if rows_:
+            layers.append(
+                pdk.Layer(
+                    "PolygonLayer",
+                    id=layer_id,
+                    data=rows_,
+                    get_polygon="polygon",
+                    get_fill_color="fill",
+                    get_line_color="line",
+                    get_line_width="width",
+                    line_width_min_pixels=1,
+                    stroked=True,
+                    filled=True,
+                    pickable=True,
+                    auto_highlight=True,
+                    highlight_color=[251, 191, 36, 170],
+                )
+            )
+    if not layers:
+        return
+
+    span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
+    zoom = 12.2 if span < 0.02 else 10.8 if span < 0.06 else (
+        9.6 if span < 0.2 else 8.4 if span < 0.6 else 7.0
+    )
+    view = pdk.ViewState(
+        latitude=(max(lats) + min(lats)) / 2,
+        longitude=(max(lons) + min(lons)) / 2,
+        zoom=zoom, pitch=0, bearing=0,
+    )
+    tooltip = {
+        "html": (
+            "<div style='font-family:Segoe UI,Arial,sans-serif;width:215px;"
+            "background:rgba(255,255,255,.85);backdrop-filter:blur(3px);"
+            "border:1px solid rgba(30,41,59,.28);border-radius:14px;"
+            "padding:10px 12px;box-shadow:0 10px 26px rgba(15,23,42,.16);'>"
+            f"<div style='font-size:13.5px;font-weight:900;color:{C_HEAD};"
+            "line-height:1.3;'>{name}</div>"
+            f"<div style='font-size:10.5px;color:{C_MUTED};"
+            "margin:2px 0 6px;'>{type}</div>"
+            f"<div style='font-size:12px;font-weight:700;color:{C_WIMD};'>"
+            "{role}</div></div>"
+        ),
+        "style": {"backgroundColor": "transparent", "color": "#0f172a",
+                  "zIndex": "9999"},
+    }
+
+    st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=layers,
+            initial_view_state=view,
+            map_style="light",
+            tooltip=tooltip,
+            parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
+        ),
+        use_container_width=True,
+    )
+    st.markdown(
+        "<div class='map-note'>"
+        "<b>Containment:</b> the containing unit is drawn pale with a thick "
+        "outline; the unit or units inside it are filled solid on top. "
+        "Colour marks the level \u2014 "
+        "<span style='color:#7c3aed;font-size:16px;'>&#9679;</span> Unitary "
+        "Authority &nbsp; "
+        "<span style='color:#2563eb;font-size:16px;'>&#9679;</span> Ward "
+        "&nbsp; <span style='color:#0d9488;font-size:16px;'>&#9679;</span> "
+        "Community. Administrative units carry no WIMD value, so deprivation "
+        "is not shown here."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if drawn_note:
+        st.caption(drawn_note)
+
+
 def page_scq_demonstrator(
     cfg: Dict[str, str],
 ) -> None:
@@ -3961,52 +4792,7 @@ def page_scq_demonstrator(
     with left:
         st.subheader(scq_question(scq_key, meta))
         st.write(meta["keyword_sentence"])
-        gap = SCQ_NO_WARRANT.get(scq_key)
-        if gap:
-            st.markdown(
-                "<div style='border-right:3px solid #64748b;"
-                "background:rgba(100,116,139,.07);border-radius:8px;"
-                "padding:11px 14px;margin:10px 0;'>"
-                "<div style='font-size:11px;font-weight:800;"
-                "letter-spacing:.06em;opacity:.75;margin-bottom:5px;'>"
-                "NO QUESTION FROM THE LITERATURE</div>"
-                f"<div style='font-weight:700;margin-bottom:5px;'>"
-                f"{gap['status']}</div>"
-                f"<div>{gap['reason']}</div>"
-                f"<div style='font-size:12.5px;opacity:.8;margin-top:7px;'>"
-                f"<b>How it is handled:</b> {gap['consequence']}</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-        warrant = SCQ_WARRANT.get(scq_key)
-        if warrant:
-            def cited(quote: str, page: str) -> str:
-                return (
-                    f"<div style='font-style:italic;'>&ldquo;{quote}"
-                    "&rdquo;</div>"
-                    "<div style='font-size:12px;opacity:.75;"
-                    f"margin:3px 0 8px;'>(Sandu <i>et al.</i>, {page})</div>"
-                )
-
-            quotes_html = cited(warrant["quote"], warrant["page"])
-            if warrant.get("quote2"):
-                quotes_html += cited(warrant["quote2"], warrant["page2"])
-
-            st.markdown(
-                "<div style='border-right:3px solid #c2410c;"
-                "background:rgba(194,65,12,.05);border-radius:8px;"
-                "padding:11px 14px;margin:10px 0;'>"
-                "<div style='font-size:11px;font-weight:800;"
-                "letter-spacing:.06em;opacity:.75;margin-bottom:5px;'>"
-                "WHY THIS IS A REAL QUESTION</div>"
-                f"{quotes_html}"
-                f"<div>{warrant['why']}</div>"
-                "<div style='font-size:12.5px;opacity:.8;margin-top:7px;'>"
-                f"<b>Method note:</b> {warrant['method_note']}</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
+        render_scq_evidence(scq_key)
 
         mode, cost, counts = SCQ_ANSWER_MODE.get(
             scq_key, ("Computed-then-stored", "Paid once", "No")
@@ -4347,31 +5133,106 @@ def page_scq_demonstrator(
                 "Result rows returned",
             )
 
-            st.metric(
-                result_label,
-                len(result_df),
-            )
+            if scq_key == "SCQ3":
+                # The question asks WHICH LSOAs lie between, so the answer is
+                # a set of areas, not a count of routes. The same area recurs
+                # across many paths, so the path count alone overstates the
+                # size of the answer and reads as if the whole neighbourhood
+                # were "between" the two endpoints.
+                between_codes: List[str] = []
+                min_hops_codes: List[str] = []
+                if not result_df.empty and "between_lsoas" in result_df.columns:
+                    try:
+                        min_hops = int(
+                            pd.to_numeric(result_df["hops"], errors="coerce").min()
+                        )
+                    except Exception:
+                        min_hops = None
+                    for _, prow in result_df.iterrows():
+                        codes_here = [
+                            str(item.get("code"))
+                            for item in (prow.get("between_lsoas") or [])
+                            if isinstance(item, dict) and item.get("code")
+                        ]
+                        between_codes.extend(codes_here)
+                        if min_hops is not None and prow.get("hops") == min_hops:
+                            min_hops_codes.extend(codes_here)
+                distinct_between = sorted(set(between_codes))
+                distinct_direct = sorted(set(min_hops_codes))
 
-            clicked = render_answer_map(
-                cfg,
-                result_df,
-                [
-                    params.get("lsoa"),
-                    params.get("lsoa_a"),
-                    params.get("lsoa_b"),
-                ],
-                key=f"map_{scq_key}",
-            )
-            if clicked:
-                render_lsoa_school_panel(cfg, clicked)
+                m1, m2, m3 = st.columns(3)
+                m1.metric(
+                    "LSOAs lying between",
+                    len(distinct_between),
+                    help=(
+                        "Distinct areas appearing on at least one cycle-free "
+                        "path. This is the answer to the question as posed."
+                    ),
+                )
+                m2.metric(
+                    "On a shortest path",
+                    len(distinct_direct),
+                    help=(
+                        "Of those, the areas that lie on the shortest route "
+                        "between the two endpoints. The remainder sit on "
+                        "longer detours, which is why the drawn region can "
+                        "look as though it surrounds the endpoints rather "
+                        "than lying between them."
+                    ),
+                )
+                m3.metric(
+                    result_label,
+                    len(result_df),
+                    help=(
+                        "Routes, not areas. One area recurs across many "
+                        "routes, so this count grows sharply with the hop "
+                        "bound while the set of areas does not."
+                    ),
+                )
+                st.caption(
+                    "The paper's definition is any cycle-free path, so every "
+                    "route is retained. The first figure is the answer; the "
+                    "second shows how much of it lies on the direct route."
+                )
+            else:
+                st.metric(
+                    result_label,
+                    len(result_df),
+                )
+
+            if scq_key in ("SCQ5", "SCQ6"):
+                # Containment inside the administrative hierarchy nests
+                # cleanly, which is exactly the contrast with SCQ7 that the
+                # reclassification rests on, so it is worth drawing.
+                render_admin_containment_map(
+                    cfg,
+                    result_df,
+                    params.get("admin"),
+                    focus_contains=(scq_key == "SCQ6"),
+                    key=f"map_{scq_key}",
+                )
+            else:
+                clicked = render_answer_map(
+                    cfg,
+                    result_df,
+                    [
+                        params.get("lsoa"),
+                        params.get("lsoa_a"),
+                        params.get("lsoa_b"),
+                    ],
+                    key=f"map_{scq_key}",
+                )
+                if clicked:
+                    render_lsoa_school_panel(cfg, clicked)
             render_result_reading(result_df, scq_key, cfg)
             display_df(result_df)
 
-        if SCQ_WARRANT.get(scq_key) or SCQ_NO_WARRANT.get(scq_key):
+        if SCQ_EVIDENCE.get(scq_key):
             st.markdown("---")
+            refs = "<br/>".join(TASK3_REFERENCES)
             st.markdown(
                 "<div style='font-size:12.5px;opacity:.75;line-height:1.9'>"
-                f"<b>Reference</b><br/>{SANDU_REFERENCE}"
+                f"<b>References</b><br/>{refs}"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -5523,17 +6384,14 @@ def page_map(cfg: Dict[str, str]) -> None:
             "All",
             "Distance-near (within 800m)",
             "Distance-far (no stop within 800m)",
-            "Graph-near (stop in a neighbouring LSOA)",
-            "Graph-far (no stop within two LSOA steps)",
         ],
         index=0,
         help=(
-            "Two different notions of proximity, kept apart on purpose. "
-            "Distance-near is a metric threshold: a stop within 800m, a "
-            "planning proxy that stays outside the completeness scoring. "
-            "Graph-near is the evaluation instrument's own definition: the "
-            "school's own LSOA has no stop, but an LSOA reachable within two "
-            "touches-steps does. Graph-far is beyond that reach."
+            "A metric threshold: whether a transport stop lies within 800m of "
+            "the school. This is a planning proxy and a third notion of "
+            "proximity, kept apart from the graph proximity the SCQ "
+            "questions use, and deliberately outside the completeness "
+            "scoring."
         ),
     )
     school_filters = st.sidebar.expander("School filters", expanded=False)
@@ -5710,44 +6568,6 @@ def page_map(cfg: Dict[str, str]) -> None:
             "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
             "}"
         )
-    elif transport.startswith("Graph-"):
-        stops_placed = int(
-            scalar(
-                cfg,
-                "MATCH (:TransportStop)-[:LOCATED_IN]->(:LSOA) "
-                "RETURN count(*)",
-                default=0,
-            )
-            or 0
-        )
-        if stops_placed == 0:
-            st.error(
-                "Graph-based transport proximity needs transport stops "
-                "placed inside LSOAs. Set RUN_STOP_LSOA_LINKS = True in "
-                "load_to_neo4j.py and run it against this database, then "
-                "reload. Until then use the distance-near options, which "
-                "work from the stored 800m DISTANCE_NEAR relation."
-            )
-            return
-        own_has_stop = (
-            "EXISTS { MATCH (l)<-[:LOCATED_IN]-(:TransportStop) }"
-        )
-        neighbour_has_stop = (
-            "EXISTS { "
-            "MATCH (l)-[:LSOA_TOUCHES*1..2]-(other:LSOA) "
-            "WHERE EXISTS { MATCH (other)<-[:LOCATED_IN]-(:TransportStop) } "
-            "}"
-        )
-        if transport.startswith("Graph-near"):
-            conditions.append(
-                f"(l IS NOT NULL AND NOT {own_has_stop} "
-                f"AND {neighbour_has_stop})"
-            )
-        else:
-            conditions.append(
-                f"(l IS NOT NULL AND NOT {own_has_stop} "
-                f"AND NOT {neighbour_has_stop})"
-            )
     cluster_df = pd.DataFrame()
     cluster_exact = True
     cluster_codes: List[str] = []
@@ -6195,7 +7015,9 @@ ORDER BY cluster_size DESC, cluster_id
     c1.metric("Schools matching filters", f"{total_schools:,}")
     c2.metric("Deprivation", dep_label)
     near_transport_count = int(summary.get("near_transport_schools") or 0)
-    if transport == "No transport stop within 800m":
+    # The label never matched the option text, so the "far" case always fell
+    # through to the near count. Matched to the two options that remain.
+    if transport == "Distance-far (no stop within 800m)":
         transport_value = total_schools - near_transport_count
     elif transport == "Distance-near (within 800m)":
         transport_value = total_schools
