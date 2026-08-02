@@ -1832,6 +1832,32 @@ def _nl_llm_key() -> str | None:
     return os.environ.get("OPENAI_API_KEY")
 
 
+def _nl_llm_base_url() -> str | None:
+    """Any OpenAI-compatible endpoint, so the provider is a setting.
+
+    Several providers, including Google's Gemini, expose an OpenAI-compatible
+    URL. Leaving this configurable means the parser can be pointed at a free
+    tier without touching the code.
+    """
+    try:
+        url = st.secrets.get("OPENAI_BASE_URL")
+        if url:
+            return str(url)
+    except Exception:
+        pass
+    return os.environ.get("OPENAI_BASE_URL") or None
+
+
+def _nl_llm_model() -> str:
+    try:
+        name = st.secrets.get("OPENAI_MODEL")
+        if name:
+            return str(name)
+    except Exception:
+        pass
+    return os.environ.get("OPENAI_MODEL", NL_LLM_MODEL)
+
+
 def llm_parse_question(
     text: str,
     lsoa_options: List[Tuple[str, str]] | None = None,
@@ -1852,7 +1878,7 @@ def llm_parse_question(
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=_nl_llm_key())
+        client = OpenAI(api_key=_nl_llm_key(), base_url=_nl_llm_base_url())
         system = (
             "You map an education-geography question onto exactly one of "
             "eight spatial competency forms and return JSON only, with no "
@@ -1872,7 +1898,7 @@ def llm_parse_question(
             '"reason": one short sentence}.'
         )
         response = client.chat.completions.create(
-            model=NL_LLM_MODEL,
+            model=_nl_llm_model(),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": text},
@@ -7086,7 +7112,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=_nl_llm_key())
+        client = OpenAI(api_key=_nl_llm_key(), base_url=_nl_llm_base_url())
         system = (
             "You read a question about schools in Wales and return JSON "
             "only, no prose and no code fence. Fields, all optional:\n"
@@ -7100,7 +7126,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"pupils". Use nothing outside these values.'
         )
         response = client.chat.completions.create(
-            model=NL_LLM_MODEL,
+            model=_nl_llm_model(),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": text},
