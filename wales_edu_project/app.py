@@ -2775,7 +2775,7 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         field_label = "#cbd3e1"
         option_hover = "rgba(255,255,255,.09)"
         option_hover_text = "#f5d0b0"
-        accent_grad = "linear-gradient(135deg,#9a3412,#c2410c)"
+        accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
         ev_bg = "rgba(255,255,255,.045)"
         ev_border = "rgba(255,255,255,.12)"
         ev_quote_bg = "rgba(255,255,255,.06)"
@@ -2809,7 +2809,7 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         field_label = "#7c2d12"
         option_hover = "#fff7ed"
         option_hover_text = "#9a3412"
-        accent_grad = "linear-gradient(135deg,#9a3412,#c2410c)"
+        accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
         ev_bg = "#ffffff"
         ev_border = "#e8d5cf"
         ev_quote_bg = "#faf7f5"
@@ -3040,6 +3040,30 @@ div[data-testid="stCodeBlock"] code {{
   color:{text} !important;
   border-color:{panel_border} !important;
 }}
+.hero-inst {{
+  font-size:.72rem; font-weight:800; letter-spacing:.16em;
+  text-transform:uppercase; opacity:.85; margin-bottom:.35rem;
+}}
+.hero-people {{
+  display:flex; flex-wrap:wrap; gap:1.6rem;
+  margin:.75rem 0 .5rem; font-size:.82rem; line-height:1.35rem;
+}}
+.hero-people b {{
+  font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+  opacity:.85;
+}}
+.hero-rule {{ margin-top:.35rem; }}
+
+/* Selected radio and tab labels kept legible on the dark skin, where the
+   accent fill is dark enough to swallow dark text. */
+div[role="radiogroup"] label[data-baseweb="radio"] div {{
+  color:{text} !important;
+}}
+.stTabs [aria-selected="true"] p {{ color:{text} !important; }}
+.stRadio label p, .stSelectbox label p, .stTextInput label p {{
+  color:{muted} !important;
+}}
+
 /* ---- natural-language search ---- */
 .nl-wrap {{
   background:{accent_grad};
@@ -3470,9 +3494,15 @@ def hero() -> None:
     st.markdown(
         """
 <div class="hero">
+  <div class="hero-inst">Cardiff University &middot; School of Computer Science and Informatics</div>
   <h1>Education Inequality Analysis with a Geospatial Knowledge Graph</h1>
-  <p><b>Wales YAGO2geo + LSOA Demonstrator</b> — task-aligned to the supervisor work plan.</p>
-  <p><b>Core evaluation rule:</b> Native model coverage is not the same as geometry-assisted demonstrator coverage.</p>
+  <p><b>Wales YAGO2geo + LSOA Demonstrator</b> &mdash; task-aligned to the supervisor work plan.</p>
+  <div class="hero-people">
+    <span><b>Student</b><br/>Afaf Alhajjaji &middot; MSc Computing</span>
+    <span><b>Supervisor</b><br/>Dr Alia Abdelmoty</span>
+    <span><b>Module</b><br/>CMT403 Dissertation</span>
+  </div>
+  <p class="hero-rule"><b>Core evaluation rule:</b> Native model coverage is not the same as geometry-assisted demonstrator coverage.</p>
 </div>
 """,
         unsafe_allow_html=True,
@@ -6993,8 +7023,9 @@ def parse_map_question(text: str) -> Dict[str, Any]:
     phases = [p for p in ("primary", "secondary", "special") if p in hits]
     if phases:
         out["conditions"].append(
+            "ANY(p IN $nl_phases WHERE "
             "toLower(coalesce(s.phase_group, s.phase, s.school_type)) "
-            "IN $nl_phases"
+            "CONTAINS p)"
         )
         out["params"]["nl_phases"] = phases
         out["chips"].append("phase = " + " / ".join(phases))
@@ -7201,8 +7232,9 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     ]
     if phases:
         out["conditions"].append(
+            "ANY(p IN $nl_phases WHERE "
             "toLower(coalesce(s.phase_group, s.phase, s.school_type)) "
-            "IN $nl_phases"
+            "CONTAINS p)"
         )
         out["params"]["nl_phases"] = phases
         out["chips"].append("phase = " + " / ".join(phases))
@@ -7319,7 +7351,10 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     with col_go:
         clear = st.button("Clear", use_container_width=True)
     if clear:
-        st.session_state["map_nl_question"] = ""
+        # Raised as a plain flag and applied at the top of the next run,
+        # before the text box is created. Writing to a widget's state after
+        # the widget exists is refused by Streamlit.
+        st.session_state["map_nl_clear"] = True
         st.rerun()
 
     llm_ready = nl_llm_available()
@@ -7460,6 +7495,10 @@ def page_map(cfg: Dict[str, str]) -> None:
     phases = [("All", "All")] + phase_opts
 
     st.sidebar.markdown("### Search type")
+    if st.session_state.pop("map_nl_clear", False):
+        st.session_state["map_nl_question"] = ""
+        st.session_state.pop("map_nl_applied", None)
+
     if st.session_state.pop("map_force_standard", False):
         st.session_state["map_search_mode"] = "Standard search"
 
