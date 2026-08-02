@@ -1607,6 +1607,7 @@ NL_RELATION_RULES: List[Tuple[str, List[str], str]] = [
         "SCQ6",
         [
             "contained within", "nested inside", "nested within",
+            "inside", "within", "what is in", "y tu mewn i",
             "decomposed into", "which wards are contained",
             "which communities are contained", "units inside",
             "wedi'u cynnwys",
@@ -1832,6 +1833,28 @@ def _nl_llm_key() -> str | None:
     return os.environ.get("OPENAI_API_KEY")
 
 
+def _nl_json(payload: str) -> Dict[str, Any]:
+    """Read the JSON object out of a model reply.
+
+    Replies arrive wrapped in fences, prefaced with a sentence, or cut short
+    when the model spends its budget before finishing. Taking the outermost
+    braces recovers the usable cases; the rest raise and fall back to the
+    rule table.
+    """
+    text = (payload or "").replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        return json.loads(text[start:end + 1])
+    raise ValueError(
+        "the model returned no complete JSON object "
+        f"({text[:80]!r})"
+    )
+
+
 def _nl_llm_base_url() -> str | None:
     """Any OpenAI-compatible endpoint, so the provider is a setting.
 
@@ -1904,12 +1927,11 @@ def llm_parse_question(
                 {"role": "user", "content": text},
             ],
             temperature=0,
-            max_tokens=300,
+            max_tokens=1200,
         )
         st.session_state["nl_llm_calls"] = used + 1
         payload = response.choices[0].message.content or ""
-        payload = payload.replace("```json", "").replace("```", "").strip()
-        data = json.loads(payload)
+        data = _nl_json(payload)
     except Exception as exc:
         fallback = parse_spatial_question(text, lsoa_options, admin_options)
         fallback["parser"] = "rule-based (model unavailable)"
@@ -7132,12 +7154,11 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
                 {"role": "user", "content": text},
             ],
             temperature=0,
-            max_tokens=300,
+            max_tokens=1200,
         )
         st.session_state["nl_llm_calls"] = used + 1
         payload = (response.choices[0].message.content or "")
-        payload = payload.replace("```json", "").replace("```", "").strip()
-        data = json.loads(payload)
+        data = _nl_json(payload)
     except Exception as exc:
         out = parse_map_question(text)
         out["parser"] = "rule-based (model unavailable)"
