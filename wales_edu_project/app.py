@@ -5502,10 +5502,30 @@ def page_evaluation() -> None:
                     "beside the app."
                 ),
             )
+            full_width = st.checkbox(
+                "Widen the page for the report",
+                value=True,
+                help=(
+                    "The report holds wide tables. This releases the page "
+                    "from its reading width so the columns fit without a "
+                    "horizontal scrollbar."
+                ),
+                disabled=not show_report,
+            )
             if show_report:
+                if full_width:
+                    # The page is capped at a comfortable reading width for
+                    # prose, which is too narrow for the report's tables. The
+                    # cap is lifted only while the report is on screen.
+                    st.markdown(
+                        "<style>.block-container{max-width:100% !important;"
+                        "padding-left:1.2rem !important;"
+                        "padding-right:1.2rem !important;}</style>",
+                        unsafe_allow_html=True,
+                    )
                 with st.spinner("Loading the completeness report..."):
                     report_html = load_report_html(report_path)
-                components.html(report_html, height=760, scrolling=True)
+                components.html(report_html, height=1400, scrolling=True)
                 st.download_button(
                     "Download the report",
                     data=report_html,
