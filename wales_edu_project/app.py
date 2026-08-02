@@ -7164,6 +7164,23 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         )
 
     parsed = parse_map_question(question)
+    # School conditions have no effect in cluster search, which pools LSOAs
+    # rather than schools, so a question that names any of them switches the
+    # mode instead of returning a map that quietly ignored it.
+    if parsed["conditions"] and st.session_state.get(
+        "map_search_mode"
+    ) == "Cluster search":
+        st.session_state["map_search_mode"] = "Standard search"
+        st.rerun()
+
+    if question:
+        st.markdown(
+            "<div class='nl-driven'>Current question: <b>"
+            + escape(question)
+            + "</b></div>",
+            unsafe_allow_html=True,
+        )
+
     if parsed["chips"] or parsed["unmatched"]:
         chips = "".join(
             f"<span class='nl-chip nl-chip-focus'>{escape(c)}</span>"
@@ -7235,7 +7252,11 @@ def page_map(cfg: Dict[str, str]) -> None:
             "Standard search",
             "Cluster search",
         ],
-        index=1,
+        # Standard is the default: it shows the school pins, which is what a
+        # reader arriving at a map of schools expects to see. Cluster search
+        # answers a narrower question and is chosen deliberately.
+        index=0,
+        key="map_search_mode",
         label_visibility="collapsed",
         help=(
             "Standard search shows every school passing the filters below, "
