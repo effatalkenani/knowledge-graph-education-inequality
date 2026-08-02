@@ -49,9 +49,9 @@ st.markdown(
 <style>
 .block-container {padding-top: 1.5rem;}
 .hero {
-  background: linear-gradient(135deg,#003366,#0055AA,#0077CC);
+  background: linear-gradient(135deg,#5e0d1c,#9e1b32 55%,#b8283f);
   color: white; padding: 1.4rem 1.7rem; border-radius: 14px; margin-bottom: 1.1rem;
-  box-shadow: 0 5px 18px rgba(0,51,102,.18);
+  box-shadow: 0 5px 18px rgba(94,13,28,.20);
 }
 .hero h1 {font-size:1.45rem; margin:0 0 .35rem 0;}
 .hero p {margin:.18rem 0; opacity:.92; font-size:.88rem;}
@@ -130,7 +130,7 @@ st.markdown(
 /* ======================= Warm evaluator skin override ======================= */
 .stApp {background:linear-gradient(180deg,#fffaf4 0%,#ffffff 42%,#fff7ed 100%);} 
 .block-container {max-width: 1450px; padding-top: 1.25rem;}
-.hero {background:linear-gradient(135deg,#2830a6,#128fd6 55%,#ff4f79); color:white; border:0; border-radius:8px; box-shadow:0 8px 20px rgba(40,48,166,.14);} 
+.hero {background:linear-gradient(135deg,#5e0d1c,#9e1b32 55%,#b8283f); color:white; border:0; border-radius:14px; box-shadow:0 8px 20px rgba(94,13,28,.18);} 
 .hero h1 {color:white;} .hero p {color:white; opacity:.94;}
 div[data-testid="stSidebar"] {background:#f2f4f8; border-right:1px solid #d9dde7;}
 div[data-testid="stSidebar"] button {
@@ -3539,13 +3539,11 @@ def hero() -> None:
         + """
   <div class="hero-inst">Cardiff University &middot; School of Computer Science and Informatics</div>
   <h1>Education Inequality Analysis with a Geospatial Knowledge Graph</h1>
-  <p><b>Wales YAGO2geo + LSOA Demonstrator</b> &mdash; task-aligned to the supervisor work plan.</p>
   <div class="hero-people">
     <span><b>Student</b><br/>Afaf Alhajjaji &middot; MSc Computing</span>
     <span><b>Supervisor</b><br/>Dr Alia Abdelmoty</span>
     <span><b>Module</b><br/>CMT403 Dissertation</span>
   </div>
-  <p class="hero-rule"><b>Core evaluation rule:</b> Native model coverage is not the same as geometry-assisted demonstrator coverage.</p>
 </div>
 """,
         unsafe_allow_html=True,
