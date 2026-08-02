@@ -1102,6 +1102,7 @@ SANDU_REFERENCE = (
 
 SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
     "SCQ1": {
+        "short": "Touches",
         "instantiation": (
             "Which LSOAs directly border a selected LSOA, and what WIMD / "
             "school FSM / attendance / performance evidence is visible in "
@@ -1185,6 +1186,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ2": {
+        "short": "Near",
         "instantiation": (
             "Which LSOAs are near a selected LSOA \u2014 disjoint but joined "
             "by a path of two touches edges \u2014 and what are the WIMD / "
@@ -1234,6 +1236,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ3": {
+        "short": "Between",
         "instantiation": (
             "Which LSOA lies on a cycle-free path between LSOA X and LSOA Y, "
             "and what are the WIMD / FSM / attendance / performance profiles "
@@ -1267,6 +1270,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ4": {
+        "short": "Not-adjacent",
         "instantiation": (
             "Which LSOAs do NOT share a boundary with a selected LSOA, and "
             "what are the WIMD / FSM / attendance / performance profiles of "
@@ -1301,6 +1305,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ5": {
+        "short": "Contains",
         "instantiation": (
             "Which LSOAs are contained within a selected administrative unit "
             "\u2014 a Ward or a Unitary Authority \u2014 and what are the "
@@ -1354,6 +1359,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ6": {
+        "short": "Within",
         "instantiation": (
             "Which administrative units \u2014 Wards or Unitary Authorities "
             "\u2014 contain a selected LSOA, and what are the WIMD / FSM / "
@@ -1392,6 +1398,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ7": {
+        "short": "Intersects",
         "instantiation": (
             "Which administrative units \u2014 Wards or Communities \u2014 "
             "intersect a selected LSOA, and how do the administrative-level "
@@ -1483,6 +1490,7 @@ SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
         ],
     },
     "SCQ8": {
+        "short": "Cross-near",
         "instantiation": (
             "Which administrative units are near, but disjoint from, a "
             "selected LSOA, and what are their WIMD / FSM / attendance / "
@@ -1970,13 +1978,35 @@ def render_nl_search(
     # The examples come before the box on purpose. Streamlit refuses to write
     # to a widget's state after that widget has been created in the same run,
     # so a button that fills the box has to be drawn first.
-    with st.expander("Example questions", expanded=False):
-        cols = st.columns(3)
-        for i, example in enumerate(NL_EXAMPLES):
-            if cols[i % 3].button(example, key=f"nl_ex_{i}"):
-                st.session_state["nl_question"] = example
-                st.session_state["nl_autorun"] = True
-                st.rerun()
+    # The suggestions come from the same library the warrant document holds,
+    # grouped by the relation they exercise. Grouping matters: it shows that
+    # each relation answers a family of questions rather than one, which is
+    # the point the eight-form framework is making.
+    with st.expander("Question library", expanded=False):
+        labels = [
+            f"{key} \u00b7 {SCQ_EVIDENCE[key]['short']}"
+            for key in SCQ_EVIDENCE
+        ]
+        for tab, scq in zip(st.tabs(labels), SCQ_EVIDENCE):
+            entry = SCQ_EVIDENCE[scq]
+            with tab:
+                st.markdown(
+                    f"<div class='ql-head ql-{scq.lower()}'>"
+                    f"<span class='ql-rel'>{escape(entry['short'])}</span>"
+                    f"<span class='ql-inst'>{entry['instantiation']}</span>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                cols = st.columns(2)
+                for i, question_text in enumerate(entry["questions"]):
+                    if cols[i % 2].button(
+                        question_text,
+                        key=f"nl_q_{scq}_{i}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["nl_question"] = question_text
+                        st.session_state["nl_autorun"] = True
+                        st.rerun()
 
     col_input, col_go = st.columns([6, 1])
     with col_input:
@@ -3011,6 +3041,38 @@ div[data-testid="stCodeBlock"] code {{
 .nl-chip-area {{ color:{ev_full}; background:{ev_full_bg}; }}
 .nl-steps {{ margin:.6rem 0 0; padding-left:1.15rem; }}
 .nl-steps li {{ font-size:.83rem; line-height:1.5rem; color:{muted}; }}
+.ql-head {{
+  border-radius:10px;
+  padding:.55rem .8rem;
+  margin:.3rem 0 .6rem;
+  border-left:5px solid currentColor;
+  background:{ev_quote_bg};
+}}
+.ql-rel {{
+  display:block; font-size:.72rem; font-weight:800;
+  letter-spacing:.12em; text-transform:uppercase;
+}}
+.ql-inst {{
+  display:block; font-size:.84rem; line-height:1.45rem;
+  color:{text}; opacity:.86; margin-top:.2rem;
+}}
+.ql-scq1 {{ color:#2563eb; }}
+.ql-scq2 {{ color:#0d9488; }}
+.ql-scq3 {{ color:#7c3aed; }}
+.ql-scq4 {{ color:#64748b; }}
+.ql-scq5 {{ color:#c2410c; }}
+.ql-scq6 {{ color:#b45309; }}
+.ql-scq7 {{ color:#15803d; }}
+.ql-scq8 {{ color:#be185d; }}
+[data-testid="stExpander"] .stButton button {{
+  border-radius:999px !important;
+  text-align:left !important;
+  font-size:.82rem !important;
+  padding:.35rem .85rem !important;
+  white-space:normal !important;
+  line-height:1.35rem !important;
+}}
+
 .nl-driven {{
   background:{ev_quote_bg};
   border:1px solid {ev_border};
