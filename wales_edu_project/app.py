@@ -7022,14 +7022,78 @@ def parse_map_question(text: str) -> Dict[str, Any]:
     return out
 
 
-MAP_NL_EXAMPLES = [
-    "Secondary schools in high-deprivation areas",
-    "Schools with FSM between 30 and 60",
-    "Primary schools with attendance below 90",
-    "Welsh medium schools in low-deprivation areas",
-    "Secondary schools with Capped 9 above 380",
-    "Schools with no transport stop within 800m",
-]
+# The map answers a different kind of question from the demonstrator: not
+# which regions stand in a spatial relation, but which schools satisfy a
+# description. Grouping by the property being described keeps that distinction
+# visible, and mirrors the eight groups on the demonstrator without pretending
+# the two libraries are interchangeable.
+MAP_QUESTION_LIBRARY: Dict[str, Dict[str, Any]] = {
+    "Deprivation": {
+        "colour": "ql-scq1",
+        "note": "The deprivation level of the LSOA each school sits in.",
+        "questions": [
+            "Which schools are in high-deprivation LSOAs?",
+            "Which schools are in medium-deprivation LSOAs?",
+            "Which schools are in low-deprivation LSOAs?",
+            "Secondary schools in high-deprivation areas",
+        ],
+    },
+    "School type": {
+        "colour": "ql-scq5",
+        "note": "Phase, language medium and other school characteristics.",
+        "questions": [
+            "Which primary schools match the selected conditions?",
+            "Which secondary schools match the selected conditions?",
+            "Which special schools match the selected conditions?",
+            "Welsh medium schools in low-deprivation areas",
+            "English medium primary schools",
+        ],
+    },
+    "Free school meals": {
+        "colour": "ql-scq7",
+        "note": "FSM is the deprivation proxy used throughout the study.",
+        "questions": [
+            "Which schools have FSM between 30 and 60?",
+            "Which schools have FSM above 40?",
+            "Which schools have FSM below 10?",
+            "Primary schools with FSM between 20 and 35",
+        ],
+    },
+    "Attendance": {
+        "colour": "ql-scq2",
+        "note": "90% is the official persistent-absence line in Wales.",
+        "questions": [
+            "Which schools have attendance between 85 and 90?",
+            "Which schools have attendance below 90?",
+            "Which schools have attendance above 95?",
+            "Secondary schools with attendance below 92",
+        ],
+    },
+    "Performance": {
+        "colour": "ql-scq6",
+        "note": (
+            "Capped 9 is recorded for secondary schools only, so these "
+            "questions return a subset of 204 schools."
+        ),
+        "questions": [
+            "Which secondary schools have Capped 9 between 300 and 380?",
+            "Which secondary schools have Capped 9 above 380?",
+            "Which secondary schools have Capped 9 below 320?",
+        ],
+    },
+    "Transport": {
+        "colour": "ql-scq3",
+        "note": (
+            "A metric threshold of 800m, and a third notion of proximity "
+            "kept outside the completeness scoring."
+        ),
+        "questions": [
+            "Which schools have a transport stop within 800m?",
+            "Which schools have no transport stop within 800m?",
+            "High-deprivation schools with no transport stop within 800m",
+        ],
+    },
+}
 
 
 def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
@@ -7043,12 +7107,27 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         unsafe_allow_html=True,
     )
 
-    with st.expander("Example questions", expanded=False):
-        cols = st.columns(3)
-        for i, example in enumerate(MAP_NL_EXAMPLES):
-            if cols[i % 3].button(example, key=f"map_nl_ex_{i}"):
-                st.session_state["map_nl_question"] = example
-                st.rerun()
+    with st.expander("Question library", expanded=False):
+        groups = list(MAP_QUESTION_LIBRARY)
+        for tab, group in zip(st.tabs(groups), groups):
+            entry = MAP_QUESTION_LIBRARY[group]
+            with tab:
+                st.markdown(
+                    f"<div class='ql-head {entry['colour']}'>"
+                    f"<span class='ql-rel'>{escape(group)}</span>"
+                    f"<span class='ql-inst'>{escape(entry['note'])}</span>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                cols = st.columns(2)
+                for i, question_text in enumerate(entry["questions"]):
+                    if cols[i % 2].button(
+                        question_text,
+                        key=f"map_q_{group}_{i}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["map_nl_question"] = question_text
+                        st.rerun()
 
     col_q, col_go = st.columns([6, 1])
     with col_q:
