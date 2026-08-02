@@ -1739,6 +1739,146 @@ def parse_spatial_question(
     return found
 
 
+# The project description registered in PATS names "potential LLM integration
+# for query understanding", so a model path belongs in the system. It is not
+# the default: the rule table is deterministic, needs no key and runs offline,
+# which are the properties an instrument needs. The model is offered as a
+# comparison so the choice can be evidenced rather than asserted.
+NL_LLM_MODEL = "gpt-4o-mini"
+NL_LLM_CALL_CAP = 25          # per browser session, so a public URL cannot bill
+
+
+def nl_llm_available() -> bool:
+    """True when a key is configured. Absence is a normal state, not an error."""
+    try:
+        if st.secrets.get("OPENAI_API_KEY"):
+            return True
+    except Exception:
+        pass
+    return bool(os.environ.get("OPENAI_API_KEY"))
+
+
+def _nl_llm_key() -> str | None:
+    try:
+        key = st.secrets.get("OPENAI_API_KEY")
+        if key:
+            return str(key)
+    except Exception:
+        pass
+    return os.environ.get("OPENAI_API_KEY")
+
+
+def llm_parse_question(
+    text: str,
+    lsoa_options: List[Tuple[str, str]] | None = None,
+    admin_options: List[Tuple[str, str]] | None = None,
+) -> Dict[str, Any]:
+    """Ask a model for the same structure the rule table produces.
+
+    The model is constrained to the eight forms and asked for JSON only, and
+    its answer is validated against the same vocabulary; anything outside it
+    is discarded rather than trusted. On any failure the rule table answers,
+    so the interface never depends on the network.
+    """
+    used = st.session_state.get("nl_llm_calls", 0)
+    if used >= NL_LLM_CALL_CAP:
+        fallback = parse_spatial_question(text, lsoa_options, admin_options)
+        fallback["parser"] = "rule-based (LLM call cap reached)"
+        return fallback
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=_nl_llm_key())
+        system = (
+            "You map an education-geography question onto exactly one of "
+            "eight spatial competency forms and return JSON only, with no "
+            "prose and no code fence.\n"
+            "SCQ1 touches: which regions directly border a region.\n"
+            "SCQ2 near: regions reachable in two touches-steps, disjoint.\n"
+            "SCQ3 between: regions on a cycle-free path linking two regions.\n"
+            "SCQ4 not-adjacent: regions that share no boundary.\n"
+            "SCQ5 contains: which administrative parent contains a unit.\n"
+            "SCQ6 within: which units are inside an administrative unit.\n"
+            "SCQ7 intersects: administrative units intersecting an LSOA.\n"
+            "SCQ8 cross-near: administrative units near but not intersecting.\n"
+            'Return {"scq": "SCQ1".."SCQ8" or null, '
+            '"focus": subset of ["fsm","attendance","performance",'
+            '"deprivation"], "codes": [LSOA codes like W01001440], '
+            '"place": free text place name or null, '
+            '"reason": one short sentence}.'
+        )
+        response = client.chat.completions.create(
+            model=NL_LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": text},
+            ],
+            temperature=0,
+            max_tokens=300,
+        )
+        st.session_state["nl_llm_calls"] = used + 1
+        payload = response.choices[0].message.content or ""
+        payload = payload.replace("```json", "").replace("```", "").strip()
+        data = json.loads(payload)
+    except Exception as exc:
+        fallback = parse_spatial_question(text, lsoa_options, admin_options)
+        fallback["parser"] = "rule-based (model unavailable)"
+        fallback["unmatched"].append(f"Model call failed: {exc}")
+        return fallback
+
+    valid = {f"SCQ{i}" for i in range(1, 9)}
+    scq = data.get("scq") if data.get("scq") in valid else None
+    focus = [
+        f for f in (data.get("focus") or [])
+        if f in {"fsm", "attendance", "performance", "deprivation"}
+    ]
+    labels = {
+        "fsm": "School FSM %", "attendance": "School attendance %",
+        "performance": "Capped 9 (secondary only)",
+        "deprivation": "WIMD deprivation",
+    }
+    result: Dict[str, Any] = {
+        "text": text,
+        "parser": f"LLM ({NL_LLM_MODEL})",
+        "scq": scq,
+        "relation": (
+            dict((k, r) for k, _p, r in NL_RELATION_RULES).get(scq)
+            if scq else None
+        ),
+        "matched_phrase": None,
+        "focus": focus,
+        "focus_labels": [labels[f] for f in focus],
+        "areas": [],
+        "admin": None,
+        "steps": [],
+        "unmatched": [],
+        "raw_model_output": data,
+    }
+    if data.get("reason"):
+        result["steps"].append(str(data["reason"]))
+    if not scq:
+        result["unmatched"].append("The model returned no recognised form.")
+
+    # Names and codes are resolved locally against the real option lists, never
+    # taken from the model: a hallucinated LSOA code must not reach a query.
+    wanted = {str(c).upper() for c in (data.get("codes") or [])}
+    place = str(data.get("place") or "").lower()
+    for option in lsoa_options or []:
+        code, label = option[0], str(option[1])
+        name = label.split("|")[-1].strip().lower()
+        if code.upper() in wanted or (len(place) > 4 and place in name):
+            result["areas"].append((code, label))
+            if len(result["areas"]) == 2:
+                break
+    for option in admin_options or []:
+        uri, label = option[0], str(option[1])
+        name = label.split("|")[0].strip().lower()
+        if len(place) > 4 and place in name:
+            result["admin"] = (uri, label)
+            break
+    return result
+
+
 NL_EXAMPLES = [
     "Which LSOAs directly border Blaenau Gwent 001A?",
     "Which neighbouring LSOAs have the highest school FSM levels?",
@@ -1796,10 +1936,43 @@ def render_nl_search(
     if st.session_state.pop("nl_autorun", False):
         asked = True
 
+    modes = ["Rule-based (default)"]
+    if nl_llm_available():
+        modes += ["LLM", "Compare both"]
+    mode = st.radio(
+        "Parser",
+        modes,
+        horizontal=True,
+        key="nl_parser_mode",
+        help=(
+            "Rule-based is deterministic, runs offline and needs no key, so "
+            "it is the default and the one a marker can reproduce. The model "
+            "path is offered for comparison; it is capped per session."
+        ),
+    )
+    if not nl_llm_available():
+        st.caption(
+            "Model parsing is unavailable: no OPENAI_API_KEY is configured. "
+            "The rule-based engine answers everything below."
+        )
+
     if not (asked and question):
         return
 
-    parsed = parse_spatial_question(question, lsoa_options, admin_options)
+    rule_parsed = parse_spatial_question(question, lsoa_options, admin_options)
+    rule_parsed["parser"] = "rule-based"
+
+    if mode == "LLM":
+        parsed = llm_parse_question(question, lsoa_options, admin_options)
+    elif mode == "Compare both":
+        parsed = rule_parsed
+        st.session_state.nl_compare = llm_parse_question(
+            question, lsoa_options, admin_options
+        )
+    else:
+        parsed = rule_parsed
+        st.session_state.pop("nl_compare", None)
+
     st.session_state.nl_last = parsed
 
     # Setting the widget state before the widget is drawn is what makes the
@@ -1856,8 +2029,19 @@ def render_nl_understanding() -> None:
     warn = "".join(
         f"<div class='nl-warn'>{escape(u)}</div>" for u in parsed["unmatched"]
     )
+    # Which engine read the sentence is part of the answer, not a detail: a
+    # reader should never have to guess whether a model was involved.
+    source = str(parsed.get("parser") or "rule-based")
+    badge_class = "nl-src-llm" if source.startswith("LLM") else "nl-src-rule"
+    detail = (
+        "deterministic, offline, no key"
+        if badge_class == "nl-src-rule"
+        else "model output validated against the same vocabulary"
+    )
     st.markdown(
         "<div class='nl-read'>"
+        f"<div class='nl-src {badge_class}'>Parsed by {escape(source)} "
+        f"&middot; {detail}</div>"
         "<div class='nl-read-title'>Read as</div>"
         f"<div class='nl-chips'>{''.join(chips) or '&mdash;'}</div>"
         + (f"<ol class='nl-steps'>{steps}</ol>" if steps else "")
@@ -2763,6 +2947,13 @@ div[data-testid="stCodeBlock"] code {{
 .nl-chip-area {{ color:{ev_full}; background:{ev_full_bg}; }}
 .nl-steps {{ margin:.6rem 0 0; padding-left:1.15rem; }}
 .nl-steps li {{ font-size:.83rem; line-height:1.5rem; color:{muted}; }}
+.nl-src {{
+  display:inline-block; font-size:.72rem; font-weight:700;
+  padding:.2rem .65rem; border-radius:999px; margin-bottom:.5rem;
+  border:1px solid {ev_border};
+}}
+.nl-src-rule {{ color:{ev_full}; background:{ev_full_bg}; }}
+.nl-src-llm {{ color:{ev_partial}; background:{ev_partial_bg}; }}
 .nl-warn {{
   margin-top:.5rem; font-size:.82rem; color:{ev_partial};
   background:{ev_partial_bg}; border-radius:8px; padding:.4rem .6rem;
@@ -6506,6 +6697,224 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 
     visual_final_finding()
 
+# ---------------------------------------------------------------------------
+# Map Explorer: a second engine, for school properties rather than relations
+# ---------------------------------------------------------------------------
+# Kept apart from the spatial engine on purpose. The demonstrator measures
+# eight relation definitions and the scorecard depends on those definitions
+# staying exact; property questions are exploration over the same graph and
+# must not be able to move a measured answer.
+
+MAP_NL_RULES: List[Tuple[str, List[str]]] = [
+    ("dep_high", ["most deprived", "highly deprived", "high deprivation",
+                  "high-deprivation", "deprived areas", "amddifadedd uchel"]),
+    ("dep_low", ["least deprived", "low deprivation", "low-deprivation",
+                 "affluent", "amddifadedd isel"]),
+    ("dep_medium", ["medium deprivation", "medium-deprivation"]),
+    ("primary", ["primary", "cynradd"]),
+    ("secondary", ["secondary", "high school", "uwchradd"]),
+    ("special", ["special school", "special schools"]),
+    ("welsh_medium", ["welsh medium", "welsh-medium", "cyfrwng cymraeg"]),
+    ("english_medium", ["english medium", "english-medium"]),
+    ("transport_near", ["near transport", "close to transport",
+                        "within 800", "has a transport stop",
+                        "agos at drafnidiaeth"]),
+    ("transport_far", ["no transport", "far from transport",
+                       "without a transport stop"]),
+]
+
+_MAP_RANGE = re.compile(
+    r"(fsm|free school meal|attendance|capped\s*9|capped9|performance|"
+    r"budget|pupils?)[^0-9]{0,24}(between\s*)?(\d+(?:\.\d+)?)"
+    r"\s*(?:%|)\s*(?:and|to|-|\u2013)\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_MAP_CMP = re.compile(
+    r"(fsm|free school meal|attendance|capped\s*9|capped9|performance|"
+    r"budget|pupils?)[^0-9]{0,24}(above|over|greater than|more than|>|"
+    r"below|under|less than|fewer than|<)\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+_MAP_FIELD = {
+    "fsm": "s.fsm_pct", "free school meal": "s.fsm_pct",
+    "attendance": "s.attendance_pct",
+    "capped 9": "s.capped9_score", "capped9": "s.capped9_score",
+    "performance": "s.capped9_score",
+    "budget": "s.budget_per_pupil_gbp",
+    "pupil": "coalesce(s.pupils_2025, s.pupils)",
+    "pupils": "coalesce(s.pupils_2025, s.pupils)",
+}
+
+
+def parse_map_question(text: str) -> Dict[str, Any]:
+    """Turn a school-property question into extra Cypher conditions.
+
+    Every condition is parameterised. Nothing from the sentence is ever
+    concatenated into the query text, so a question cannot become an
+    injection.
+    """
+    raw = (text or "").strip()
+    low = raw.lower()
+    out: Dict[str, Any] = {
+        "text": raw, "conditions": [], "params": {},
+        "chips": [], "unmatched": [], "parser": "rule-based",
+    }
+    if not raw:
+        return out
+
+    hits = {name for name, phrases in MAP_NL_RULES
+            if any(p in low for p in phrases)}
+
+    dep = next(
+        (d for d in ("dep_high", "dep_medium", "dep_low") if d in hits), None
+    )
+    if dep:
+        level = dep.split("_")[1] + "_deprivation"
+        out["conditions"].append(
+            "coalesce(l.deprivation, s.deprivation) = $nl_dep"
+        )
+        out["params"]["nl_dep"] = level
+        out["chips"].append(f"deprivation = {level.split('_')[0]}")
+
+    phases = [p for p in ("primary", "secondary", "special") if p in hits]
+    if phases:
+        out["conditions"].append(
+            "toLower(coalesce(s.phase_group, s.phase, s.school_type)) "
+            "IN $nl_phases"
+        )
+        out["params"]["nl_phases"] = phases
+        out["chips"].append("phase = " + " / ".join(phases))
+
+    if "welsh_medium" in hits or "english_medium" in hits:
+        want = "welsh" if "welsh_medium" in hits else "english"
+        out["conditions"].append(
+            "toLower(coalesce(s.language_medium, '')) CONTAINS $nl_medium"
+        )
+        out["params"]["nl_medium"] = want
+        out["chips"].append(f"language medium = {want}")
+
+    if "transport_near" in hits:
+        out["conditions"].append(
+            "EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
+        )
+        out["chips"].append("transport stop within 800m")
+    elif "transport_far" in hits:
+        out["conditions"].append(
+            "NOT EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
+        )
+        out["chips"].append("no transport stop within 800m")
+
+    used = 0
+    for match in _MAP_RANGE.finditer(low):
+        field = _MAP_FIELD.get(match.group(1).strip().replace("  ", " "))
+        if not field:
+            continue
+        lo, hi = float(match.group(3)), float(match.group(4))
+        lo, hi = min(lo, hi), max(lo, hi)
+        a, b = f"nl_lo{used}", f"nl_hi{used}"
+        out["conditions"].append(f"{field} >= ${a} AND {field} <= ${b}")
+        out["params"][a], out["params"][b] = lo, hi
+        out["chips"].append(f"{match.group(1)} between {lo:g} and {hi:g}")
+        used += 1
+
+    for match in _MAP_CMP.finditer(low):
+        field = _MAP_FIELD.get(match.group(1).strip().replace("  ", " "))
+        if not field:
+            continue
+        op = ">=" if match.group(2) in {
+            "above", "over", "greater than", "more than", ">"
+        } else "<="
+        name = f"nl_cmp{used}"
+        out["conditions"].append(f"{field} {op} ${name}")
+        out["params"][name] = float(match.group(3))
+        out["chips"].append(f"{match.group(1)} {op} {match.group(3)}")
+        used += 1
+
+    if not out["conditions"]:
+        out["unmatched"].append(
+            "Nothing was recognised. Try naming a deprivation level, a "
+            "phase, a language medium, transport access, or a metric range "
+            "such as \u201cFSM between 20 and 40\u201d."
+        )
+    return out
+
+
+MAP_NL_EXAMPLES = [
+    "Secondary schools in high-deprivation areas",
+    "Schools with FSM between 30 and 60",
+    "Primary schools with attendance below 90",
+    "Welsh medium schools in low-deprivation areas",
+    "Secondary schools with Capped 9 above 380",
+    "Schools with no transport stop within 800m",
+]
+
+
+def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
+    """Question box for the map. Returns extra conditions for the query."""
+    st.markdown(
+        "<div class='nl-wrap'>"
+        "<div class='nl-title'>Ask in your own words</div>"
+        "<div class='nl-sub'>Describe the schools you want to see. The "
+        "sentence adds conditions to the map query and shows each one.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Example questions", expanded=False):
+        cols = st.columns(3)
+        for i, example in enumerate(MAP_NL_EXAMPLES):
+            if cols[i % 3].button(example, key=f"map_nl_ex_{i}"):
+                st.session_state["map_nl_question"] = example
+                st.rerun()
+
+    col_q, col_go = st.columns([6, 1])
+    with col_q:
+        question = st.text_input(
+            "Map question",
+            key="map_nl_question",
+            placeholder="Secondary schools in high-deprivation areas",
+            label_visibility="collapsed",
+        )
+    with col_go:
+        clear = st.button("Clear", use_container_width=True)
+    if clear:
+        st.session_state["map_nl_question"] = ""
+        st.rerun()
+
+    st.checkbox(
+        "Rule-based engine",
+        value=True,
+        disabled=True,
+        key="map_nl_rule_based",
+        help=(
+            "Deterministic and offline. Every condition below is "
+            "parameterised, so the sentence cannot alter the query text."
+        ),
+    )
+
+    parsed = parse_map_question(question)
+    if parsed["chips"] or parsed["unmatched"]:
+        chips = "".join(
+            f"<span class='nl-chip nl-chip-focus'>{escape(c)}</span>"
+            for c in parsed["chips"]
+        )
+        warn = "".join(
+            f"<div class='nl-warn'>{escape(u)}</div>"
+            for u in parsed["unmatched"]
+        )
+        st.markdown(
+            "<div class='nl-read'>"
+            "<div class='nl-src nl-src-rule'>Parsed by rule-based "
+            "&middot; deterministic, offline, no key</div>"
+            "<div class='nl-read-title'>Conditions added</div>"
+            f"<div class='nl-chips'>{chips or '&mdash;'}</div>"
+            + warn + "</div>",
+            unsafe_allow_html=True,
+        )
+    return parsed
+
+
 def page_map(cfg: Dict[str, str]) -> None:
     hero()
     task_badge(
@@ -6944,8 +7353,15 @@ def page_map(cfg: Dict[str, str]) -> None:
         st.info("Swap the From and To values marked in red in the sidebar.")
         return
 
+    nl_map = render_map_nl(cfg)
+
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
+    # Sentence conditions sit alongside the sidebar filters rather than
+    # replacing them, so the two can be combined and the reader can see
+    # exactly what each contributed.
+    conditions.extend(nl_map["conditions"])
+    params.update(nl_map["params"])
     if selected_school[0] != "All" and search_mode == "Standard search":
         conditions.append("s.code = $school_code")
         params["school_code"] = selected_school[0]
