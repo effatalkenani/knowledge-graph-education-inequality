@@ -1771,6 +1771,17 @@ def render_nl_search(
         unsafe_allow_html=True,
     )
 
+    # The examples come before the box on purpose. Streamlit refuses to write
+    # to a widget's state after that widget has been created in the same run,
+    # so a button that fills the box has to be drawn first.
+    with st.expander("Example questions", expanded=False):
+        cols = st.columns(3)
+        for i, example in enumerate(NL_EXAMPLES):
+            if cols[i % 3].button(example, key=f"nl_ex_{i}"):
+                st.session_state["nl_question"] = example
+                st.session_state["nl_autorun"] = True
+                st.rerun()
+
     col_input, col_go = st.columns([6, 1])
     with col_input:
         question = st.text_input(
@@ -1782,17 +1793,7 @@ def render_nl_search(
     with col_go:
         asked = st.button("Ask", type="primary", use_container_width=True)
 
-    with st.expander("Example questions", expanded=False):
-        cols = st.columns(3)
-        for i, example in enumerate(NL_EXAMPLES):
-            if cols[i % 3].button(example, key=f"nl_ex_{i}"):
-                st.session_state.nl_question = example
-                st.session_state.nl_pending = example
-                st.rerun()
-
-    pending = st.session_state.pop("nl_pending", None)
-    if pending:
-        question = pending
+    if st.session_state.pop("nl_autorun", False):
         asked = True
 
     if not (asked and question):
