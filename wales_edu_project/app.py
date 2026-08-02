@@ -1982,32 +1982,6 @@ def render_nl_search(
     # grouped by the relation they exercise. Grouping matters: it shows that
     # each relation answers a family of questions rather than one, which is
     # the point the eight-form framework is making.
-    with st.expander("Question library", expanded=False):
-        labels = [
-            f"{key} \u00b7 {SCQ_EVIDENCE[key]['short']}"
-            for key in SCQ_EVIDENCE
-        ]
-        for tab, scq in zip(st.tabs(labels), SCQ_EVIDENCE):
-            entry = SCQ_EVIDENCE[scq]
-            with tab:
-                st.markdown(
-                    f"<div class='ql-head ql-{scq.lower()}'>"
-                    f"<span class='ql-rel'>{escape(entry['short'])}</span>"
-                    f"<span class='ql-inst'>{entry['instantiation']}</span>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-                cols = st.columns(2)
-                for i, question_text in enumerate(entry["questions"]):
-                    if cols[i % 2].button(
-                        question_text,
-                        key=f"nl_q_{scq}_{i}",
-                        use_container_width=True,
-                    ):
-                        st.session_state["nl_question"] = question_text
-                        st.session_state["nl_autorun"] = True
-                        st.rerun()
-
     col_input, col_go = st.columns([6, 1])
     with col_input:
         question = st.text_input(
@@ -7171,11 +7145,30 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # forbids writing to a widget's state once the widget exists. A plain
     # flag is raised instead and applied at the top of the next run, before
     # the radio is created.
-    if parsed["conditions"] and st.session_state.get(
-        "map_search_mode"
-    ) == "Cluster search":
+    last_applied = st.session_state.get("map_nl_applied")
+    if (
+        parsed["conditions"]
+        and question != last_applied
+        and st.session_state.get("map_search_mode") == "Cluster search"
+    ):
+        # Only when the question is new. Forcing on every rerun made cluster
+        # search unreachable: the moment it was chosen, the standing question
+        # switched it straight back.
+        st.session_state["map_nl_applied"] = question
         st.session_state["map_force_standard"] = True
         st.rerun()
+    st.session_state["map_nl_applied"] = question
+
+    if (
+        parsed["conditions"]
+        and st.session_state.get("map_search_mode") == "Cluster search"
+    ):
+        st.markdown(
+            "<div class='nl-warn'>Cluster search pools LSOAs, not schools, "
+            "so the conditions from your question do not apply here. Switch "
+            "to Standard search to use them.</div>",
+            unsafe_allow_html=True,
+        )
 
     if question:
         st.markdown(
