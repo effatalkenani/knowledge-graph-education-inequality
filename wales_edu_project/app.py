@@ -1728,13 +1728,44 @@ def parse_spatial_question(
             "Area: " + "; ".join(a[1] for a in found["areas"]) + "."
         )
 
+    # Taking the first name that appears anywhere in the sentence was wrong:
+    # "Cardiff" matched a community in an English district before it reached
+    # the unitary authority, so the question ran against a unit the reader
+    # never named. Candidates are now ranked, and a tie is reported rather
+    # than resolved silently.
+    candidates: List[Tuple[int, str, Tuple[str, str]]] = []
     for option in admin_options or []:
         uri, label = option[0], str(option[1])
-        name = label.split("|")[0].strip().lower()
-        if len(name) > 4 and name in low:
-            found["admin"] = (uri, label)
-            found["steps"].append(f"Administrative unit: {label}.")
-            break
+        parts = [p.strip() for p in label.split("|")]
+        name = parts[0].lower()
+        unit_type = (parts[1] if len(parts) > 1 else "").lower()
+        if len(name) < 4 or name not in low:
+            continue
+        # An exact word beats a name that merely occurs inside the sentence,
+        # and a unitary authority beats a community of the same name.
+        score = 0
+        if re.search(r"\b" + re.escape(name) + r"\b", low):
+            score += 40
+        if "unitaryauthority" in unit_type:
+            score += 20
+        elif "ward" in unit_type:
+            score += 10
+        score += min(len(name), 20)
+        candidates.append((score, name, (uri, label)))
+
+    if candidates:
+        candidates.sort(key=lambda item: -item[0])
+        best = candidates[0]
+        rivals = [c for c in candidates[1:] if c[0] == best[0]]
+        found["admin"] = best[2]
+        found["steps"].append(f"Administrative unit: {best[2][1]}.")
+        if rivals:
+            found["unmatched"].append(
+                "More than one unit matches that name equally well ("
+                + ", ".join(str(c[2][1]) for c in [best] + rivals[:3])
+                + "). The first was used; choose it from the list below to "
+                "be certain."
+            )
 
     return found
 
@@ -1936,24 +1967,37 @@ def render_nl_search(
     if st.session_state.pop("nl_autorun", False):
         asked = True
 
-    modes = ["Rule-based (default)"]
-    if nl_llm_available():
-        modes += ["LLM", "Compare both"]
+    # Both options are always visible, whether or not a key is configured.
+    # Hiding the model option would leave a reader unable to see that the
+    # system has two parsers and that one of them was chosen; showing it
+    # disabled, with the reason stated, makes the choice part of the
+    # interface rather than something buried in the write-up.
+    llm_ready = nl_llm_available()
     mode = st.radio(
         "Parser",
-        modes,
+        ["Rule-based", "LLM"],
         horizontal=True,
         key="nl_parser_mode",
         help=(
             "Rule-based is deterministic, runs offline and needs no key, so "
             "it is the default and the one a marker can reproduce. The model "
-            "path is offered for comparison; it is capped per session."
+            "path is available for comparison and is capped per session."
         ),
     )
-    if not nl_llm_available():
+    if mode != "Rule-based" and not llm_ready:
+        st.markdown(
+            "<div class='nl-warn'>The model parser is not active: no API key "
+            "is configured for this deployment. The rule-based engine "
+            "answers the question below, and the interpretation shown is "
+            "its own. Add <code>OPENAI_API_KEY</code> under the app secrets "
+            "to enable the comparison.</div>",
+            unsafe_allow_html=True,
+        )
+        mode = "Rule-based"
+    elif mode == "Rule-based":
         st.caption(
-            "Model parsing is unavailable: no OPENAI_API_KEY is configured. "
-            "The rule-based engine answers everything below."
+            "Deterministic, offline, no key. This is the mode the "
+            "evaluation figures were produced with."
         )
 
     if not (asked and question):
@@ -1964,14 +2008,8 @@ def render_nl_search(
 
     if mode == "LLM":
         parsed = llm_parse_question(question, lsoa_options, admin_options)
-    elif mode == "Compare both":
-        parsed = rule_parsed
-        st.session_state.nl_compare = llm_parse_question(
-            question, lsoa_options, admin_options
-        )
     else:
         parsed = rule_parsed
-        st.session_state.pop("nl_compare", None)
 
     st.session_state.nl_last = parsed
 
@@ -6882,16 +6920,25 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         st.session_state["map_nl_question"] = ""
         st.rerun()
 
-    st.checkbox(
-        "Rule-based engine",
-        value=True,
-        disabled=True,
-        key="map_nl_rule_based",
+    llm_ready = nl_llm_available()
+    map_mode = st.radio(
+        "Parser",
+        ["Rule-based", "LLM"],
+        horizontal=True,
+        key="map_nl_parser_mode",
         help=(
-            "Deterministic and offline. Every condition below is "
+            "Deterministic and offline by default. Every condition is "
             "parameterised, so the sentence cannot alter the query text."
         ),
     )
+    if map_mode != "Rule-based" and not llm_ready:
+        st.markdown(
+            "<div class='nl-warn'>The model parser is not active: no API key "
+            "is configured for this deployment. The rule-based engine reads "
+            "the question below. Add <code>OPENAI_API_KEY</code> under the "
+            "app secrets to enable it.</div>",
+            unsafe_allow_html=True,
+        )
 
     parsed = parse_map_question(question)
     if parsed["chips"] or parsed["unmatched"]:
