@@ -5159,10 +5159,18 @@ def page_scq_demonstrator(
 
     # The question box comes first: a reader who knows what they want to ask
     # should not have to work out which of eight forms it corresponds to.
-    render_nl_search(
-        lsoa_options(cfg),
-        admin_options(cfg, "admin_intersects"),
-    )
+    # Both helpers take a mode. The touch list is the widest LSOA set and the
+    # parent list is the widest administrative one, which is all the parser
+    # needs: it only has to recognise a name, not decide what can answer.
+    try:
+        nl_lsoas = lsoa_options(cfg, "lsoa_touch")
+    except Exception:
+        nl_lsoas = []
+    try:
+        nl_admin = admin_options(cfg, "admin_parent")
+    except Exception:
+        nl_admin = []
+    render_nl_search(nl_lsoas, nl_admin)
     render_nl_understanding()
 
     scq_key = st.selectbox(
