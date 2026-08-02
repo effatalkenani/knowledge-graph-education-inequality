@@ -3040,6 +3040,21 @@ div[data-testid="stCodeBlock"] code {{
   color:{text} !important;
   border-color:{panel_border} !important;
 }}
+.hero {{ position:relative; }}
+.hero-logo {{
+  position:absolute;
+  top:1.05rem;
+  right:1.35rem;
+  height:56px;
+  width:auto;
+  background:#fff;
+  border-radius:8px;
+  padding:5px 8px;
+  box-shadow:0 4px 14px rgba(15,23,42,.18);
+}}
+@media (max-width: 720px) {{
+  .hero-logo {{ position:static; display:block; margin:0 0 .6rem; }}
+}}
 .hero-inst {{
   font-size:.72rem; font-weight:800; letter-spacing:.16em;
   text-transform:uppercase; opacity:.85; margin-bottom:.35rem;
@@ -3490,10 +3505,38 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
 # =============================================================================
 # UI COMPONENTS
 # =============================================================================
+@st.cache_data(show_spinner=False)
+def _logo_data_uri() -> str:
+    """The crest as an inline data URI.
+
+    Read from disk and embedded rather than linked, so the header renders
+    identically offline and on a marker's machine with no network.
+    """
+    import base64
+
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "cardiff_logo.png"
+    )
+    try:
+        with open(path, "rb") as handle:
+            encoded = base64.b64encode(handle.read()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    except Exception:
+        return ""
+
+
 def hero() -> None:
+    logo = _logo_data_uri()
+    crest = (
+        f"<img class='hero-logo' src='{logo}' "
+        "alt='Cardiff University' />" if logo else ""
+    )
     st.markdown(
         """
 <div class="hero">
+  """
+        + crest
+        + """
   <div class="hero-inst">Cardiff University &middot; School of Computer Science and Informatics</div>
   <h1>Education Inequality Analysis with a Geospatial Knowledge Graph</h1>
   <p><b>Wales YAGO2geo + LSOA Demonstrator</b> &mdash; task-aligned to the supervisor work plan.</p>
