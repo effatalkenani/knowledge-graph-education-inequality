@@ -1977,23 +1977,26 @@ def llm_parse_question(
     if not scq:
         result["unmatched"].append("The model returned no recognised form.")
 
-    # Names and codes are resolved locally against the real option lists, never
-    # taken from the model: a hallucinated LSOA code must not reach a query.
-    wanted = {str(c).upper() for c in (data.get("codes") or [])}
-    place = str(data.get("place") or "").lower()
-    for option in lsoa_options or []:
-        code, label = option[0], str(option[1])
-        name = label.split("|")[-1].strip().lower()
-        if code.upper() in wanted or (len(place) > 4 and place in name):
-            result["areas"].append((code, label))
-            if len(result["areas"]) == 2:
-                break
-    for option in admin_options or []:
-        uri, label = option[0], str(option[1])
-        name = label.split("|")[0].strip().lower()
-        if len(place) > 4 and place in name:
-            result["admin"] = (uri, label)
-            break
+    # Names and codes are resolved locally, and by the same ranked matcher
+    # the rule table uses. The model only says which form the question takes;
+    # letting it also choose the unit put "Ashchurch with Walton Cardiff
+    # Ward" in place of Cardiff, because that name contains the word.
+    resolver_text = " ".join(
+        [text, str(data.get("place") or "")]
+        + [str(c) for c in (data.get("codes") or [])]
+    )
+    resolved = parse_spatial_question(
+        resolver_text, lsoa_options, admin_options
+    )
+    result["areas"] = resolved["areas"]
+    if scq in {"SCQ5", "SCQ6"}:
+        result["admin"] = resolved["admin"]
+    result["steps"].extend(resolved["steps"][1:] if resolved["steps"] else [])
+    result["unmatched"].extend(
+        u for u in resolved["unmatched"]
+        if "No spatial relation" not in u
+    )
+
     return result
 
 
