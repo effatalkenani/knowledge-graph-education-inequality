@@ -7042,11 +7042,11 @@ MAP_QUESTION_LIBRARY: Dict[str, Dict[str, Any]] = {
         "colour": "ql-scq5",
         "note": "Phase, language medium and other school characteristics.",
         "questions": [
-            "Which primary schools match the selected conditions?",
-            "Which secondary schools match the selected conditions?",
-            "Which special schools match the selected conditions?",
+            "Which primary schools are in high-deprivation areas?",
+            "Which secondary schools are in low-deprivation areas?",
+            "Which special schools are in high-deprivation areas?",
             "Welsh medium schools in low-deprivation areas",
-            "English medium primary schools",
+            "English medium primary schools with FSM above 30",
         ],
     },
     "Free school meals": {
@@ -7167,10 +7167,14 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # School conditions have no effect in cluster search, which pools LSOAs
     # rather than schools, so a question that names any of them switches the
     # mode instead of returning a map that quietly ignored it.
+    # The radio is drawn in the sidebar before this runs, and Streamlit
+    # forbids writing to a widget's state once the widget exists. A plain
+    # flag is raised instead and applied at the top of the next run, before
+    # the radio is created.
     if parsed["conditions"] and st.session_state.get(
         "map_search_mode"
     ) == "Cluster search":
-        st.session_state["map_search_mode"] = "Standard search"
+        st.session_state["map_force_standard"] = True
         st.rerun()
 
     if question:
@@ -7246,6 +7250,9 @@ def page_map(cfg: Dict[str, str]) -> None:
     phases = [("All", "All")] + phase_opts
 
     st.sidebar.markdown("### Search type")
+    if st.session_state.pop("map_force_standard", False):
+        st.session_state["map_search_mode"] = "Standard search"
+
     search_mode = st.sidebar.radio(
         "Search type",
         [
