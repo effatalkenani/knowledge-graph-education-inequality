@@ -1754,8 +1754,14 @@ def parse_spatial_question(
             if len(p.strip()) >= 4
         ] or [raw_name.strip().lower()]
 
+    # Only the two containment forms use an administrative unit. Reporting a
+    # match for the others put "Blaenau Gwent | UnitaryAuthority" beside a
+    # question about neighbouring LSOAs, which reads as though the unit had
+    # been used when it had not.
+    admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6"}
+
     candidates: List[Tuple[int, str, Tuple[str, str]]] = []
-    for option in admin_options or []:
+    for option in (admin_options or []) if admin_relevant else []:
         uri, label = option[0], str(option[1])
         parts = [p.strip() for p in label.split("|")]
         name = parts[0].lower()
