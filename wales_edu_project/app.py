@@ -8226,6 +8226,50 @@ ORDER BY cluster_size DESC, cluster_id
         return
 
     polygon_df = None
+    if search_mode == "Standard search" and "lsoa_code" in map_df.columns:
+        # The pins say where the schools are; the boundaries say what kind of
+        # place each sits in. Drawn underneath and left unpickable, so the
+        # pins keep their tooltips and the areas only supply the background.
+        std_codes = sorted(
+            {str(c) for c in map_df["lsoa_code"].dropna() if str(c)}
+        )
+        POLY_CAP = 600
+        if std_codes:
+            capped = std_codes[:POLY_CAP]
+            try:
+                polygon_df = cluster_polygons(
+                    (cfg["uri"], cfg["user"], cfg["password"],
+                     cfg["database"]),
+                    tuple(capped),
+                )
+                if polygon_df is not None and not polygon_df.empty:
+                    if "deprivation" not in polygon_df.columns:
+                        dep_by_code = dict(
+                            zip(
+                                map_df["lsoa_code"].astype(str),
+                                map_df.get(
+                                    "deprivation",
+                                    pd.Series(["unknown"] * len(map_df)),
+                                ).astype(str),
+                            )
+                        )
+                        polygon_df = polygon_df.assign(
+                            deprivation=polygon_df["code"].astype(str).map(
+                                dep_by_code
+                            ).fillna("unknown")
+                        )
+                    if len(std_codes) > POLY_CAP:
+                        st.caption(
+                            f"Boundaries drawn for {POLY_CAP:,} of "
+                            f"{len(std_codes):,} areas; the pins and the "
+                            "table are the full answer."
+                        )
+                else:
+                    polygon_df = None
+            except Exception as exc:
+                polygon_df = None
+                st.caption(f"Area boundaries unavailable: {exc}")
+
     if search_mode == "Cluster search" and cluster_codes:
         size_by_code: Dict[str, int] = {}
         for _, crow in cluster_df.iterrows():
