@@ -1733,19 +1733,38 @@ def parse_spatial_question(
     # the unitary authority, so the question ran against a unit the reader
     # never named. Candidates are now ranked, and a tie is reported rather
     # than resolved silently.
+    # Welsh units carry bilingual names such as "Caerdydd - Cardiff", so
+    # requiring the whole name to appear in the sentence never matched: a
+    # reader writes "Cardiff", not both halves. Each half is tested on its
+    # own, as a whole word.
+    def _name_tokens(raw_name: str) -> List[str]:
+        pieces = re.split(r"[-/\u2013,]", raw_name)
+        return [
+            p.strip().lower()
+            for p in pieces
+            if len(p.strip()) >= 4
+        ] or [raw_name.strip().lower()]
+
     candidates: List[Tuple[int, str, Tuple[str, str]]] = []
     for option in admin_options or []:
         uri, label = option[0], str(option[1])
         parts = [p.strip() for p in label.split("|")]
         name = parts[0].lower()
         unit_type = (parts[1] if len(parts) > 1 else "").lower()
-        if len(name) < 4 or name not in low:
+        tokens = _name_tokens(parts[0])
+        hit_token = next(
+            (
+                tok for tok in tokens
+                if re.search(r"\b" + re.escape(tok) + r"\b", low)
+            ),
+            None,
+        )
+        if not hit_token:
             continue
+        name = hit_token
         # An exact word beats a name that merely occurs inside the sentence,
         # and a unitary authority beats a community of the same name.
-        score = 0
-        if re.search(r"\b" + re.escape(name) + r"\b", low):
-            score += 40
+        score = 40
         if "unitaryauthority" in unit_type:
             score += 20
         elif "ward" in unit_type:
@@ -1753,6 +1772,12 @@ def parse_spatial_question(
         score += min(len(name), 20)
         candidates.append((score, name, (uri, label)))
 
+    if not candidates and found["scq"] in {"SCQ5", "SCQ6"}:
+        found["unmatched"].append(
+            "No administrative unit in the question was recognised, so the "
+            "unit selected below was left as it was. Name the unit, or "
+            "choose it from the list."
+        )
     if candidates:
         candidates.sort(key=lambda item: -item[0])
         best = candidates[0]
@@ -2035,6 +2060,7 @@ def render_nl_search(
     if scq:
         st.session_state[f"scq_ran_{scq}"] = True
 
+    st.session_state["nl_controls_set"] = changed
     if changed:
         st.rerun()
 
@@ -2985,6 +3011,17 @@ div[data-testid="stCodeBlock"] code {{
 .nl-chip-area {{ color:{ev_full}; background:{ev_full_bg}; }}
 .nl-steps {{ margin:.6rem 0 0; padding-left:1.15rem; }}
 .nl-steps li {{ font-size:.83rem; line-height:1.5rem; color:{muted}; }}
+.nl-driven {{
+  background:{ev_quote_bg};
+  border:1px solid {ev_border};
+  border-left:4px solid {field_focus};
+  border-radius:10px;
+  padding:.5rem .8rem;
+  font-size:.85rem;
+  line-height:1.45rem;
+  color:{text};
+  margin:.2rem 0 .5rem;
+}}
 .nl-src {{
   display:inline-block; font-size:.72rem; font-weight:700;
   padding:.2rem .65rem; border-radius:999px; margin-bottom:.5rem;
@@ -5403,12 +5440,45 @@ def page_scq_demonstrator(
     render_nl_search(nl_lsoas, nl_admin)
     render_nl_understanding()
 
+    # The question and the controls are one path, not two. Without saying so,
+    # a reader cannot tell whether a selector still holds a value from the
+    # last question or one they chose themselves, which is exactly how a
+    # result for the wrong unit gets read as an answer.
+    _driven = st.session_state.get("nl_controls_set") or []
+    if st.session_state.get("nl_question") and _driven:
+        col_note, col_clear = st.columns([5, 1])
+        with col_note:
+            st.markdown(
+                "<div class='nl-driven'>The controls below were set by your "
+                "question: <b>" + escape(", ".join(str(d) for d in _driven))
+                + "</b>. Change any of them to override it.</div>",
+                unsafe_allow_html=True,
+            )
+        with col_clear:
+            if st.button("Clear question", use_container_width=True):
+                st.session_state["nl_question"] = ""
+                st.session_state.pop("nl_last", None)
+                st.session_state.pop("nl_controls_set", None)
+                st.rerun()
+
+    # Nothing is pre-selected. A default would answer a question the reader
+    # never asked, and once a question box sits above these controls there is
+    # no way to tell a default apart from something the sentence set.
     scq_key = st.selectbox(
         t("select_scq"),
-        list(SCQ_META.keys()),
-        format_func=lambda key: SCQ_META[key]["label"],
+        [""] + list(SCQ_META.keys()),
+        format_func=lambda key: (
+            "\u2014 choose a spatial question \u2014" if not key
+            else SCQ_META[key]["label"]
+        ),
         key="scq_select",
     )
+    if not scq_key:
+        st.info(
+            "Choose one of the eight forms above, or ask a question in your "
+            "own words and it will be chosen for you."
+        )
+        return
 
     meta = SCQ_META[scq_key]
 
@@ -5494,10 +5564,15 @@ def page_scq_demonstrator(
 
         selected_lsoa = st.selectbox(
             t("lsoa_label"),
-            options,
+            [("", "\u2014 choose an LSOA \u2014")] + list(options),
             format_func=lambda option: option[1],
             key=f"{scq_key}_lsoa",
         )
+        if not selected_lsoa[0]:
+            st.info(
+                "Choose an LSOA, or name one in the question box above."
+            )
+            return
 
         params["lsoa"] = selected_lsoa[0]
 
@@ -5564,10 +5639,17 @@ def page_scq_demonstrator(
 
         selected_admin = st.selectbox(
             t("admin_unit_label"),
-            admin_units,
+            [("", "\u2014 choose an administrative unit \u2014")]
+            + list(admin_units),
             format_func=lambda option: option[1],
             key=f"{scq_key}_admin",
         )
+        if not selected_admin[0]:
+            st.info(
+                "Choose an administrative unit, or name one in the question "
+                "box above."
+            )
+            return
 
         params["admin"] = selected_admin[0]
 
