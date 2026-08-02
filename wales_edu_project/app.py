@@ -1541,6 +1541,331 @@ TASK3_REFERENCES = [
 ]
 
 
+# =============================================================================
+# NATURAL-LANGUAGE QUERY ENGINE
+# =============================================================================
+# Rule-based rather than model-backed, and deliberately so. A spatial
+# competency question has an exact definition, and the scorecard measures that
+# definition; a parser that sometimes reads "near" as distance and sometimes
+# as two touches-steps would put noise inside the instrument. A rule table is
+# also deterministic, needs no API key, runs offline, and can be inspected by
+# a marker who has no credentials of ours.
+#
+# The engine reports what it matched, so the reader can see the reasoning
+# rather than trust it: which relation was recognised, on what evidence, and
+# what was left undecided.
+
+# Order matters. Negations and compound forms are tested before the simple
+# forms they contain: "not adjacent" before "adjacent", "near but not
+# intersecting" before "near", "intersect" before everything that mentions an
+# administrative unit.
+NL_RELATION_RULES: List[Tuple[str, List[str], str]] = [
+    (
+        "SCQ8",
+        [
+            "near but do not intersect", "near, but do not intersect",
+            "near but not intersect", "cross-near", "cross near",
+            "nearby administrative", "nearby but non-intersecting",
+            "nearby areas", "agos ond heb groestorri",
+        ],
+        "near(AdminUnit) AND NOT intersects",
+    ),
+    (
+        "SCQ4",
+        [
+            "not adjacent", "non-adjacent", "not share a boundary",
+            "do not share", "not border", "not touching", "nid yw'n ffinio",
+            "heb ffinio",
+        ],
+        "NOT touches(LSOA)",
+    ),
+    (
+        "SCQ7",
+        [
+            "intersect", "intersects", "intersecting", "cross-hierarchy",
+            "cross hierarchy", "croestorri",
+        ],
+        "intersects(AdminUnit, LSOA)",
+    ),
+    (
+        "SCQ3",
+        [
+            "between", "path between", "lie between", "lies between",
+            "shortest cycle-free", "cycle-free path", "rhwng",
+        ],
+        "between(LSOA, LSOA)",
+    ),
+    (
+        "SCQ6",
+        [
+            "contained within", "nested inside", "nested within",
+            "decomposed into", "which wards are contained",
+            "which communities are contained", "units inside",
+            "wedi'u cynnwys",
+        ],
+        "contains(AdminUnit -> child)",
+    ),
+    (
+        "SCQ5",
+        [
+            "parent contains", "administrative parent", "parent chain",
+            "which unitary authority contains", "which authority contains",
+            "contains the selected ward", "contains the selected community",
+            "rhiant gweinyddol",
+        ],
+        "within(child -> AdminUnit)",
+    ),
+    (
+        "SCQ2",
+        [
+            "graph-near", "graph near", "two steps", "two touches-steps",
+            "extended neighbour", "near the selected", "near a selected",
+            "yn agos at",
+        ],
+        "near(LSOA) = two touches-steps",
+    ),
+    (
+        "SCQ1",
+        [
+            "directly border", "direct adjacency", "border the selected",
+            "bordering", "adjacent", "neighbouring", "neighbours",
+            "touches", "next to", "yn ffinio", "cyfagos",
+        ],
+        "touches(LSOA, LSOA)",
+    ),
+]
+
+# What the question is asking ABOUT, once the relation is known. These do not
+# change which query runs - every SCQ answer already carries all four
+# variables - but they tell the reader which column to look at, and they are
+# what the warrant document calls the CONTENT half of a question.
+NL_FOCUS_RULES: List[Tuple[str, List[str], str]] = [
+    ("fsm", ["fsm", "free school meal", "prydau ysgol am ddim"],
+     "School FSM %"),
+    ("attendance", ["attendance", "absence", "presenoldeb"],
+     "School attendance %"),
+    ("performance", ["performance", "capped 9", "capped9", "attainment",
+                     "gcse", "secondary performance", "perfformiad"],
+     "Capped 9 (secondary only)"),
+    ("deprivation", ["deprivation", "deprived", "wimd", "poverty",
+                     "amddifadedd", "tlodi"],
+     "WIMD deprivation"),
+]
+
+_NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
+
+
+def parse_spatial_question(
+    text: str,
+    lsoa_options: List[Tuple[str, str]] | None = None,
+    admin_options: List[Tuple[str, str]] | None = None,
+) -> Dict[str, Any]:
+    """Read one question and return what could be identified in it.
+
+    Nothing is guessed. A field the sentence does not determine is returned
+    empty, and the caller leaves the corresponding control untouched rather
+    than filling it with a default that the reader did not ask for.
+    """
+    raw = (text or "").strip()
+    low = raw.lower()
+    found: Dict[str, Any] = {
+        "text": raw,
+        "scq": None,
+        "relation": None,
+        "matched_phrase": None,
+        "focus": [],
+        "focus_labels": [],
+        "areas": [],
+        "admin": None,
+        "steps": [],
+        "unmatched": [],
+    }
+    if not raw:
+        return found
+
+    for scq_key, phrases, relation in NL_RELATION_RULES:
+        hit = next((p for p in phrases if p in low), None)
+        if hit:
+            found["scq"] = scq_key
+            found["relation"] = relation
+            found["matched_phrase"] = hit
+            found["steps"].append(
+                f"Recognised \u201c{hit}\u201d as the spatial form "
+                f"{scq_key}: {relation}."
+            )
+            break
+    if not found["scq"]:
+        found["unmatched"].append(
+            "No spatial relation was recognised. Name one of: border, near, "
+            "between, not adjacent, contains, within, intersect."
+        )
+
+    for key, phrases, label in NL_FOCUS_RULES:
+        if any(p in low for p in phrases):
+            found["focus"].append(key)
+            found["focus_labels"].append(label)
+    if found["focus_labels"]:
+        found["steps"].append(
+            "Reading focus: " + ", ".join(found["focus_labels"]) + "."
+        )
+
+    # An explicit LSOA code always wins over a name match.
+    codes = [c.upper() for c in _NL_CODE.findall(raw)]
+    for option in lsoa_options or []:
+        code, label = option[0], str(option[1])
+        if code in codes and code not in [a[0] for a in found["areas"]]:
+            found["areas"].append((code, label))
+    if not found["areas"]:
+        for option in lsoa_options or []:
+            code, label = option[0], str(option[1])
+            name = label.split("|")[-1].strip().lower()
+            if len(name) > 5 and name in low:
+                found["areas"].append((code, label))
+                if len(found["areas"]) == 2:
+                    break
+    if found["areas"]:
+        found["steps"].append(
+            "Area: " + "; ".join(a[1] for a in found["areas"]) + "."
+        )
+
+    for option in admin_options or []:
+        uri, label = option[0], str(option[1])
+        name = label.split("|")[0].strip().lower()
+        if len(name) > 4 and name in low:
+            found["admin"] = (uri, label)
+            found["steps"].append(f"Administrative unit: {label}.")
+            break
+
+    return found
+
+
+NL_EXAMPLES = [
+    "Which LSOAs directly border Blaenau Gwent 001A?",
+    "Which neighbouring LSOAs have the highest school FSM levels?",
+    "Which LSOAs are graph-near the selected LSOA?",
+    "Which LSOAs lie between W01001840 and W01001777?",
+    "Which LSOAs are not adjacent to the selected LSOA?",
+    "Which administrative parent contains the selected Ward?",
+    "Which Wards are contained within Cardiff?",
+    "Which Wards or Communities intersect the selected LSOA?",
+    "Which Wards are near, but do not intersect, the selected LSOA?",
+]
+
+
+def render_nl_search(
+    lsoa_options: List[Tuple[str, str]] | None,
+    admin_options: List[Tuple[str, str]] | None,
+) -> None:
+    """A question box that drives the controls below it.
+
+    The box sets the selectors rather than running its own query, so the
+    answer a reader sees is always produced by the same code path as the
+    manual route. Nothing is hidden behind the sentence.
+    """
+    st.markdown(
+        "<div class='nl-wrap'>"
+        "<div class='nl-title'>Ask in your own words</div>"
+        "<div class='nl-sub'>The question sets the controls below. "
+        "Rule-based and offline: no model, no API key, same answer every "
+        "time.</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    col_input, col_go = st.columns([6, 1])
+    with col_input:
+        question = st.text_input(
+            "Question",
+            key="nl_question",
+            placeholder="Which LSOAs directly border Blaenau Gwent 001A?",
+            label_visibility="collapsed",
+        )
+    with col_go:
+        asked = st.button("Ask", type="primary", use_container_width=True)
+
+    with st.expander("Example questions", expanded=False):
+        cols = st.columns(3)
+        for i, example in enumerate(NL_EXAMPLES):
+            if cols[i % 3].button(example, key=f"nl_ex_{i}"):
+                st.session_state.nl_question = example
+                st.session_state.nl_pending = example
+                st.rerun()
+
+    pending = st.session_state.pop("nl_pending", None)
+    if pending:
+        question = pending
+        asked = True
+
+    if not (asked and question):
+        return
+
+    parsed = parse_spatial_question(question, lsoa_options, admin_options)
+    st.session_state.nl_last = parsed
+
+    # Setting the widget state before the widget is drawn is what makes the
+    # sentence move the controls; the query itself is left to the normal path.
+    changed = []
+    if parsed["scq"]:
+        st.session_state["scq_select"] = parsed["scq"]
+        changed.append(parsed["scq"])
+    scq = parsed["scq"]
+    if scq and parsed["areas"]:
+        if scq == "SCQ3" and len(parsed["areas"]) >= 2:
+            # SCQ3 names its two endpoint widgets in lower case.
+            st.session_state["scq3_lsoa_a"] = parsed["areas"][0]
+            st.session_state["scq3_lsoa_b"] = parsed["areas"][1]
+            changed.append("both endpoints")
+        else:
+            st.session_state[f"{scq}_lsoa"] = parsed["areas"][0]
+            changed.append(parsed["areas"][0][1])
+    if scq and parsed["admin"]:
+        st.session_state[f"{scq}_admin"] = parsed["admin"]
+        changed.append(parsed["admin"][1])
+    if scq:
+        st.session_state[f"scq_ran_{scq}"] = True
+
+    if changed:
+        st.rerun()
+
+
+def render_nl_understanding() -> None:
+    """Show what the last question was read as, beneath the controls."""
+    parsed = st.session_state.get("nl_last")
+    if not parsed or not parsed.get("text"):
+        return
+
+    chips = []
+    if parsed["relation"]:
+        chips.append(
+            f"<span class='nl-chip nl-chip-rel'>{escape(parsed['relation'])}"
+            "</span>"
+        )
+    for label in parsed["focus_labels"]:
+        chips.append(
+            f"<span class='nl-chip nl-chip-focus'>{escape(label)}</span>"
+        )
+    for _code, label in parsed["areas"]:
+        chips.append(f"<span class='nl-chip nl-chip-area'>{escape(label)}</span>")
+    if parsed["admin"]:
+        chips.append(
+            f"<span class='nl-chip nl-chip-area'>"
+            f"{escape(str(parsed['admin'][1]))}</span>"
+        )
+
+    steps = "".join(f"<li>{escape(s)}</li>" for s in parsed["steps"])
+    warn = "".join(
+        f"<div class='nl-warn'>{escape(u)}</div>" for u in parsed["unmatched"]
+    )
+    st.markdown(
+        "<div class='nl-read'>"
+        "<div class='nl-read-title'>Read as</div>"
+        f"<div class='nl-chips'>{''.join(chips) or '&mdash;'}</div>"
+        + (f"<ol class='nl-steps'>{steps}</ol>" if steps else "")
+        + warn
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_scq_evidence(scq_key: str) -> None:
     """Show the Task 3 warrant for one question, then the questions it answers.
 
@@ -2405,6 +2730,43 @@ div[data-testid="stCodeBlock"] code {{
   color:{text} !important;
   border-color:{panel_border} !important;
 }}
+/* ---- natural-language search ---- */
+.nl-wrap {{
+  background:{accent_grad};
+  border-radius:14px 14px 0 0;
+  padding:.85rem 1.1rem .7rem;
+  color:#fff;
+  margin-top:.2rem;
+}}
+.nl-title {{ font-size:1.02rem; font-weight:800; letter-spacing:.01em; }}
+.nl-sub {{ font-size:.8rem; opacity:.92; margin-top:.15rem; line-height:1.35rem; }}
+.nl-read {{
+  background:{ev_bg};
+  border:1px solid {ev_border};
+  border-radius:12px;
+  padding:.75rem .95rem;
+  margin:.55rem 0 .9rem;
+  color:{text};
+}}
+.nl-read-title {{
+  font-size:.66rem; font-weight:800; letter-spacing:.13em;
+  text-transform:uppercase; color:{muted}; margin-bottom:.45rem;
+}}
+.nl-chips {{ display:flex; flex-wrap:wrap; gap:.35rem; }}
+.nl-chip {{
+  font-size:.76rem; font-weight:700; padding:.2rem .6rem;
+  border-radius:999px; border:1px solid {ev_border};
+}}
+.nl-chip-rel {{ color:{field_focus}; background:{ev_quote_bg}; font-family:ui-monospace,Consolas,monospace; }}
+.nl-chip-focus {{ color:{ev_partial}; background:{ev_partial_bg}; }}
+.nl-chip-area {{ color:{ev_full}; background:{ev_full_bg}; }}
+.nl-steps {{ margin:.6rem 0 0; padding-left:1.15rem; }}
+.nl-steps li {{ font-size:.83rem; line-height:1.5rem; color:{muted}; }}
+.nl-warn {{
+  margin-top:.5rem; font-size:.82rem; color:{ev_partial};
+  background:{ev_partial_bg}; border-radius:8px; padding:.4rem .6rem;
+}}
+
 /* ---- Task 3 evidence block ---- */
 .ev-inst {{
   background:{ev_quote_bg};
@@ -4795,10 +5157,19 @@ def page_scq_demonstrator(
         "Complete",
     )
 
+    # The question box comes first: a reader who knows what they want to ask
+    # should not have to work out which of eight forms it corresponds to.
+    render_nl_search(
+        lsoa_options(cfg),
+        admin_options(cfg, "admin_intersects"),
+    )
+    render_nl_understanding()
+
     scq_key = st.selectbox(
         t("select_scq"),
         list(SCQ_META.keys()),
         format_func=lambda key: SCQ_META[key]["label"],
+        key="scq_select",
     )
 
     meta = SCQ_META[scq_key]
