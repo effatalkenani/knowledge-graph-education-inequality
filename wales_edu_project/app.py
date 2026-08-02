@@ -7093,14 +7093,24 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
                     "</div>",
                     unsafe_allow_html=True,
                 )
+                current = st.session_state.get("map_nl_question", "")
                 cols = st.columns(2)
                 for i, question_text in enumerate(entry["questions"]):
+                    chosen = question_text == current
+                    # The chosen question is marked and its button becomes the
+                    # primary one, so a reader can see at a glance which of
+                    # the library produced what is on the map. Pressing it
+                    # again clears the question and the results with it.
                     if cols[i % 2].button(
-                        question_text,
+                        ("\u2713  " if chosen else "") + question_text,
                         key=f"map_q_{group}_{i}",
                         use_container_width=True,
+                        type="primary" if chosen else "secondary",
                     ):
-                        st.session_state["map_nl_question"] = question_text
+                        st.session_state["map_nl_question"] = (
+                            "" if chosen else question_text
+                        )
+                        st.session_state.pop("map_nl_applied", None)
                         st.rerun()
 
     col_q, col_go = st.columns([6, 1])
