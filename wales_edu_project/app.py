@@ -3075,10 +3075,13 @@ div[data-testid="stCodeBlock"] code {{
    Wales sits at the same optical weight as the title block beside it. */
 .hero-wales {{
   flex:0 0 auto;
-  height:150px;
+  height:240px;          /* the one number to change if you want it bigger */
   width:auto;
+  max-width:42%;
+  object-fit:contain;
   align-self:center;
-  filter:drop-shadow(0 3px 8px rgba(0,0,0,.20));
+  margin:-.6rem -.4rem -.6rem 0;
+  filter:drop-shadow(0 4px 12px rgba(0,0,0,.22));
 }}
 @media (max-width: 820px) {{
   .hero {{ display:block; }}
