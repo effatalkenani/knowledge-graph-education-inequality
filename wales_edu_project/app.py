@@ -4341,6 +4341,22 @@ div[data-testid="stDeckGlJsonChart"] canvas + div {
   padding: 0 !important;
   pointer-events: none !important;
 }
+/* The card was being cut off at the right edge of the map. deck.gl places it
+   with inline coordinates inside the canvas wrapper, so the fix is to stop
+   every ancestor from clipping and to cap the card's width so it has room to
+   sit beside a pin near the edge rather than run past it. */
+section[data-testid="stMain"],
+div[data-testid="stMainBlockContainer"],
+div[data-testid="stVerticalBlock"],
+div[data-testid="stVerticalBlockBorderWrapper"],
+div[data-testid="stHorizontalBlock"],
+div[data-testid="stElementContainer"] {
+  overflow: visible !important;
+}
+.deck-tooltip > div {
+  max-width: 320px !important;
+  white-space: normal !important;
+}
 </style>
 """
 
