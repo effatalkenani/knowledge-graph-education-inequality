@@ -1815,7 +1815,9 @@ def parse_spatial_question(
 # which are the properties an instrument needs. The model is offered as a
 # comparison so the choice can be evidenced rather than asserted.
 NL_LLM_MODEL = "gpt-4o-mini"
-NL_LLM_CALL_CAP = 25          # per browser session, so a public URL cannot bill
+NL_LLM_CALL_CAP = 500         # per browser session; the prepaid credit and
+                              # the project spend cap are the real ceiling,
+                              # this only stops a runaway loop on one tab
 
 
 def nl_llm_available() -> bool:
@@ -2039,7 +2041,7 @@ def render_nl_search(
     manual route. Nothing is hidden behind the sentence.
     """
     st.markdown(
-        "<div class='nl-wrap'>"
+        "<div class='nl-wrap' style='margin-top:2.6rem'>"
         "<div class='nl-title'>Ask in your own words</div>"
         "<div class='nl-sub'>The question sets the controls below. "
         "Rule-based and offline: no model, no API key, same answer every "
@@ -3063,6 +3065,25 @@ div[data-testid="stCodeBlock"] code {{
   border-color:{panel_border} !important;
 }}
 .hero {{ position:relative; }}
+.hero {{
+  display:flex;
+  align-items:center;
+  gap:1.4rem;
+}}
+.hero-main {{ flex:1 1 auto; min-width:0; }}
+/* Height is fixed and the width follows the artwork, so any silhouette of
+   Wales sits at the same optical weight as the title block beside it. */
+.hero-wales {{
+  flex:0 0 auto;
+  height:150px;
+  width:auto;
+  align-self:center;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.20));
+}}
+@media (max-width: 820px) {{
+  .hero {{ display:block; }}
+  .hero-wales {{ display:none; }}
+}}
 .hero-logo {{
   display:block;
   height:52px;
@@ -3565,17 +3586,16 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
 # UI COMPONENTS
 # =============================================================================
 @st.cache_data(show_spinner=False)
-def _logo_data_uri() -> str:
-    """The crest as an inline data URI.
+def _image_data_uri(filename: str) -> str:
+    """An image beside app.py as an inline data URI.
 
     Read from disk and embedded rather than linked, so the header renders
-    identically offline and on a marker's machine with no network.
+    identically offline and on a marker's machine with no network. A missing
+    file returns an empty string and the header simply omits the image.
     """
     import base64
 
-    path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "cardiff_logo.png"
-    )
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
     try:
         with open(path, "rb") as handle:
             encoded = base64.b64encode(handle.read()).decode("ascii")
@@ -3584,15 +3604,28 @@ def _logo_data_uri() -> str:
         return ""
 
 
+def _logo_data_uri() -> str:
+    return _image_data_uri("cardiff_logo.png")
+
+
 def hero() -> None:
     logo = _logo_data_uri()
     crest = (
         f"<img class='hero-logo' src='{logo}' "
         "alt='Cardiff University' />" if logo else ""
     )
+    # Drop wales_education_kg.png beside app.py and it appears on the right of
+    # the header. If the file is absent the header keeps its old single-column
+    # shape, so a missing image never breaks the page.
+    wales_uri = _image_data_uri("wales_education_kg.png")
+    wales = (
+        f"<img class='hero-wales' src='{wales_uri}' alt='Wales' />"
+        if wales_uri else ""
+    )
     st.markdown(
         """
 <div class="hero">
+  <div class="hero-main">
   """
         + crest
         + """
@@ -3603,6 +3636,10 @@ def hero() -> None:
     <span><b>Supervisor</b><br/>Dr Alia Abdelmoty</span>
     <span><b>Module</b><br/>CMT403 Dissertation</span>
   </div>
+  </div>
+  """
+        + wales
+        + """
 </div>
 """,
         unsafe_allow_html=True,
@@ -5785,10 +5822,21 @@ def page_scq_demonstrator(
             )
             return
 
+        # Landing on an empty state reads as a broken page to anyone who has
+        # not been told to pick something first. Opening on the first Cardiff
+        # LSOA means the demonstrator shows a worked answer on arrival, while
+        # the placeholder stays in the list for anyone who wants it.
+        lsoa_choices = [("", "\u2014 choose an LSOA \u2014")] + list(options)
+        default_lsoa = next(
+            (i for i, opt in enumerate(lsoa_choices)
+             if str(opt[1]).lower().startswith("cardiff")),
+            0,
+        )
         selected_lsoa = st.selectbox(
             t("lsoa_label"),
-            [("", "\u2014 choose an LSOA \u2014")] + list(options),
+            lsoa_choices,
             format_func=lambda option: option[1],
+            index=default_lsoa,
             key=f"{scq_key}_lsoa",
         )
         if not selected_lsoa[0]:
