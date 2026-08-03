@@ -2779,7 +2779,7 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         muted = "#a3abbb"
         sidebar_text = "#e8eaf0"
         metric_bg = "rgba(255,255,255,.07)"
-        hero = "linear-gradient(135deg,#c2410c 0%,#c2410c 54%,#0f766e 54%,#0f766e 100%)"
+        hero = "#D73648"
         nav_bg = "rgba(255,255,255,.06)"
         nav_active = "linear-gradient(135deg,#9a3412,#c2410c)"
         map_tiles = "dark"
@@ -6418,7 +6418,7 @@ def page_evaluation() -> None:
         )
         a1, a2, a3, a4, a5 = st.columns(5)
         a1.metric(
-            "Relation-instance completeness \u2014 Wales",
+            "Completeness \u2014 Wales",
             "100.00%",
             help=(
                 "6,211 matched of 6,211 geometry-definable instances, over "
@@ -6427,7 +6427,7 @@ def page_evaluation() -> None:
             ),
         )
         a2.metric(
-            "Relation-instance completeness \u2014 UK-wide",
+            "Completeness \u2014 UK-wide",
             "99.85%",
             help=(
                 "134,747 matched of 134,946 definable, over every row of the "
@@ -7371,11 +7371,13 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"deprivation": "high" | "medium" | "low"\n'
             '"phases": subset of ["primary","secondary","special"]\n'
             '"medium": "welsh" | "english"\n'
+            '"authority": local authority or town name, e.g. "Cardiff"\n'
             '"transport": "near" | "far"\n'
             '"ranges": [{"field": f, "min": n, "max": n}]\n'
             '"comparisons": [{"field": f, "op": ">=" or "<=", "value": n}]\n'
             'where f is one of "fsm", "attendance", "capped9", "budget", '
-            '"pupils". Use nothing outside these values.'
+            '"pupils". Use nothing outside these values. Questions may be '
+            'in any language; translate place names to their English form.'
         )
         response = client.chat.completions.create(
             model=_nl_llm_model(),
@@ -7428,6 +7430,18 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         )
         out["params"]["nl_phases"] = phases
         out["chips"].append("phase = " + " / ".join(phases))
+
+    # The manual sidebar has always had a Local authority filter; the parser
+    # schema did not, so a question naming a place parsed to nothing and the
+    # map fell back to all 1,444 schools. Bound as a parameter like the rest.
+    authority = str(data.get("authority") or "").strip()
+    if authority:
+        out["conditions"].append(
+            "toLower(coalesce(s.local_authority_name, s.local_authority, "
+            "l.local_authority, '')) CONTAINS toLower($nl_authority)"
+        )
+        out["params"]["nl_authority"] = authority
+        out["chips"].append(f"local authority = {authority}")
 
     medium = str(data.get("medium") or "").lower()
     if medium in {"welsh", "english"}:
