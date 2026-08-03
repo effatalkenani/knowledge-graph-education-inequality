@@ -5518,6 +5518,30 @@ ADMIN_FILL = {
 
 
 @st.cache_data(show_spinner=False, ttl=600)
+def admin_unit_school_counts(
+    cfg_key: Tuple[str, str, str, str], uris: Tuple[str, ...]
+) -> Dict[str, int]:
+    """How many schools sit inside each drawn unit, in a single round trip.
+
+    One query for the whole map rather than one per polygon, because the
+    containment map can draw hundreds of units at once.
+    """
+    if not uris:
+        return {}
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    df = run_cypher(cfg, """
+    MATCH (a:AdminUnit)-[:INTERSECTS]->(l:LSOA)
+    WHERE a.uri IN $uris
+    OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
+    RETURN a.uri AS uri, count(DISTINCT s) AS schools
+    """, {"uris": list(uris)})
+    if df.empty:
+        return {}
+    return {str(r["uri"]): int(r["schools"]) for _, r in df.iterrows()}
+
+
+@st.cache_data(show_spinner=False, ttl=600)
 def unit_school_detail(
     cfg_key: Tuple[str, str, str, str], uri: str
 ) -> pd.DataFrame:
@@ -5651,6 +5675,14 @@ def render_admin_containment_map(
     if polys.empty:
         return
 
+    try:
+        school_counts = admin_unit_school_counts(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            tuple(sorted(set(wanted))),
+        )
+    except Exception:
+        school_counts = {}
+
     row_set = set(row_uris)
     containers, contained = [], []
     lats: List[float] = []
@@ -5670,6 +5702,10 @@ def render_admin_containment_map(
                 lons.append(pt[0]); lats.append(pt[1])
             item = {
                 "polygon": ring,
+                # uri is what the click handler needs to look the unit up;
+                # without it the panel below the map had nothing to open.
+                "uri": uri,
+                "schools": school_counts.get(uri, 0),
                 "name": prow.get("name"),
                 "type": prow.get("type"),
                 "role": (
@@ -5753,7 +5789,11 @@ def render_admin_containment_map(
             f"<div style='font-size:10.5px;color:{C_MUTED};"
             "margin:2px 0 6px;'>{type}</div>"
             f"<div style='font-size:12px;font-weight:700;color:{C_WIMD};'>"
-            "{role}</div></div>"
+            "{role}</div>"
+            f"<div style='margin-top:6px;font-size:11.5px;font-weight:800;"
+            f"color:{C_HEAD};'>{{schools}} schools inside</div>"
+            f"<div style='font-size:9.5px;color:{C_MUTED};margin-top:1px;'>"
+            "via INTERSECTS then LOCATED_IN</div></div>"
         ),
         "style": {"backgroundColor": "transparent", "color": "#0f172a",
                   "zIndex": "9999"},
@@ -6027,6 +6067,31 @@ def page_scq_demonstrator(
                 "for this query."
             )
             return
+
+        # Labels are "Name | Type", so the type can be filtered before the
+        # list reaches the widget. This is also the single biggest speed win
+        # on this page: the unfiltered list can carry ~19,000 options, and
+        # every one of them is serialised to the browser on each rerun.
+        unit_types = sorted({
+            str(label).rsplit("|", 1)[-1].strip()
+            for _value, label in admin_units
+            if "|" in str(label)
+        })
+        chosen_type = st.selectbox(
+            "Unit type",
+            ["All types"] + unit_types,
+            key=f"{scq_key}_admin_type",
+            help=(
+                "Narrows the list below to one level of the hierarchy. "
+                "Typing in the unit box alone cannot do this, because it "
+                "matches the whole label."
+            ),
+        )
+        if chosen_type != "All types":
+            admin_units = [
+                (value, label) for value, label in admin_units
+                if str(label).rsplit("|", 1)[-1].strip() == chosen_type
+            ]
 
         admin_choices = (
             [("", "\u2014 choose an administrative unit \u2014")]
