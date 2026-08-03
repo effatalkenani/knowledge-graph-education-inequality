@@ -5514,13 +5514,100 @@ ADMIN_FILL = {
 }
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def unit_school_detail(
+    cfg_key: Tuple[str, str, str, str], uri: str
+) -> pd.DataFrame:
+    """Every school inside an administrative unit, one row each.
+
+    The path is AdminUnit -[:INTERSECTS]-> LSOA <-[:LOCATED_IN]- School.
+    Neither hop is native YAGO2geo: INTERSECTS is Geometry-origin and
+    LOCATED_IN is Derived from the schools CSV. The card says so, because
+    this page is where provenance is being measured.
+    """
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    return run_cypher(cfg, """
+    MATCH (a:AdminUnit {uri:$uri})-[:INTERSECTS]->(l:LSOA)
+    OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
+    WITH l, s WHERE s IS NOT NULL
+    RETURN DISTINCT
+        coalesce(s.name, s.school_name, s.code) AS school,
+        coalesce(s.phase_group, s.phase, s.school_type) AS phase,
+        l.code AS lsoa,
+        coalesce(l.deprivation, s.deprivation) AS deprivation,
+        s.fsm_pct AS fsm_pct,
+        s.attendance_pct AS attendance_pct,
+        coalesce(s.pupils_2025, s.pupils) AS pupils
+    ORDER BY school
+    """, {"uri": uri})
+
+
+def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
+    """The clicked unit, its schools and their deprivation split."""
+    uri = str(unit.get("uri") or "")
+    if not uri:
+        return
+    name = str(unit.get("name") or uri)
+    utype = str(unit.get("type") or "Administrative unit")
+    try:
+        df = unit_school_detail(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]), uri
+        )
+    except Exception:
+        st.caption("The school detail for this unit could not be read.")
+        return
+
+    counts = (
+        df["deprivation"].fillna("unknown").astype(str)
+        .str.replace("_deprivation", "", regex=False).value_counts().to_dict()
+        if not df.empty else {}
+    )
+    chips = "".join(
+        f"<span style='display:inline-block;background:#f8fafc;"
+        f"border:1px solid #eef2f7;border-radius:9px;padding:4px 9px;"
+        f"margin:3px 5px 0 0;font-size:11px;font-weight:800;"
+        f"color:{colour};'>{escape(label.title())} {counts.get(label, 0)}"
+        "</span>"
+        for label, colour in (
+            ("high", "#e11d48"), ("medium", "#c2410c"),
+            ("low", "#15803d"), ("unknown", "#64748b"),
+        )
+        if counts.get(label)
+    )
+    st.markdown(
+        "<div style='font-family:Segoe UI,Arial,sans-serif;max-width:520px;"
+        "background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;"
+        "padding:12px 14px;box-shadow:0 10px 26px rgba(15,23,42,.10);"
+        "margin-top:.6rem;'>"
+        f"<div style='font-size:14px;font-weight:900;color:{C_HEAD};'>"
+        f"{escape(name)}</div>"
+        f"<div style='font-size:11px;color:{C_MUTED};margin:2px 0 8px;'>"
+        f"{escape(utype)}</div>"
+        f"<div style='font-size:22px;font-weight:900;color:{C_HEAD};"
+        f"line-height:1;'>{len(df)}</div>"
+        f"<div style='font-size:10px;font-weight:800;color:{C_MUTED};"
+        "text-transform:uppercase;letter-spacing:.04em;'>"
+        "schools inside this unit</div>"
+        f"<div style='margin-top:6px;'>{chips}</div>"
+        f"<div style='margin-top:9px;font-size:10px;color:{C_MUTED};"
+        "line-height:1.45;'>Provenance: INTERSECTS (Geometry-origin) then "
+        "LOCATED_IN (Derived). Neither hop is asserted by native "
+        "YAGO2geo.</div></div>",
+        unsafe_allow_html=True,
+    )
+    if not df.empty:
+        with st.expander(f"School detail for {name}", expanded=False):
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def render_admin_containment_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
     focus_uri: str | None,
     focus_contains: bool,
     key: str = "admin_map",
-) -> None:
+) -> Dict[str, Any] | None:
     """Draw a containment answer: container pale, contained solid on top.
 
     focus_contains is True for SCQ6, where the selected unit is the parent
@@ -5670,7 +5757,7 @@ def render_admin_containment_map(
     }
 
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
-    st.pydeck_chart(
+    picked_unit = deck_chart_with_click(
         pdk.Deck(
             layers=layers,
             initial_view_state=view,
@@ -5678,7 +5765,7 @@ def render_admin_containment_map(
             tooltip=tooltip,
             parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
         ),
-        use_container_width=True,
+        key=key,
     )
     st.markdown(
         "<div class='map-note'>"
@@ -5696,6 +5783,7 @@ def render_admin_containment_map(
     )
     if drawn_note:
         st.caption(drawn_note)
+    return picked_unit
 
 
 def page_scq_demonstrator(
@@ -6230,13 +6318,15 @@ def page_scq_demonstrator(
                 # Containment inside the administrative hierarchy nests
                 # cleanly, which is exactly the contrast with SCQ7 that the
                 # reclassification rests on, so it is worth drawing.
-                render_admin_containment_map(
+                clicked_unit = render_admin_containment_map(
                     cfg,
                     result_df,
                     params.get("admin"),
                     focus_contains=(scq_key == "SCQ6"),
                     key=f"map_{scq_key}",
                 )
+                if clicked_unit:
+                    render_unit_school_card(cfg, clicked_unit)
             else:
                 clicked = render_answer_map(
                     cfg,
