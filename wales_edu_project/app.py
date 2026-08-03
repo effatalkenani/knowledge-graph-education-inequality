@@ -5729,23 +5729,13 @@ def page_scq_demonstrator(
     # Nothing is pre-selected. A default would answer a question the reader
     # never asked, and once a question box sits above these controls there is
     # no way to tell a default apart from something the sentence set.
-    _scq_choices = [""] + list(SCQ_META.keys())
-    _scq_default = (
-        _scq_choices.index("SCQ1") if "SCQ1" in _scq_choices else 0
-    )
-    # A selectbox with a key ignores index= once session state holds a value,
-    # which is why the page kept reopening on whatever was chosen last. Seed
-    # the state on the first run of a session instead.
-    if "scq_select" not in st.session_state:
-        st.session_state["scq_select"] = _scq_choices[_scq_default]
     scq_key = st.selectbox(
         t("select_scq"),
-        _scq_choices,
+        [""] + list(SCQ_META.keys()),
         format_func=lambda key: (
             "\u2014 choose a spatial question \u2014" if not key
             else SCQ_META[key]["label"]
         ),
-        index=_scq_default,
         key="scq_select",
     )
     if not scq_key:
