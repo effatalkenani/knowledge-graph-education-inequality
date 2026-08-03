@@ -5277,6 +5277,7 @@ def render_answer_map(
     focus_code: Any = None,
     key: str = "answer_map",
     focus_admin: str | None = None,
+    show_gap: bool = False,
 ) -> str | None:
     """Draw the LSOAs in an SCQ answer as coloured regions.
 
@@ -5566,11 +5567,23 @@ def render_answer_map(
         # from the picture, so the answer looked as though it began at the
         # unit's edge. Drawing them hollow makes the gap visible, which is the
         # whole difference between near and intersects.
+        # Only a near question leaves a gap. For SCQ7 the LSOAs the unit
+        # intersects ARE the answer, so outlining them as excluded was wrong
+        # and produced the hollow shapes over coloured regions.
+        skipped: Tuple[str, ...] = ()
         try:
-            skipped = admin_direct_lsoas(
+            skipped = () if not show_gap else admin_direct_lsoas(
                 (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
                 str(focus_admin),
             )
+            # Some GRAPH_NEAR pairs also touch, through triangles in the
+            # adjacency graph, so a code can be both a neighbour and a
+            # genuine answer. Anything the query returned stays in the
+            # answer and is never outlined as excluded.
+            answered = {str(c) for c in result_df.select_dtypes(
+                include="object").stack().unique()
+                if str(c).startswith("W01")}
+            skipped = tuple(c for c in skipped if c not in answered)
             gap_polys = (
                 cluster_polygons(
                     (cfg["uri"], cfg["user"], cfg["password"],
@@ -6804,6 +6817,7 @@ def page_scq_demonstrator(
                          params.get("lsoa_b")],
                         key="map_SCQ8_answer",
                         focus_admin=params.get("admin"),
+                        show_gap=True,
                     )
                     if clicked:
                         render_lsoa_school_panel(cfg, clicked)
