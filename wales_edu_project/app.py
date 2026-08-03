@@ -21,7 +21,6 @@ import re
 from html import escape
 from typing import Any, Dict, List, Tuple
 
-import folium
 import pydeck as pdk
 import pandas as pd
 import streamlit as st
@@ -1887,6 +1886,22 @@ def _nl_llm_model() -> str:
     return os.environ.get("OPENAI_MODEL", NL_LLM_MODEL)
 
 
+def _nl_llm_error(exc: Exception) -> str:
+    """One readable line instead of the provider's raw payload.
+
+    The unedited exception carried the quota figures and the provider's
+    billing links straight onto a public page, which is not something a
+    marker should be reading over the shoulder of the demonstrator.
+    """
+    text = str(exc)
+    if "429" in text or "RESOURCE_EXHAUSTED" in text or "quota" in text.lower():
+        return (
+            "The model parser has used its daily request allowance. The "
+            "rule-based engine answered instead."
+        )
+    return "The model parser could not be reached. The rule-based engine answered instead."
+
+
 def llm_parse_question(
     text: str,
     lsoa_options: List[Tuple[str, str]] | None = None,
@@ -1941,7 +1956,7 @@ def llm_parse_question(
     except Exception as exc:
         fallback = parse_spatial_question(text, lsoa_options, admin_options)
         fallback["parser"] = "rule-based (model unavailable)"
-        fallback["unmatched"].append(f"Model call failed: {exc}")
+        fallback["unmatched"].append(_nl_llm_error(exc))
         return fallback
 
     valid = {f"SCQ{i}" for i in range(1, 9)}
@@ -1957,7 +1972,7 @@ def llm_parse_question(
     }
     result: Dict[str, Any] = {
         "text": text,
-        "parser": f"LLM ({NL_LLM_MODEL})",
+        "parser": f"LLM ({_nl_llm_model()})",
         "scq": scq,
         "relation": (
             dict((k, r) for k, _p, r in NL_RELATION_RULES).get(scq)
@@ -2776,6 +2791,9 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         option_hover = "rgba(255,255,255,.09)"
         option_hover_text = "#f5d0b0"
         accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
+        # The search frame and its magnifier: white on the dark skin.
+        search_ink = "#ffffff"
+        search_icon = "%23ffffff"
         ev_bg = "rgba(255,255,255,.045)"
         ev_border = "rgba(255,255,255,.12)"
         ev_quote_bg = "rgba(255,255,255,.06)"
@@ -2787,29 +2805,33 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         ev_none_bg = "rgba(154,164,181,.14)"
     else:
         # Cardiff University red, used as a soft warm tint rather than grey.
-        app_bg = "linear-gradient(180deg,#fff6f6 0%,#fffafa 45%,#fff1f1 100%)"
-        sidebar_bg = "linear-gradient(180deg,#fff4f4 0%,#ffeaea 100%)"
+        app_bg = "#ffffff"
+        sidebar_bg = "#ffffff"
         panel_bg = "#ffffff"
         panel_border = "#e5e7eb"
         text = "#303443"
         muted = "#596273"
         sidebar_text = "#303443"
         metric_bg = "#ffffff"
-        hero = "linear-gradient(135deg,#ff4f79 0%,#ff4f79 54%,#20c6d7 54%,#20c6d7 100%)"
+        hero = "#D73648"
         nav_bg = "#ffffff"
-        nav_active = "linear-gradient(135deg,#ff4f79,#ff8a00)"
+        nav_active = "linear-gradient(135deg,#D73648,#b8283f)"
         map_tiles = "light"
         ok_color = "#15803d"
         geo_color = "#ea580c"
         derived_color = "#7c3aed"
-        field_bg = "#fffdfa"
-        field_border = "#fdba74"
-        field_focus = "#ea580c"
-        field_glow = "rgba(234,88,12,.14)"
-        field_label = "#7c2d12"
-        option_hover = "#fff7ed"
-        option_hover_text = "#9a3412"
-        accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
+        field_bg = "#ffffff"
+        field_border = "#eccace"
+        field_focus = "#D73648"
+        field_glow = "rgba(215,54,72,.16)"
+        field_label = "#8a1e2b"
+        option_hover = "#fdeef1"
+        option_hover_text = "#8a1e2b"
+        accent_grad = "linear-gradient(135deg,#D73648,#b8283f)"
+        # Cardiff red, sampled from the crest, so the box reads as a search
+        # field at a glance rather than as one more input.
+        search_ink = "#D73648"
+        search_icon = "%23D73648"
         ev_bg = "#ffffff"
         ev_border = "#e8d5cf"
         ev_quote_bg = "#faf7f5"
@@ -3042,18 +3064,14 @@ div[data-testid="stCodeBlock"] code {{
 }}
 .hero {{ position:relative; }}
 .hero-logo {{
-  position:absolute;
-  top:1.05rem;
-  right:1.35rem;
-  height:56px;
+  display:block;
+  height:52px;
   width:auto;
+  margin:0 0 .85rem 0;
   background:#fff;
   border-radius:8px;
-  padding:5px 8px;
-  box-shadow:0 4px 14px rgba(15,23,42,.18);
-}}
-@media (max-width: 720px) {{
-  .hero-logo {{ position:static; display:block; margin:0 0 .6rem; }}
+  padding:6px 10px;
+  box-shadow:0 3px 10px rgba(0,0,0,.14);
 }}
 .hero-inst {{
   font-size:.72rem; font-weight:800; letter-spacing:.16em;
@@ -3085,10 +3103,31 @@ div[role="radiogroup"] label[data-baseweb="radio"] div {{
   border-radius:14px 14px 0 0;
   padding:.85rem 1.1rem .7rem;
   color:#fff;
-  margin-top:.2rem;
+  margin-top:1.7rem;
 }}
 .nl-title {{ font-size:1.02rem; font-weight:800; letter-spacing:.01em; }}
 .nl-sub {{ font-size:.8rem; opacity:.92; margin-top:.15rem; line-height:1.35rem; }}
+
+/* The two question boxes are the only text inputs in the app, so they can be
+   framed directly. A Cardiff-red rule and an inline magnifier make the field
+   read as a search engine instead of another form control. The glyph is an
+   SVG data URI recoloured per theme, so nothing is fetched over the network
+   and it stays crisp at any zoom. */
+div[data-testid="stTextInput"] input {{
+  border:2px solid {search_ink} !important;
+  border-radius:12px !important;
+  padding-left:2.6rem !important;
+  font-size:.95rem !important;
+  background-color:{field_bg} !important;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='{search_icon}' stroke-width='2.1' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><line x1='16.2' y1='16.2' x2='21' y2='21'/></svg>") !important;
+  background-repeat:no-repeat !important;
+  background-position:left .8rem center !important;
+  background-size:17px 17px !important;
+  transition:box-shadow .15s ease, border-color .15s ease;
+}}
+div[data-testid="stTextInput"] input:focus {{
+  box-shadow:0 0 0 3px {field_glow} !important;
+}}
 .nl-read {{
   background:{ev_bg};
   border:1px solid {ev_border};
@@ -3304,14 +3343,34 @@ def scalar(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = Non
     return df.iloc[0, 0]
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_options(uri: str, user: str, password: str, database: str,
+                    cypher: str) -> List[Tuple[str, str]]:
+    """Dropdown contents cached for an hour.
+
+    Streamlit re-executes the whole script on every widget interaction, so an
+    uncached DISTINCT scan over every School node ran again on each keystroke
+    and on every Clear. The option lists change only when the graph is
+    reloaded, so an hour-long cache is safe and removes those round trips.
+    """
+    cfg = {"uri": uri, "user": user, "password": password, "database": database}
+    df = run_cypher(cfg, cypher)
+    if df.empty:
+        return []
+    return [(str(r["value"]), str(r["label"])) for _, r in df.iterrows()]
+
+
 def safe_options(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None) -> List[Tuple[str, str]]:
+    if not params:
+        return _cached_options(cfg["uri"], cfg["user"], cfg["password"],
+                               cfg["database"], cypher)
     df = run_cypher(cfg, cypher, params)
     if df.empty:
         return []
     return [(str(r["value"]), str(r["label"])) for _, r in df.iterrows()]
 
 
-@st.cache_data(ttl=20)
+@st.cache_data(ttl=3600, show_spinner=False)
 def cached_counts(uri: str, user: str, password: str, database: str) -> Dict[str, int]:
     cfg = {"uri": uri, "user": user, "password": password, "database": database}
     return {
@@ -7243,7 +7302,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     except Exception as exc:
         out = parse_map_question(text)
         out["parser"] = "rule-based (model unavailable)"
-        out["unmatched"].append(f"Model call failed: {exc}")
+        out["unmatched"].append(_nl_llm_error(exc))
         return out
 
     fields = {
@@ -7256,7 +7315,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "text": text, "conditions": [], "params": {},
         "chips": [], "unmatched": [],
-        "parser": f"LLM ({NL_LLM_MODEL})",
+        "parser": f"LLM ({_nl_llm_model()})",
     }
 
     dep = str(data.get("deprivation") or "").lower()
@@ -7381,7 +7440,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
                         st.session_state.pop("map_nl_applied", None)
                         st.rerun()
 
-    col_q, col_go = st.columns([6, 1])
+    col_q, col_go, col_clear = st.columns([6, 1, 1])
     with col_q:
         question = st.text_input(
             "Map question",
@@ -7390,6 +7449,11 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
             label_visibility="collapsed",
         )
     with col_go:
+        # The map already re-reads the question on every run, so this button
+        # is a deliberate submit affordance rather than new behaviour: a
+        # search field with no Search button reads as unfinished.
+        st.button("Search", type="primary", use_container_width=True)
+    with col_clear:
         clear = st.button("Clear", use_container_width=True)
     if clear:
         # Raised as a plain flag and applied at the top of the next run,
@@ -8732,12 +8796,23 @@ def main() -> None:
     cfg = sidebar_config()
     apply_dashboard_theme(bool(cfg.get("dark_theme")))
     page = cfg.pop("page")
-    if page == "SCQ Demonstrator":
-        page_scq_demonstrator(cfg)
-    elif page == "Evaluation":
-        page_evaluation()
-    elif page == "Map":
-        page_map(cfg)
+    # Each page is drawn inside its own keyed container. Without this the
+    # three pages share element slots, so a widget from the previous page
+    # can survive the switch and paint over the new one -- which is what put
+    # the Evaluation page's SpCom equation underneath the map search box.
+    try:
+        body = st.container(key=f"page_{page.replace(' ', '_').lower()}")
+    except TypeError:
+        # Older Streamlit builds take no key; the container still isolates
+        # the subtree, only without the stable identity.
+        body = st.container()
+    with body:
+        if page == "SCQ Demonstrator":
+            page_scq_demonstrator(cfg)
+        elif page == "Evaluation":
+            page_evaluation()
+        elif page == "Map":
+            page_map(cfg)
 
 
 if __name__ == "__main__":
