@@ -5520,7 +5520,7 @@ ADMIN_FILL = {
 @st.cache_data(show_spinner=False, ttl=600)
 def admin_unit_school_counts(
     cfg_key: Tuple[str, str, str, str], uris: Tuple[str, ...]
-) -> Dict[str, int]:
+) -> Dict[str, Dict[str, int]]:
     """How many schools sit inside each drawn unit, in a single round trip.
 
     One query for the whole map rather than one per polygon, because the
@@ -5534,11 +5534,16 @@ def admin_unit_school_counts(
     MATCH (a:AdminUnit)-[:INTERSECTS]->(l:LSOA)
     WHERE a.uri IN $uris
     OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
-    RETURN a.uri AS uri, count(DISTINCT s) AS schools
+    RETURN a.uri AS uri,
+           count(DISTINCT l) AS lsoas,
+           count(DISTINCT s) AS schools
     """, {"uris": list(uris)})
     if df.empty:
         return {}
-    return {str(r["uri"]): int(r["schools"]) for _, r in df.iterrows()}
+    return {
+        str(r["uri"]): {"lsoas": int(r["lsoas"]), "schools": int(r["schools"])}
+        for _, r in df.iterrows()
+    }
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -5612,15 +5617,25 @@ def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
         f"<div style='font-size:11px;color:{C_MUTED};margin:2px 0 8px;'>"
         f"{escape(utype)}</div>"
         f"<div style='font-size:22px;font-weight:900;color:{C_HEAD};"
-        f"line-height:1;'>{len(df)}</div>"
+        f"line-height:1;'>{int(unit.get('lsoas') or 0)}</div>"
         f"<div style='font-size:10px;font-weight:800;color:{C_MUTED};"
         "text-transform:uppercase;letter-spacing:.04em;'>"
-        "schools inside this unit</div>"
-        f"<div style='margin-top:6px;'>{chips}</div>"
+        "LSOAs intersecting this unit</div>"
+        f"<div style='margin-top:7px;font-size:12.5px;font-weight:700;"
+        f"color:{C_HEAD};'>{len(df)} schools sit in those LSOAs</div>"
+        f"<div style='font-size:10px;color:{C_MUTED};margin-top:1px;"
+        "line-height:1.45;'>Not a count of schools in the unit. Across "
+        "Wales each school falls inside the intersecting LSOAs of 4.9 "
+        "Communities on average, so this figure double-counts with every "
+        "neighbour.</div>"
+        f"<div style='margin-top:7px;'>{chips}</div>"
         f"<div style='margin-top:9px;font-size:10px;color:{C_MUTED};"
         "line-height:1.45;'>Provenance: INTERSECTS (Geometry-origin) then "
-        "LOCATED_IN (Derived). Neither hop is asserted by native "
-        "YAGO2geo.</div></div>",
+        "LOCATED_IN (Derived); neither hop is asserted by native YAGO2geo. "
+        "INTERSECTS is overlap, not containment, so an LSOA straddling the "
+        "boundary contributes all of its schools. Read this as an upper "
+        "bound, not as a count of schools within the unit."
+        "</div></div>",
         unsafe_allow_html=True,
     )
     if not df.empty:
@@ -5705,7 +5720,8 @@ def render_admin_containment_map(
                 # uri is what the click handler needs to look the unit up;
                 # without it the panel below the map had nothing to open.
                 "uri": uri,
-                "schools": school_counts.get(uri, 0),
+                "lsoas": school_counts.get(uri, {}).get("lsoas", 0),
+                "schools": school_counts.get(uri, {}).get("schools", 0),
                 "name": prow.get("name"),
                 "type": prow.get("type"),
                 "role": (
@@ -5791,9 +5807,10 @@ def render_admin_containment_map(
             f"<div style='font-size:12px;font-weight:700;color:{C_WIMD};'>"
             "{role}</div>"
             f"<div style='margin-top:6px;font-size:11.5px;font-weight:800;"
-            f"color:{C_HEAD};'>{{schools}} schools inside</div>"
-            f"<div style='font-size:9.5px;color:{C_MUTED};margin-top:1px;'>"
-            "via INTERSECTS then LOCATED_IN</div></div>"
+            f"color:{C_HEAD};'>{{lsoas}} LSOAs intersect this unit</div>"
+            f"<div style='font-size:10.5px;font-weight:700;color:{C_MUTED};"
+            "margin-top:1px;'>holding {schools} schools between them</div>"
+            "</div>"
         ),
         "style": {"backgroundColor": "transparent", "color": "#0f172a",
                   "zIndex": "9999"},
