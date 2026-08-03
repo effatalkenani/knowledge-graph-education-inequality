@@ -6465,7 +6465,7 @@ def page_evaluation() -> None:
         )
         report_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "yago2geo_completeness_local.html",
+            "yago2geo_completeness_cloud.html",
         )
         if os.path.exists(report_path):
             size_mb = os.path.getsize(report_path) / 1e6
@@ -6505,7 +6505,7 @@ def page_evaluation() -> None:
                 st.download_button(
                     "Download the report",
                     data=report_html,
-                    file_name="yago2geo_completeness_local.html",
+                    file_name="yago2geo_completeness_cloud.html",
                     mime="text/html",
                 )
         else:
@@ -6513,7 +6513,7 @@ def page_evaluation() -> None:
                 "[Open the full report on GitHub]"
                 "(https://github.com/effatalkenani/knowledge-graph-education-"
                 "inequality/blob/main/wales_edu_project/"
-                "yago2geo_completeness_local.html)"
+                "yago2geo_completeness_cloud.html)"
             )
 
     if "eval_tab" not in st.session_state:
