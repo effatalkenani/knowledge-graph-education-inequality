@@ -5580,9 +5580,17 @@ def render_answer_map(
             # adjacency graph, so a code can be both a neighbour and a
             # genuine answer. Anything the query returned stays in the
             # answer and is never outlined as excluded.
-            answered = {str(c) for c in result_df.select_dtypes(
-                include="object").stack().unique()
-                if str(c).startswith("W01")}
+            # Only the answer column counts. Scanning every column also
+            # swept up via_base_lsoas, which lists the unit's OWN areas, so
+            # the excluded ring was being cancelled by the very codes it was
+            # meant to draw.
+            answered = set()
+            for col in ("lsoa_code", "code"):
+                if col in result_df.columns:
+                    answered = {
+                        str(v) for v in result_df[col].dropna().tolist()
+                    }
+                    break
             skipped = tuple(c for c in skipped if c not in answered)
             gap_polys = (
                 cluster_polygons(
