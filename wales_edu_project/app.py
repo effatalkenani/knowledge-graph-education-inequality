@@ -21,7 +21,6 @@ import re
 from html import escape
 from typing import Any, Dict, List, Tuple
 
-import folium
 import pydeck as pdk
 import pandas as pd
 import streamlit as st
@@ -2787,29 +2786,29 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         ev_none_bg = "rgba(154,164,181,.14)"
     else:
         # Cardiff University red, used as a soft warm tint rather than grey.
-        app_bg = "linear-gradient(180deg,#fff6f6 0%,#fffafa 45%,#fff1f1 100%)"
-        sidebar_bg = "linear-gradient(180deg,#fff4f4 0%,#ffeaea 100%)"
+        app_bg = "#ffffff"
+        sidebar_bg = "#ffffff"
         panel_bg = "#ffffff"
         panel_border = "#e5e7eb"
         text = "#303443"
         muted = "#596273"
         sidebar_text = "#303443"
         metric_bg = "#ffffff"
-        hero = "linear-gradient(135deg,#ff4f79 0%,#ff4f79 54%,#20c6d7 54%,#20c6d7 100%)"
+        hero = "#D73648"
         nav_bg = "#ffffff"
-        nav_active = "linear-gradient(135deg,#ff4f79,#ff8a00)"
+        nav_active = "linear-gradient(135deg,#D73648,#b8283f)"
         map_tiles = "light"
         ok_color = "#15803d"
         geo_color = "#ea580c"
         derived_color = "#7c3aed"
-        field_bg = "#fffdfa"
-        field_border = "#fdba74"
-        field_focus = "#ea580c"
-        field_glow = "rgba(234,88,12,.14)"
-        field_label = "#7c2d12"
-        option_hover = "#fff7ed"
-        option_hover_text = "#9a3412"
-        accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
+        field_bg = "#ffffff"
+        field_border = "#eccace"
+        field_focus = "#D73648"
+        field_glow = "rgba(215,54,72,.16)"
+        field_label = "#8a1e2b"
+        option_hover = "#fdeef1"
+        option_hover_text = "#8a1e2b"
+        accent_grad = "linear-gradient(135deg,#D73648,#b8283f)"
         ev_bg = "#ffffff"
         ev_border = "#e8d5cf"
         ev_quote_bg = "#faf7f5"
@@ -3042,18 +3041,14 @@ div[data-testid="stCodeBlock"] code {{
 }}
 .hero {{ position:relative; }}
 .hero-logo {{
-  position:absolute;
-  top:1.05rem;
-  right:1.35rem;
-  height:56px;
+  display:block;
+  height:52px;
   width:auto;
+  margin:0 0 .85rem 0;
   background:#fff;
   border-radius:8px;
-  padding:5px 8px;
-  box-shadow:0 4px 14px rgba(15,23,42,.18);
-}}
-@media (max-width: 720px) {{
-  .hero-logo {{ position:static; display:block; margin:0 0 .6rem; }}
+  padding:6px 10px;
+  box-shadow:0 3px 10px rgba(0,0,0,.14);
 }}
 .hero-inst {{
   font-size:.72rem; font-weight:800; letter-spacing:.16em;
@@ -3304,14 +3299,34 @@ def scalar(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = Non
     return df.iloc[0, 0]
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_options(uri: str, user: str, password: str, database: str,
+                    cypher: str) -> List[Tuple[str, str]]:
+    """Dropdown contents cached for an hour.
+
+    Streamlit re-executes the whole script on every widget interaction, so an
+    uncached DISTINCT scan over every School node ran again on each keystroke
+    and on every Clear. The option lists change only when the graph is
+    reloaded, so an hour-long cache is safe and removes those round trips.
+    """
+    cfg = {"uri": uri, "user": user, "password": password, "database": database}
+    df = run_cypher(cfg, cypher)
+    if df.empty:
+        return []
+    return [(str(r["value"]), str(r["label"])) for _, r in df.iterrows()]
+
+
 def safe_options(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None) -> List[Tuple[str, str]]:
+    if not params:
+        return _cached_options(cfg["uri"], cfg["user"], cfg["password"],
+                               cfg["database"], cypher)
     df = run_cypher(cfg, cypher, params)
     if df.empty:
         return []
     return [(str(r["value"]), str(r["label"])) for _, r in df.iterrows()]
 
 
-@st.cache_data(ttl=20)
+@st.cache_data(ttl=3600, show_spinner=False)
 def cached_counts(uri: str, user: str, password: str, database: str) -> Dict[str, int]:
     cfg = {"uri": uri, "user": user, "password": password, "database": database}
     return {
