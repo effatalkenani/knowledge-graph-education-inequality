@@ -2041,7 +2041,8 @@ def render_nl_search(
     manual route. Nothing is hidden behind the sentence.
     """
     st.markdown(
-        "<div class='nl-wrap' style='margin-top:2.6rem'>"
+        "<div class='nl-wrap' style='margin-top:2.6rem;"
+        "margin-bottom:1.1rem;border-radius:14px'>"
         "<div class='nl-title'>Ask in your own words</div>"
         "<div class='nl-sub'>The question sets the controls below. "
         "Rule-based and offline: no model, no API key, same answer every "
