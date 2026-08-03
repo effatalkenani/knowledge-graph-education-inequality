@@ -5800,8 +5800,15 @@ def render_admin_answer_map(
     uris = [str(u) for u in result_df[uri_col].dropna().unique().tolist()]
     if not uris:
         return None
-    if len(uris) > DRAW_CAP:
-        uris = uris[:DRAW_CAP]
+    # DRAW_CAP is a local in the containment map, not a module constant; this
+    # function needs its own ceiling.
+    admin_draw_cap = 400
+    if len(uris) > admin_draw_cap:
+        st.caption(
+            f"Showing {admin_draw_cap:,} of {len(uris):,} administrative "
+            "units on the map. The table below holds every row."
+        )
+        uris = uris[:admin_draw_cap]
 
     cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
     try:
