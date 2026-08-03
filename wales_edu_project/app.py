@@ -5792,9 +5792,17 @@ def render_admin_answer_map(
     """
     if result_df is None or result_df.empty:
         return None
-    uri_col = next(
-        (c for c in result_df.columns if str(c).lower().endswith("uri")), None
-    )
+    # Column names differ between the SCQ7 and SCQ8 answers, so the column is
+    # found by its contents rather than its label: any column whose values are
+    # YAGO2geo resource URIs.
+    uri_col = None
+    for c in result_df.columns:
+        series = result_df[c].dropna()
+        if series.empty:
+            continue
+        if str(series.iloc[0]).startswith("http"):
+            uri_col = c
+            break
     if not uri_col:
         return None
     uris = [str(u) for u in result_df[uri_col].dropna().unique().tolist()]
