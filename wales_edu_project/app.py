@@ -5594,7 +5594,7 @@ def render_answer_map(
                     "code": grow.get("code"),
                     "dep_label": "Not in the answer",
                     "wimd_label": "N/A",
-                    "role": "Excluded \u2014 it intersects the unit directly",
+                    "role": "Not near \u2014 it is the unit's own area or touches it",
                     **_school_card_fields({}),
                 })
 
@@ -5667,9 +5667,17 @@ def admin_direct_lsoas(
     """LSOA codes the unit intersects directly — the ones near excludes."""
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
+    # Two rings are left out of a near answer, not one. The unit's own LSOAs
+    # are excluded because near requires disjoint regions, and their direct
+    # neighbours are excluded because they touch rather than lie near. Drawing
+    # only the first ring left the answer looking as though it began at the
+    # unit's edge, which is what made near read like intersects.
     df = run_cypher(cfg, """
-    MATCH (a:AdminUnit {uri:$uri})-[:INTERSECTS]->(l:LSOA)
-    RETURN DISTINCT l.code AS code
+    MATCH (a:AdminUnit {uri:$uri})-[:INTERSECTS]->(own:LSOA)
+    OPTIONAL MATCH (own)-[:LSOA_TOUCHES]-(ring:LSOA)
+    WITH collect(DISTINCT own.code) + collect(DISTINCT ring.code) AS codes
+    UNWIND codes AS code
+    RETURN DISTINCT code
     """, {"uri": uri})
     if df.empty:
         return ()
