@@ -751,6 +751,36 @@ RETURN
 ORDER BY hops
 """
 
+# The same definition over the administrative hierarchy. The only changes are
+# the node label, the key property and the relationship: TOUCHES between
+# AdminUnit nodes is asserted by YAGO2geo itself, so this variant answers the
+# identical question through a NATIVE relation, while the LSOA variant above
+# has to walk adjacency that was computed from geometry. Running one form over
+# both hierarchies is what makes the provenance contrast visible.
+SCQ3_ADMIN_CYPHER_TEMPLATE = """
+MATCH
+    (a:AdminUnit {uri:$lsoa_a}),
+    (b:AdminUnit {uri:$lsoa_b})
+
+MATCH p = (a)-[:TOUCHES*2..__MAXHOPS__]-(b)
+
+WHERE all(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
+
+RETURN
+    length(p) AS hops,
+    [
+        n IN nodes(p)[1..-1] |
+        {
+            code: n.uri,
+            name: coalesce(n.name, n.uri),
+            deprivation: null,
+            wimd_decile: null
+        }
+    ] AS between_lsoas
+ORDER BY hops
+"""
+
+
 # SCQ8 official ANSWER (grouped per administrative unit) and its
 # pair-level EVIDENCE, in both directions. Single source of truth for
 # the Cross-hierarchy page AND the SCQ Demonstrator.
@@ -5197,11 +5227,56 @@ def render_result_reading(
             st.code(NATIONAL_SPREAD_CYPHER[key].strip(), language="cypher")
 
 
+def admin_touch_options(
+    cfg: Dict[str, str], unit_type: str
+) -> List[Tuple[str, str]]:
+    """Administrative units of one type that have at least one TOUCHES edge."""
+    return safe_options(cfg, f"""
+    MATCH (a:AdminUnit)
+    WHERE a.type = '{unit_type}' AND EXISTS {{ MATCH (a)-[:TOUCHES]-() }}
+    RETURN DISTINCT a.uri AS value,
+           coalesce(a.name, a.uri) + ' | {unit_type}' AS label
+    ORDER BY label
+    LIMIT 20000
+    """)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def lsoa_hop_distance(
+    cfg_key: Tuple[str, str, str, str], code_a: str, code_b: str,
+    kind: str = "LSOA",
+) -> int | None:
+    """Shortest LSOA_TOUCHES distance between two LSOAs, or None if unlinked.
+
+    SCQ3 only means anything for a pair that is neither the same area nor
+    directly adjacent: two touching regions are joined by a single edge, so
+    nothing lies between them and every path the enumerator returns is a
+    detour. Knowing the distance also lets the hop bound be suggested rather
+    than guessed.
+    """
+    if not code_a or not code_b or code_a == code_b:
+        return 0
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    if kind == "LSOA":
+        pattern = ("MATCH (a:LSOA {code:$a}), (b:LSOA {code:$b}) "
+                   "MATCH p = shortestPath((a)-[:LSOA_TOUCHES*..12]-(b))")
+    else:
+        pattern = ("MATCH (a:AdminUnit {uri:$a}), (b:AdminUnit {uri:$b}) "
+                   "MATCH p = shortestPath((a)-[:TOUCHES*..12]-(b))")
+    df = run_cypher(cfg, pattern + " RETURN length(p) AS hops",
+                    {"a": code_a, "b": code_b})
+    if df.empty or pd.isna(df.iloc[0]["hops"]):
+        return None
+    return int(df.iloc[0]["hops"])
+
+
 def render_answer_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
     focus_code: Any = None,
     key: str = "answer_map",
+    focus_admin: str | None = None,
 ) -> str | None:
     """Draw the LSOAs in an SCQ answer as coloured regions.
 
@@ -5453,9 +5528,56 @@ def render_answer_map(
         },
     }
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
+    # SCQ7 and SCQ8 fix the administrative side, so the anchor is a ward or
+    # community rather than an LSOA and never appeared on this map: the focus
+    # list only ever held LSOA codes. It is drawn on top, dark and outlined,
+    # so the unit the question was asked about is visible beside its answer.
+    map_layers = [layer]
+    if focus_admin:
+        try:
+            anchor = admin_polygons(
+                (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+                (str(focus_admin),),
+            )
+        except Exception:
+            anchor = pd.DataFrame()
+        anchor_rows: List[Dict[str, Any]] = []
+        for _, arow in anchor.iterrows():
+            for ring in _wkt_rings(arow.get("wkt")):
+                if len(ring) > 400:
+                    ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
+                anchor_rows.append({
+                    "polygon": ring,
+                    "fill": [30, 45, 105, 90],
+                    "line": [17, 24, 39, 255],
+                    "width": 6,
+                    "name": arow.get("name") or str(focus_admin),
+                    "code": str(arow.get("type") or "Administrative unit"),
+                    "dep_label": "Not applicable",
+                    "wimd_label": "N/A",
+                    "role": "The unit you selected",
+                    **_school_card_fields({}),
+                })
+        if anchor_rows:
+            map_layers.append(pdk.Layer(
+                "PolygonLayer",
+                id="answer-anchor",
+                data=anchor_rows,
+                get_polygon="polygon",
+                get_fill_color="fill",
+                get_line_color="line",
+                get_line_width="width",
+                line_width_min_pixels=2,
+                stroked=True,
+                filled=True,
+                pickable=True,
+                auto_highlight=True,
+                highlight_color=[124, 58, 237, 190],
+            ))
+
     picked = deck_chart_with_click(
         pdk.Deck(
-            layers=[layer],
+            layers=map_layers,
             initial_view_state=view,
             map_style="light",
             tooltip=answer_tooltip,
@@ -5509,11 +5631,21 @@ def admin_polygons(
 # thing it contains: the contained unit is drawn on top, so a dark container
 # would simply hide it. Hue carries the administrative level, lightness
 # carries the role in the answer.
+# One hue, three depths. Hue told you the level but said nothing about the
+# nesting, so where a Ward and a Community overlapped the two colours simply
+# competed. Depth carries the level instead: the smaller the unit, the darker
+# it sits, and an overlap reads as one shape shading into another.
 ADMIN_FILL = {
-    "UnitaryAuthority": [124, 58, 237],
-    "Ward": [37, 99, 235],
-    "Community": [13, 148, 136],
-    "Unknown": [100, 116, 139],
+    "UnitaryAuthority": [148, 163, 214],
+    "Ward": [79, 98, 168],
+    "Community": [30, 45, 105],
+    "Unknown": [148, 163, 184],
+}
+ADMIN_DEPTH = {
+    "UnitaryAuthority": 70,
+    "Ward": 120,
+    "Community": 175,
+    "Unknown": 110,
 }
 
 
@@ -5732,13 +5864,18 @@ def render_admin_containment_map(
                     else "Inside the selected unit"
                 ),
             }
+            depth = ADMIN_DEPTH.get(
+                str(prow.get("type")), ADMIN_DEPTH["Unknown"]
+            )
             if is_container:
-                item["fill"] = base + [45]
+                # The container keeps its thick outline and stays faint, so
+                # anything drawn inside it remains legible through the fill.
+                item["fill"] = base + [max(30, depth // 3)]
                 item["line"] = base + [255]
                 item["width"] = 5
                 containers.append(item)
             else:
-                item["fill"] = base + [170]
+                item["fill"] = base + [depth]
                 item["line"] = [17, 24, 39, 220]
                 item["width"] = 2
                 contained.append(item)
@@ -5831,11 +5968,11 @@ def render_admin_containment_map(
         "<div class='map-note'>"
         "<b>Containment:</b> the containing unit is drawn pale with a thick "
         "outline; the unit or units inside it are filled solid on top. "
-        "Colour marks the level \u2014 "
-        "<span style='color:#7c3aed;font-size:16px;'>&#9679;</span> Unitary "
+        "Depth marks the level, so overlapping units stay readable \u2014 "
+        "<span style='color:#94a3d6;font-size:16px;'>&#9679;</span> Unitary "
         "Authority &nbsp; "
-        "<span style='color:#2563eb;font-size:16px;'>&#9679;</span> Ward "
-        "&nbsp; <span style='color:#0d9488;font-size:16px;'>&#9679;</span> "
+        "<span style='color:#4f62a8;font-size:16px;'>&#9679;</span> Ward "
+        "&nbsp; <span style='color:#1e2d69;font-size:16px;'>&#9679;</span> "
         "Community. Administrative units carry no WIMD value, so deprivation "
         "is not shown here."
         "</div>",
@@ -5950,13 +6087,20 @@ def page_scq_demonstrator(
         st.caption(MODE_NOTE.get(mode, ""))
 
     with right:
+        shown_relation = meta["relation"]
+        shown_provenance = meta["provenance"]
+        if scq_key == "SCQ3":
+            _kind = st.session_state.get("scq3_kind", "LSOA")
+            if _kind != "LSOA":
+                shown_relation = "TOUCHES path"
+                shown_provenance = "Native"
         st.markdown(
-            f"**{t('relation_used')}**\n\n`{meta['relation']}`"
+            f"**{t('relation_used')}**\n\n`{shown_relation}`"
         )
         st.markdown(
             (
                 f"**{t('provenance_h')}**\n\n"
-                f"{provenance_badge(meta['provenance'])}"
+                f"{provenance_badge(shown_provenance)}"
             ),
             unsafe_allow_html=True,
         )
@@ -6025,11 +6169,35 @@ def page_scq_demonstrator(
         params["lsoa"] = selected_lsoa[0]
 
     elif param_type == "lsoa_pair":
-        pair_lsoas = lsoa_options(cfg, "lsoa_touch")
+        # The paper's own worked example of between is over communities, not
+        # statistical areas, and administrative TOUCHES is native while
+        # LSOA_TOUCHES had to be computed. Offering both levels lets the same
+        # question be asked through a native relation and a derived one.
+        between_kind = st.radio(
+            "Between over",
+            ["LSOA", "Ward", "Community"],
+            horizontal=True,
+            key="scq3_kind",
+            format_func=lambda k: (
+                "LSOA \u2014 computed adjacency" if k == "LSOA"
+                else f"{k} \u2014 native adjacency"
+            ),
+            help=(
+                "The definition is identical at every level. What changes is "
+                "where the adjacency came from: YAGO2geo asserts TOUCHES "
+                "between administrative units, while adjacency between LSOAs "
+                "had to be computed from boundary geometry."
+            ),
+        )
+        if between_kind == "LSOA":
+            pair_lsoas = lsoa_options(cfg, "lsoa_touch")
+        else:
+            pair_lsoas = admin_touch_options(cfg, between_kind)
 
         if len(pair_lsoas) < 2:
             st.error(
-                "Not enough connected LSOAs were found for SCQ3."
+                f"Not enough connected {between_kind} units were found "
+                "for SCQ3."
             )
             return
 
@@ -6056,10 +6224,48 @@ def page_scq_demonstrator(
         params["lsoa_a"] = selected_a[0]
         params["lsoa_b"] = selected_b[0]
 
+        try:
+            pair_hops = lsoa_hop_distance(
+                (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+                selected_a[0], selected_b[0], between_kind,
+            )
+        except Exception:
+            pair_hops = None
+
+        if pair_hops == 0:
+            st.warning(
+                "Both selectors hold the same area. Between needs two "
+                "different regions."
+            )
+        elif pair_hops == 1:
+            st.warning(
+                "These two areas touch. The paper defines between as lying "
+                "on a cycle-free path linking the pair, and a touching pair "
+                "is joined by a single edge, so nothing lies between them: "
+                "every region returned reaches them by a detour, which is "
+                "why the answer reads as a ring around the pair rather than "
+                "a corridor. Pick a pair three or four steps apart."
+            )
+        elif pair_hops is None:
+            st.warning(
+                "No adjacency path links these two areas within 12 steps, "
+                "so between has no answer for this pair."
+            )
+        else:
+            st.success(
+                f"These areas are {pair_hops} steps apart. A hop bound of "
+                f"{pair_hops + 1} or {pair_hops + 2} keeps the answer to the "
+                "corridor between them."
+            )
+
+        _hop_options = [2, 3, 4, 5, 6, 7, 8]
+        _suggested = (
+            min(8, max(2, pair_hops + 1)) if pair_hops else 6
+        )
         scq3_hops = st.select_slider(
             t("max_hops"),
-            options=[2, 3, 4, 5, 6, 7, 8],
-            value=6,
+            options=_hop_options,
+            value=_suggested,
             key="scq3_hops",
         )
         st.caption(
@@ -6147,7 +6353,11 @@ def page_scq_demonstrator(
     )
 
     if scq_key == "SCQ3":
-        active_cypher = SCQ3_CYPHER_TEMPLATE.replace(
+        active_cypher = (
+            SCQ3_CYPHER_TEMPLATE
+            if st.session_state.get("scq3_kind", "LSOA") == "LSOA"
+            else SCQ3_ADMIN_CYPHER_TEMPLATE
+        ).replace(
             "__MAXHOPS__",
             str(scq3_hops),
         )
@@ -6311,6 +6521,7 @@ def page_scq_demonstrator(
                         params.get("lsoa_b"),
                     ],
                     key="map_SCQ8_answer",
+                    focus_admin=params.get("admin"),
                 )
                 if clicked:
                     render_lsoa_school_panel(cfg, clicked)
@@ -6399,7 +6610,22 @@ def page_scq_demonstrator(
                     len(result_df),
                 )
 
-            if scq_key in ("SCQ5", "SCQ6"):
+            _scq3_admin = (
+                scq_key == "SCQ3"
+                and st.session_state.get("scq3_kind", "LSOA") != "LSOA"
+            )
+            if _scq3_admin:
+                # The answer map colours LSOAs by deprivation, and
+                # administrative units carry no WIMD value, so drawing them
+                # there would either be blank or invent a figure. The path
+                # table is the whole answer at this level.
+                st.caption(
+                    "Administrative level: the paths are listed below. No "
+                    "map is drawn because administrative units carry no "
+                    "WIMD value, so there is nothing for the deprivation "
+                    "shading to show."
+                )
+            elif scq_key in ("SCQ5", "SCQ6"):
                 # Containment inside the administrative hierarchy nests
                 # cleanly, which is exactly the contrast with SCQ7 that the
                 # reclassification rests on, so it is worth drawing.
@@ -6422,6 +6648,7 @@ def page_scq_demonstrator(
                         params.get("lsoa_b"),
                     ],
                     key=f"map_{scq_key}",
+                    focus_admin=params.get("admin"),
                 )
                 if clicked:
                     render_lsoa_school_panel(cfg, clicked)
