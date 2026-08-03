@@ -4341,18 +4341,9 @@ div[data-testid="stDeckGlJsonChart"] canvas + div {
   padding: 0 !important;
   pointer-events: none !important;
 }
-/* The card was being cut off at the right edge of the map. deck.gl places it
-   with inline coordinates inside the canvas wrapper, so the fix is to stop
-   every ancestor from clipping and to cap the card's width so it has room to
-   sit beside a pin near the edge rather than run past it. */
-section[data-testid="stMain"],
-div[data-testid="stMainBlockContainer"],
-div[data-testid="stVerticalBlock"],
-div[data-testid="stVerticalBlockBorderWrapper"],
-div[data-testid="stHorizontalBlock"],
-div[data-testid="stElementContainer"] {
-  overflow: visible !important;
-}
+/* Only the card itself is capped here. Forcing overflow:visible on the page
+   containers collapsed the layout and blanked everything below the map until
+   a zoom forced a reflow, so those rules are deliberately not present. */
 .deck-tooltip > div {
   max-width: 320px !important;
   white-space: normal !important;
@@ -4423,6 +4414,45 @@ def render_school_map(
     chart_df["budget_label"] = chart_df["budget_per_pupil_gbp"].apply(
         lambda v: "N/A" if pd.isna(v) else f"GBP {float(v):,.0f}"
     )
+    # Capped 9 is recorded for secondary schools only, so on roughly six in
+    # seven pins the performance block was four N/A boxes and a heading. That
+    # is what pushed the card past the height the map can show. The block is
+    # now built per row and left empty when there is nothing to report.
+    _perf_cols = ["capped9_score", "literacy_score", "numeracy_score",
+                  "science_score"]
+    _perf_head = (
+        f"<div style='font-size:9.5px;font-weight:800;color:{C_PERF};"
+        "text-transform:uppercase;letter-spacing:.04em;"
+        "margin:8px 0 4px;'>Secondary performance</div>"
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:5px;'>"
+    )
+
+    def _perf_cell(label: str, value: Any) -> str:
+        return (
+            "<div style='background:#f8fafc;border:1px solid #eef2f7;"
+            "border-radius:9px;padding:5px 7px;'>"
+            f"<div style='color:{C_PERF};font-weight:800;font-size:9.5px;"
+            f"text-transform:uppercase;letter-spacing:.04em;'>{label}</div>"
+            f"<div style='color:{C_PERF};font-weight:900;font-size:12.5px;"
+            f"margin-top:1px;'>{escape(str(value))}</div></div>"
+        )
+
+    def _perf_block(row) -> str:
+        if not row[_perf_cols].notna().any():
+            return ""
+        return (
+            _perf_head
+            + _perf_cell("Capped 9", row["capped9_label"])
+            + _perf_cell("Literacy", row["literacy_label"])
+            + _perf_cell("Numeracy", row["numeracy_label"])
+            + _perf_cell("Science", row["science_label"])
+            + "</div>"
+        )
+
+    chart_df["perf_block"] = (
+        chart_df.apply(_perf_block, axis=1) if len(chart_df) else ""
+    )
+
     for col in ["school", "local_authority", "school_type", "language_medium",
                 "gender_mix", "address", "postcode"]:
         chart_df[col] = chart_df[col].fillna("N/A").astype(str)
@@ -4456,7 +4486,7 @@ def render_school_map(
         "deprivation_label", "wimd_label", "fsm_label", "attendance_label",
         "capped9_label", "literacy_label", "numeracy_label", "science_label",
         "welsh_bacc_label", "pupils_label", "ptr_label", "budget_label",
-        "nearest_stop_label",
+        "nearest_stop_label", "perf_block",
     ]
     pin_layer = pdk.Layer(
         "IconLayer",
@@ -4517,15 +4547,7 @@ def render_school_map(
             + cell("Budget / pupil", "budget_label", C_BUD)
             + cell("Transport", "nearest_stop_label", C_TRAN)
             + "</div>"
-            + f"<div style='font-size:9.5px;font-weight:800;color:{C_PERF};"
-              "text-transform:uppercase;letter-spacing:.04em;"
-              "margin:8px 0 4px;'>Secondary performance</div>"
-            + grid_open
-            + cell("Capped 9", "capped9_label", C_PERF)
-            + cell("Literacy", "literacy_label", C_PERF)
-            + cell("Numeracy", "numeracy_label", C_PERF)
-            + cell("Science", "science_label", C_PERF)
-            + "</div>"
+            + "{perf_block}"
             + f"<div style='margin-top:8px;font-size:10px;color:{C_MUTED};"
               "line-height:1.35;'>{address} &mdash; {postcode}</div>"
             "</div>"
