@@ -3590,6 +3590,7 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
 # UI COMPONENTS
 # =============================================================================
 @st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False)
 def _image_data_uri(filename: str) -> str:
     """An image beside app.py as an inline data URI.
 
@@ -5728,13 +5729,18 @@ def page_scq_demonstrator(
     # Nothing is pre-selected. A default would answer a question the reader
     # never asked, and once a question box sits above these controls there is
     # no way to tell a default apart from something the sentence set.
+    _scq_choices = [""] + list(SCQ_META.keys())
+    _scq_default = (
+        _scq_choices.index("SCQ1") if "SCQ1" in _scq_choices else 0
+    )
     scq_key = st.selectbox(
         t("select_scq"),
-        [""] + list(SCQ_META.keys()),
+        _scq_choices,
         format_func=lambda key: (
             "\u2014 choose a spatial question \u2014" if not key
             else SCQ_META[key]["label"]
         ),
+        index=_scq_default,
         key="scq_select",
     )
     if not scq_key:
