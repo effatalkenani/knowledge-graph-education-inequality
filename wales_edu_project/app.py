@@ -4420,37 +4420,19 @@ def render_school_map(
     # now built per row and left empty when there is nothing to report.
     _perf_cols = ["capped9_score", "literacy_score", "numeracy_score",
                   "science_score"]
-    _perf_head = (
-        f"<div style='font-size:9.5px;font-weight:800;color:{C_PERF};"
-        "text-transform:uppercase;letter-spacing:.04em;"
-        "margin:8px 0 4px;'>Secondary performance</div>"
-        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:5px;'>"
-    )
-
-    def _perf_cell(label: str, value: Any) -> str:
-        return (
-            "<div style='background:#f8fafc;border:1px solid #eef2f7;"
-            "border-radius:9px;padding:5px 7px;'>"
-            f"<div style='color:{C_PERF};font-weight:800;font-size:9.5px;"
-            f"text-transform:uppercase;letter-spacing:.04em;'>{label}</div>"
-            f"<div style='color:{C_PERF};font-weight:900;font-size:12.5px;"
-            f"margin-top:1px;'>{escape(str(value))}</div></div>"
-        )
-
-    def _perf_block(row) -> str:
+    def _perf_summary(row) -> str:
         if not row[_perf_cols].notna().any():
-            return ""
+            return "Not recorded for this school"
         return (
-            _perf_head
-            + _perf_cell("Capped 9", row["capped9_label"])
-            + _perf_cell("Literacy", row["literacy_label"])
-            + _perf_cell("Numeracy", row["numeracy_label"])
-            + _perf_cell("Science", row["science_label"])
-            + "</div>"
+            f"Capped 9 {row['capped9_label']} \u00b7 "
+            f"Literacy {row['literacy_label']} \u00b7 "
+            f"Numeracy {row['numeracy_label']} \u00b7 "
+            f"Science {row['science_label']}"
         )
 
-    chart_df["perf_block"] = (
-        chart_df.apply(_perf_block, axis=1) if len(chart_df) else ""
+    chart_df["perf_summary"] = (
+        chart_df.apply(_perf_summary, axis=1) if len(chart_df)
+        else "Not recorded for this school"
     )
 
     for col in ["school", "local_authority", "school_type", "language_medium",
@@ -4486,7 +4468,7 @@ def render_school_map(
         "deprivation_label", "wimd_label", "fsm_label", "attendance_label",
         "capped9_label", "literacy_label", "numeracy_label", "science_label",
         "welsh_bacc_label", "pupils_label", "ptr_label", "budget_label",
-        "nearest_stop_label", "perf_block",
+        "nearest_stop_label", "perf_summary",
     ]
     pin_layer = pdk.Layer(
         "IconLayer",
@@ -4547,7 +4529,11 @@ def render_school_map(
             + cell("Budget / pupil", "budget_label", C_BUD)
             + cell("Transport", "nearest_stop_label", C_TRAN)
             + "</div>"
-            + "{perf_block}"
+            + f"<div style='margin-top:8px;font-size:9.5px;font-weight:800;"
+              f"color:{C_PERF};text-transform:uppercase;"
+              "letter-spacing:.04em;'>Secondary performance</div>"
+            + f"<div style='font-size:11px;font-weight:700;color:{C_PERF};"
+              "margin-top:2px;line-height:1.35;'>{perf_summary}</div>"
             + f"<div style='margin-top:8px;font-size:10px;color:{C_MUTED};"
               "line-height:1.35;'>{address} &mdash; {postcode}</div>"
             "</div>"
