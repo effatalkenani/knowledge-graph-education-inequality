@@ -6412,44 +6412,72 @@ def page_evaluation() -> None:
             "read-only script. It does not ask whether a question can be "
             "answered; it asks whether the relations YAGO2geo claims to hold "
             "are actually present and correct. Adjacency is recomputed from "
-            "boundary geometry for every pair of administrative units and "
-            "compared against what YAGO2geo natively asserts."
+            "boundary geometry and compared against what YAGO2geo natively "
+            "asserts, for the class pairs listed in the table below \u2014 "
+            "not for the model as a whole."
         )
-        a1, a2, a3, a4 = st.columns(4)
+        a1, a2, a3, a4, a5 = st.columns(5)
         a1.metric(
-            "Matched of reference",
-            "84,309 / 84,348",
+            "Relation-instance completeness \u2014 Wales",
+            "100.00%",
             help=(
-                "Reference pairs are computed from geometry across four "
-                "comparisons: Ward-Ward 22,309, Community-Community 32,357, "
-                "Ward-Community 27,958, UnitaryAuthority-Ward 1,724."
+                "6,211 matched of 6,211 geometry-definable instances, over "
+                "the nine Welsh domain-range rows the report evaluates. "
+                "Every Welsh row closes at 100%."
             ),
         )
         a2.metric(
-            "False assertions",
-            "6",
+            "Relation-instance completeness \u2014 UK-wide",
+            "99.85%",
             help=(
-                "Pairs YAGO2geo asserts as touching whose boundaries are "
-                "48.9 m to 2.6 km apart. A limit of accuracy, not coverage."
+                "134,747 matched of 134,946 definable, over every row of the "
+                "UK-wide table: 199 instances short. The gap sits almost "
+                "entirely in Community-to-Ward containment, at 90.44% "
+                "(1,513 matched of 1,673); every other containment row is "
+                "complete. Restricting the denominator to the four adjacency "
+                "and UnitaryAuthority-Ward rows alone gives 84,309 of 84,348, "
+                "which is the narrower subtotal this panel used to report."
             ),
         )
         a3.metric(
+            "Welsh units with no WITHIN parent",
+            "97 / 529",
+            help=(
+                "78 of 396 Welsh Wards (19.70%) and 19 of 133 Welsh "
+                "Communities (14.29%) hold no WITHIN relation to any parent. "
+                "A further 159 units do have a parent but skip a level, so "
+                "273 of the 529 reach a Unitary Authority by a direct path. "
+                "This is a limit of the stored hierarchy, not of geometry."
+            ),
+        )
+        a4.metric(
             "Inexpressible overlaps",
             "12,639",
             help=(
                 "Ward-Community pairs that genuinely overlap rather than "
-                "touch. The ontology has no overlaps property between "
-                "sibling classes, so these real relations cannot be stated. "
-                "A limit of expressiveness."
+                "touch, UK-wide. The ontology has no overlaps property "
+                "between sibling classes, so these real relations cannot be "
+                "stated: a limit of expressiveness. The Welsh figure is "
+                "1,437."
             ),
         )
-        a4.metric(
+        a5.metric(
             "Dual representations",
             "1,131",
             help=(
-                "The same real-world unit stored twice under two naming "
-                "schemes, inflating the reference set. A limit of identity."
+                "A subset of the 12,639, classified by the report's "
+                "name-based heuristic as the same real-world unit stored "
+                "twice under two naming schemes. The remainder of that "
+                "12,639 is 10,445 genuine partial overlaps and 1,063 "
+                "boundary-precision slivers. A limit of identity."
             ),
+        )
+        st.caption(
+            "Wales: 6,211 of 6,211 across nine class pairs, 0 missing and "
+            "0 extra. UK-wide: 134,747 of 134,946 across nineteen, 199 "
+            "short \u2014 39 in adjacency and 160 in Community-to-Ward "
+            "containment. Every shortfall the audit records falls outside "
+            "Wales."
         )
         st.markdown(
             "<div class='solutionbox'>"
