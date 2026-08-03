@@ -2081,11 +2081,14 @@ def render_nl_search(
         "Parser",
         ["Rule-based", "LLM"],
         horizontal=True,
+        index=1 if llm_ready else 0,
         key="nl_parser_mode",
         help=(
-            "Rule-based is deterministic, runs offline and needs no key, so "
-            "it is the default and the one a marker can reproduce. The model "
-            "path is available for comparison and is capped per session."
+            "The model path opens first because it reads free wording and "
+            "place names the rule tables do not cover, and it falls back to "
+            "the rule-based parser whenever it is unreachable. Rule-based is "
+            "deterministic, runs offline, needs no key, and is the mode the "
+            "evaluation figures in this report were produced with."
         ),
     )
     if mode != "Rule-based" and not llm_ready:
@@ -7685,10 +7688,13 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         "Parser",
         ["Rule-based", "LLM"],
         horizontal=True,
+        index=1 if llm_ready else 0,
         key="map_nl_parser_mode",
         help=(
-            "Deterministic and offline by default. Every condition is "
-            "parameterised, so the sentence cannot alter the query text."
+            "The model path opens first because only it resolves place "
+            "names such as Cardiff. Either way every condition is rebuilt "
+            "locally and bound as a parameter, so the sentence cannot alter "
+            "the query text and the model never reaches the database."
         ),
     )
     if map_mode != "Rule-based" and not llm_ready:
