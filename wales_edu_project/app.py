@@ -5733,6 +5733,11 @@ def page_scq_demonstrator(
     _scq_default = (
         _scq_choices.index("SCQ1") if "SCQ1" in _scq_choices else 0
     )
+    # A selectbox with a key ignores index= once session state holds a value,
+    # which is why the page kept reopening on whatever was chosen last. Seed
+    # the state on the first run of a session instead.
+    if "scq_select" not in st.session_state:
+        st.session_state["scq_select"] = _scq_choices[_scq_default]
     scq_key = st.selectbox(
         t("select_scq"),
         _scq_choices,
@@ -5918,10 +5923,19 @@ def page_scq_demonstrator(
             )
             return
 
+        admin_choices = (
+            [("", "\u2014 choose an administrative unit \u2014")]
+            + list(admin_units)
+        )
+        default_admin_idx = next(
+            (i for i, opt in enumerate(admin_choices)
+             if str(opt[1]).lower().startswith("cardiff")),
+            0,
+        )
         selected_admin = st.selectbox(
             t("admin_unit_label"),
-            [("", "\u2014 choose an administrative unit \u2014")]
-            + list(admin_units),
+            admin_choices,
+            index=default_admin_idx,
             format_func=lambda option: option[1],
             key=f"{scq_key}_admin",
         )
