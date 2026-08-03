@@ -5548,7 +5548,10 @@ def render_answer_map(
                     ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
                 anchor_rows.append({
                     "polygon": ring,
-                    "fill": [30, 45, 105, 90],
+                    # Outline only. A filled anchor sat on top of every LSOA
+                    # inside the unit and absorbed their clicks, so the unit
+                    # is now marked by its border alone.
+                    "fill": [0, 0, 0, 0],
                     "line": [17, 24, 39, 255],
                     "width": 6,
                     "name": arow.get("name") or str(focus_admin),
@@ -5558,6 +5561,59 @@ def render_answer_map(
                     "role": "The unit you selected",
                     **_school_card_fields({}),
                 })
+        # SCQ8 excludes the LSOAs the unit touches directly, because near
+        # requires disjoint regions. Those excluded areas were simply absent
+        # from the picture, so the answer looked as though it began at the
+        # unit's edge. Drawing them hollow makes the gap visible, which is the
+        # whole difference between near and intersects.
+        try:
+            skipped = admin_direct_lsoas(
+                (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+                str(focus_admin),
+            )
+            gap_polys = (
+                cluster_polygons(
+                    (cfg["uri"], cfg["user"], cfg["password"],
+                     cfg["database"]),
+                    skipped,
+                ) if skipped else pd.DataFrame()
+            )
+        except Exception:
+            gap_polys = pd.DataFrame()
+        gap_rows: List[Dict[str, Any]] = []
+        for _, grow in gap_polys.iterrows():
+            for ring in _wkt_rings(grow.get("wkt")):
+                if len(ring) > 300:
+                    ring = ring[:: len(ring) // 300 + 1] + [ring[-1]]
+                gap_rows.append({
+                    "polygon": ring,
+                    "fill": [255, 255, 255, 30],
+                    "line": [124, 58, 237, 235],
+                    "width": 3,
+                    "name": grow.get("name") or grow.get("code"),
+                    "code": grow.get("code"),
+                    "dep_label": "Not in the answer",
+                    "wimd_label": "N/A",
+                    "role": "Excluded \u2014 it intersects the unit directly",
+                    **_school_card_fields({}),
+                })
+
+        if gap_rows:
+            map_layers.append(pdk.Layer(
+                "PolygonLayer",
+                id="answer-excluded",
+                data=gap_rows,
+                get_polygon="polygon",
+                get_fill_color="fill",
+                get_line_color="line",
+                get_line_width="width",
+                line_width_min_pixels=1,
+                stroked=True,
+                filled=True,
+                pickable=True,
+                auto_highlight=True,
+                highlight_color=[124, 58, 237, 190],
+            ))
         if anchor_rows:
             map_layers.append(pdk.Layer(
                 "PolygonLayer",
@@ -5569,10 +5625,10 @@ def render_answer_map(
                 get_line_width="width",
                 line_width_min_pixels=2,
                 stroked=True,
-                filled=True,
-                pickable=True,
-                auto_highlight=True,
-                highlight_color=[124, 58, 237, 190],
+                filled=False,
+                # Not pickable: this is a boundary marker, and everything it
+                # encloses must stay clickable.
+                pickable=False,
             ))
 
     picked = deck_chart_with_click(
@@ -5602,6 +5658,22 @@ def render_answer_map(
     if drawn_note:
         st.caption(drawn_note)
     return str(picked.get("code")) if picked else None
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def admin_direct_lsoas(
+    cfg_key: Tuple[str, str, str, str], uri: str
+) -> Tuple[str, ...]:
+    """LSOA codes the unit intersects directly — the ones near excludes."""
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    df = run_cypher(cfg, """
+    MATCH (a:AdminUnit {uri:$uri})-[:INTERSECTS]->(l:LSOA)
+    RETURN DISTINCT l.code AS code
+    """, {"uri": uri})
+    if df.empty:
+        return ()
+    return tuple(str(c) for c in df["code"].dropna().tolist())
 
 
 @st.cache_data(show_spinner=False, ttl=1800)
