@@ -5775,6 +5775,147 @@ def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
             st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def render_admin_answer_map(
+    cfg: Dict[str, str],
+    result_df: pd.DataFrame,
+    focus_lsoa: str | None,
+    key: str = "admin_answer_map",
+) -> Dict[str, Any] | None:
+    """Draw an answer whose rows are administrative units, not LSOAs.
+
+    SCQ7 and SCQ8 read in both directions. When the fixed side is an LSOA the
+    answer is a set of wards or communities, and the ordinary answer map had
+    nothing to draw, because it only recognises LSOA codes. The selected LSOA
+    is the dark anchor; the administrative units it reaches are drawn around
+    it in the same depth palette the containment map uses, so the crossing
+    from the statistical geography to the administrative one is visible.
+    """
+    if result_df is None or result_df.empty:
+        return None
+    uri_col = next(
+        (c for c in result_df.columns if str(c).lower().endswith("uri")), None
+    )
+    if not uri_col:
+        return None
+    uris = [str(u) for u in result_df[uri_col].dropna().unique().tolist()]
+    if not uris:
+        return None
+    if len(uris) > DRAW_CAP:
+        uris = uris[:DRAW_CAP]
+
+    cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
+    try:
+        polys = admin_polygons(cfg_key, tuple(uris))
+    except Exception:
+        return None
+    if polys is None or polys.empty:
+        return None
+
+    rows: List[Dict[str, Any]] = []
+    lons: List[float] = []
+    lats: List[float] = []
+    for _, prow in polys.iterrows():
+        utype = str(prow.get("type") or "Unknown")
+        base = ADMIN_FILL.get(utype, ADMIN_FILL["Unknown"])
+        depth = ADMIN_DEPTH.get(utype, ADMIN_DEPTH["Unknown"])
+        for ring in _wkt_rings(prow.get("wkt")):
+            if len(ring) > 400:
+                ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
+            for pt in ring:
+                lons.append(pt[0]); lats.append(pt[1])
+            rows.append({
+                "polygon": ring,
+                "fill": base + [depth],
+                "line": [17, 24, 39, 220],
+                "width": 2,
+                "uri": str(prow.get("uri") or ""),
+                "name": prow.get("name") or prow.get("uri"),
+                "type": utype,
+                "role": "In the answer",
+            })
+
+    if focus_lsoa:
+        try:
+            anchor = cluster_polygons(cfg_key, (str(focus_lsoa),))
+        except Exception:
+            anchor = pd.DataFrame()
+        for _, arow in anchor.iterrows():
+            for ring in _wkt_rings(arow.get("wkt")):
+                if len(ring) > 400:
+                    ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
+                for pt in ring:
+                    lons.append(pt[0]); lats.append(pt[1])
+                rows.append({
+                    "polygon": ring,
+                    "fill": [17, 24, 39, 210],
+                    "line": [255, 255, 255, 235],
+                    "width": 5,
+                    "uri": "",
+                    "name": arow.get("name") or str(focus_lsoa),
+                    "type": "LSOA",
+                    "role": "The LSOA you selected",
+                })
+
+    if not rows or not lats:
+        return None
+
+    span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
+    view = pdk.ViewState(
+        latitude=(max(lats) + min(lats)) / 2,
+        longitude=(max(lons) + min(lons)) / 2,
+        zoom=12.4 if span < 0.02 else 11.0 if span < 0.06 else (
+            9.8 if span < 0.2 else 8.6 if span < 0.6 else 7.2
+        ),
+        pitch=0, bearing=0,
+    )
+    tooltip = {
+        "html": (
+            "<div style='font-family:Segoe UI,Arial,sans-serif;width:215px;"
+            "background:rgba(255,255,255,.9);border-radius:13px;"
+            "padding:10px 12px;box-shadow:0 10px 26px rgba(15,23,42,.16);'>"
+            f"<div style='font-size:13.5px;font-weight:900;color:{C_HEAD};'>"
+            "{name}</div>"
+            f"<div style='font-size:10.5px;color:{C_MUTED};margin-top:2px;'>"
+            "{type}</div>"
+            f"<div style='font-size:12px;font-weight:700;color:{C_WIMD};"
+            "margin-top:6px;'>{role}</div></div>"
+        ),
+        "style": {"backgroundColor": "transparent"},
+    }
+    st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
+    picked = deck_chart_with_click(
+        pdk.Deck(
+            layers=[pdk.Layer(
+                "PolygonLayer",
+                id="admin-answer",
+                data=rows,
+                get_polygon="polygon",
+                get_fill_color="fill",
+                get_line_color="line",
+                get_line_width="width",
+                line_width_min_pixels=1,
+                stroked=True, filled=True, pickable=True,
+                auto_highlight=True,
+                highlight_color=[124, 58, 237, 190],
+            )],
+            initial_view_state=view,
+            map_style="light",
+            tooltip=tooltip,
+            parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
+        ),
+        key=key,
+    )
+    st.markdown(
+        "<div class='small-muted' style='margin-top:.35rem'>"
+        "The dark shape is the LSOA the question was asked about; the "
+        "administrative units it reaches are shaded by level \u2014 the "
+        "smaller the unit, the darker. Hover one for its name and type."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    return picked
+
+
 def render_admin_containment_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
@@ -6512,19 +6653,25 @@ def page_scq_demonstrator(
             with tab_answer:
                 st.metric(answer_metric, len(result_df))
                 st.caption(answer_caption)
-                clicked = render_answer_map(
-                    cfg,
-                    result_df,
-                    [
-                        params.get("lsoa"),
-                        params.get("lsoa_a"),
-                        params.get("lsoa_b"),
-                    ],
-                    key="map_SCQ8_answer",
-                    focus_admin=params.get("admin"),
-                )
-                if clicked:
-                    render_lsoa_school_panel(cfg, clicked)
+                # Which way the question was asked decides which map can
+                # draw it: administrative rows need administrative polygons.
+                if params.get("admin"):
+                    clicked = render_answer_map(
+                        cfg, result_df,
+                        [params.get("lsoa"), params.get("lsoa_a"),
+                         params.get("lsoa_b")],
+                        key="map_SCQ8_answer",
+                        focus_admin=params.get("admin"),
+                    )
+                    if clicked:
+                        render_lsoa_school_panel(cfg, clicked)
+                else:
+                    picked_admin = render_admin_answer_map(
+                        cfg, result_df, params.get("lsoa"),
+                        key="map_SCQ8_answer",
+                    )
+                    if picked_admin:
+                        render_unit_school_card(cfg, picked_admin)
                 display_df(result_df)
                 if SHOW_QUERIES:
                     with st.expander(t("show_query")):
@@ -6638,6 +6785,13 @@ def page_scq_demonstrator(
                 )
                 if clicked_unit:
                     render_unit_school_card(cfg, clicked_unit)
+            elif scq_key == "SCQ7" and not params.get("admin"):
+                picked_admin = render_admin_answer_map(
+                    cfg, result_df, params.get("lsoa"),
+                    key=f"map_{scq_key}",
+                )
+                if picked_admin:
+                    render_unit_school_card(cfg, picked_admin)
             else:
                 clicked = render_answer_map(
                     cfg,
