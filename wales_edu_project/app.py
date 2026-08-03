@@ -5605,6 +5605,25 @@ def render_answer_map(
 
 
 @st.cache_data(show_spinner=False, ttl=1800)
+def admin_polygons_by_name(
+    cfg_key: Tuple[str, str, str, str], names: Tuple[str, ...]
+) -> pd.DataFrame:
+    """Boundary polygons for administrative units, looked up by name.
+
+    The SCQ7 answer returns unit names and types but no URI, so there was
+    nothing for the map to resolve. Names are not guaranteed unique across
+    Wales, so this is a fallback: every match is drawn.
+    """
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    return run_cypher(cfg, """
+    MATCH (a:AdminUnit)
+    WHERE a.name IN $names AND a.wkt IS NOT NULL
+    RETURN a.uri AS uri, a.name AS name, a.type AS type, a.wkt AS wkt
+    """, {"names": list(names)})
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
 def admin_polygons(
     cfg_key: Tuple[str, str, str, str], uris: Tuple[str, ...]
 ) -> pd.DataFrame:
@@ -5803,9 +5822,24 @@ def render_admin_answer_map(
         if str(series.iloc[0]).startswith("http"):
             uri_col = c
             break
-    if not uri_col:
-        return None
-    uris = [str(u) for u in result_df[uri_col].dropna().unique().tolist()]
+
+    if uri_col:
+        keys = [str(u) for u in result_df[uri_col].dropna().unique().tolist()]
+        by_name = False
+    else:
+        # SCQ7 returns unit names without URIs, so fall back to name lookup
+        # rather than drawing nothing at all.
+        name_col = next(
+            (c for c in result_df.columns
+             if str(c).lower() in ("administrative_unit", "unit", "name",
+                                   "contained_unit")),
+            None,
+        )
+        if not name_col:
+            return None
+        keys = [str(v) for v in result_df[name_col].dropna().unique().tolist()]
+        by_name = True
+    uris = keys
     if not uris:
         return None
     # DRAW_CAP is a local in the containment map, not a module constant; this
@@ -5820,7 +5854,10 @@ def render_admin_answer_map(
 
     cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
     try:
-        polys = admin_polygons(cfg_key, tuple(uris))
+        polys = (
+            admin_polygons_by_name(cfg_key, tuple(uris)) if by_name
+            else admin_polygons(cfg_key, tuple(uris))
+        )
     except Exception:
         return None
     if polys is None or polys.empty:
@@ -5873,6 +5910,16 @@ def render_admin_answer_map(
 
     if not rows or not lats:
         return None
+
+    # deck.gl picks whatever is drawn last, so a small unit sitting inside a
+    # larger one was unreachable. Ordering by ring extent puts the smallest
+    # shapes on top, which makes every unit clickable.
+    def _extent(r: Dict[str, Any]) -> float:
+        ring = r["polygon"]
+        xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
+        return (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+    rows.sort(key=_extent, reverse=True)
 
     span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
     view = pdk.ViewState(
