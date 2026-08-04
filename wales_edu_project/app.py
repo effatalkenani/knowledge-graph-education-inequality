@@ -7090,38 +7090,73 @@ def page_evaluation() -> None:
         unsafe_allow_html=True,
     )
 
-    # Three equal-sized metric cards
-    m1, m2, m3 = st.columns(3)
-
-    with m1:
-        st.metric(
-            label="Education native coverage",
-            value="0 native LSOA answers",
-        )
-
-    with m2:
-        st.metric(
-            label="Native SpCom — education",
-            value="0/8 = 0.00",
-            help=(
-                "All eight SCQs are in the denominator, including SCQ5 and "
-                "SCQ6, which are reclassified rather than dropped. No "
-                "education question is answered by a native YAGO2geo "
-                "relation."
-            ),
-        )
-
-    with m3:
-        st.metric(
-            label="Native SpCom — administrative",
-            value="6/8 = 0.75",
-            help=(
-                "The same eight forms scored over the administrative "
-                "hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and "
-                "SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay "
-                "native failures."
-            ),
-        )
+    # Four named coverage cards. Model coverage and demonstrator coverage
+    # are spelled out in full because the figure 6/8 appears twice with two
+    # different meanings: once earned by geometry computed in this
+    # demonstrator, once held natively by the administrative hierarchy.
+    # Naming them fully is what stops the two being read as one number.
+    st.markdown(
+        """
+<style>
+.eval-cov-grid {
+display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+gap:.7rem; margin:.4rem 0 .2rem 0;
+}
+@media (max-width:1150px){.eval-cov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (max-width:640px){.eval-cov-grid{grid-template-columns:1fr;}}
+.eval-cov-card {
+position:relative; background:#ffffff; border:1px solid #e5e7eb;
+border-radius:12px; padding:1rem .9rem .85rem .9rem; overflow:hidden;
+box-shadow:0 3px 10px rgba(15,23,42,.035);
+}
+.eval-cov-card::before {
+content:""; position:absolute; top:0; left:0; right:0; height:4px;
+background:linear-gradient(90deg,#9e1b32,#b8283f);
+}
+.eval-cov-label {
+font-size:.78rem; line-height:1.32; font-weight:700; color:#475569;
+margin:.15rem 0 .5rem 0; min-height:3.1em;
+}
+.eval-cov-value {
+font-size:1.65rem; font-weight:800; color:#9e1b32; line-height:1.05;
+letter-spacing:-.01em;
+}
+.eval-cov-note {
+font-size:.86rem; line-height:1.55; color:#3f4a5a;
+background:#fdf2f4; border:1px solid #f3d3da;
+border-left:4px solid #9e1b32; border-radius:10px;
+padding:.7rem .85rem; margin:.6rem 0 .2rem 0;
+}
+@media (prefers-color-scheme: dark) {
+.eval-cov-card {background:#181b21; border-color:#2f3540; box-shadow:none;}
+.eval-cov-label {color:#b3bdca;}
+.eval-cov-value {color:#f2879c;}
+.eval-cov-note {color:#d3dae4; background:#241a1e; border-color:#4a2b33;
+border-left-color:#f2879c;}
+}
+</style>
+<div class="eval-cov-grid">
+<div class="eval-cov-card" title="All eight SCQs are in the denominator, including SCQ5 and SCQ6, which are reclassified rather than dropped. No education question is answered by a native YAGO2geo relation.">
+<div class="eval-cov-label">Education — native model coverage (SpCom)</div>
+<div class="eval-cov-value">0 / 8</div>
+</div>
+<div class="eval-cov-card">
+<div class="eval-cov-label">Education — demonstrator coverage (geometry-origin)</div>
+<div class="eval-cov-value">6 / 8</div>
+</div>
+<div class="eval-cov-card" title="The same eight forms scored over the administrative hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay native failures.">
+<div class="eval-cov-label">Administrative — native or derivable model coverage (SpCom)</div>
+<div class="eval-cov-value">6 / 8</div>
+</div>
+<div class="eval-cov-card">
+<div class="eval-cov-label">Native LSOA answers</div>
+<div class="eval-cov-value">0</div>
+</div>
+</div>
+<div class="eval-cov-note">The demonstrator answers six of the eight forms for the education use case, all from geometry computed here rather than asserted by YAGO2geo. SCQ5 and SCQ6 are reclassified for this use case and are answered by neither. Demonstrator coverage is not model coverage.</div>
+""",
+        unsafe_allow_html=True,
+    )
 
     # Formal IJGI SpCom equation
     eq1, eq2 = st.columns(2)
