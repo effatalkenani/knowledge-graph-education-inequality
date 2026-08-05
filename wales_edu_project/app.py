@@ -2830,7 +2830,7 @@ LENS_UNIT_CYPHER = {
         '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'near': (
-        'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES*2]-(nbr:AdminUnit)\nWHERE nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(mid:AdminUnit)-[:TOUCHES]-(nbr:AdminUnit)\nWHERE mid.type = anchor.type\n  AND nbr.type = anchor.type\n  AND nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
         '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'inside': (
@@ -2850,7 +2850,7 @@ LENS_MODES["near"] = (
     "Derived from Native, then Geometry-origin, then Project-integrated",
 )
 LENS_CYPHER["near"] = (
-    'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES*2]-(nbr:AdminUnit)\nWHERE nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+    'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(mid:AdminUnit)-[:TOUCHES]-(nbr:AdminUnit)\nWHERE mid.type = anchor.type\n  AND nbr.type = anchor.type\n  AND nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
     + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
 )
 
@@ -8405,6 +8405,7 @@ LIMIT 6
             # broken deterministically instead -- an exact word match first,
             # then the shortest name -- and the unit chosen is printed above
             # the answer, so the choice is visible rather than silent.
+            _tied = len(_cand)
             if len(_cand) > 1:
                 _wl = set(_w)
                 _cand = _cand.assign(
@@ -8416,6 +8417,23 @@ LIMIT 6
                 ).sort_values(["_exact", "_len", "name"])
             admin = _cand.iloc[0]["uri"]
             params["admin"] = admin
+            if _tied > 1:
+                # A choice made among several matches must be declared. The
+                # rule is deterministic, but the reader still has to be told
+                # that a rule was applied and what it passed over.
+                _others = ", ".join(
+                    f"{r['name']} ({r['type']})"
+                    for _, r in _cand.iloc[1:6].iterrows()
+                )
+                st.error(
+                    f"**{_tied} units in the graph matched your wording.** "
+                    f"The answer below uses "
+                    f"**{_cand.iloc[0]['name']} ({_cand.iloc[0]['type']})**, "
+                    f"chosen by an exact-word match first and the shorter "
+                    f"name second. The others were: {_others}. "
+                    f"If you meant one of them, open the panel below and "
+                    f"choose it."
+                )
             _low = str(intent.get("text") or "").lower()
             _m = "touches"
             for _name, _ph in _LENS_MODE_PHRASES:
