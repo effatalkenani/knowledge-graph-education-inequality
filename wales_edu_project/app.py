@@ -259,8 +259,6 @@ section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover
 }
 .solutionbox {background:#fff7ed; border:1px solid #e5e7eb;}
 .warningbox {background:#fffbeb; border:1px solid #e5e7eb;}
-.nl-warn {background:#fffbe6; border-left:5px solid #f59e0b; padding:.75rem 1rem; border-radius:9px; margin-bottom:10px; color:#f59e0b;}
-.nl-warn-orange {background:#fff7ed; border-left:5px solid #fb923c; padding:.75rem 1rem; border-radius:9px; margin-bottom:10px; color:#fb923c;}
 .successbox {background:#f0fdf4; border:1px solid #e5e7eb;}
 .final-strip {background:linear-gradient(135deg,#fff7ed,#f0fdf4); border:1px solid #e5e7eb;}
 .warning-strip {background:#fff7ed; border:1px solid #e5e7eb;}
@@ -1899,25 +1897,6 @@ def parse_spatial_question(
             "No spatial relation was recognised. Name one of: border, near, "
             "between, not adjacent, contains, within, intersect."
         )
-    
-    # Smart Defaulting: If the relation is CONTAINS or WITHIN and no hierarchical
-    # level (LSOA, Ward, Community) is specified, default to LSOA and add a warning.
-    if found["scq"] in {"SCQ5", "SCQ6"} and found["admin"]:
-        ntype = None
-        for cand in ("lsoa", "ward", "community"):
-            if cand in low:
-                ntype = cand.upper()
-                break
-        if not ntype:
-            # Default to LSOA
-            ntype = "LSOA"
-            found["steps"].append(
-                f"No hierarchical level specified; defaulting to {ntype} for granular analysis."
-            )
-            found["unmatched"].append(
-                f"⚠️ Defaulting to {ntype} level. The system also supports Ward and Community levels. "
-                "Specify your preferred level in the question for different results."
-            )
 
     for key, phrases, label in NL_FOCUS_RULES:
         if any(p in low for p in phrases):
@@ -1987,20 +1966,14 @@ def parse_spatial_question(
         if not hit_token:
             continue
         name = hit_token
-        # Prioritize Unitary Authorities, then Communities, then Wards.
-        # An exact word match is better than a partial match.
-        score = 0
+        # An exact word beats a name that merely occurs inside the sentence,
+        # and a unitary authority beats a community of the same name.
+        score = 40
         if "unitaryauthority" in unit_type:
-            score += 30
-        elif "community" in unit_type:
             score += 20
         elif "ward" in unit_type:
             score += 10
-        # Add score for length of matched token, to prefer longer, more specific matches
-        score += min(len(hit_token), 20)
-        # If the full name is present in the query, give a bonus
-        if re.search(r"\b" + re.escape(label.lower()) + r"\b", low):
-            score += 10
+        score += min(len(name), 20)
         candidates.append((score, name, (uri, label)))
 
     if not candidates and found["scq"] in {"SCQ5", "SCQ6"}:
@@ -2019,8 +1992,8 @@ def parse_spatial_question(
             found["unmatched"].append(
                 "More than one unit matches that name equally well ("
                 + ", ".join(str(c[2][1]) for c in [best] + rivals[:3])
-                + "). The first was used; please select from the list below to "
-                + "disambiguate."
+                + "). The first was used; choose it from the list below to "
+                "be certain."
             )
 
     return found
@@ -2158,7 +2131,6 @@ def llm_parse_question(
             '"focus": subset of ["fsm","attendance","performance",'
             '"deprivation"], "codes": [LSOA codes like W01001440], '
             '"place": free text place name or null, '
-            '"filters": [{"metric": "attendance", "operator": "<", "value": 90}], '
             '"reason": one short sentence}.'
         )
         response = client.chat.completions.create(
@@ -2201,7 +2173,6 @@ def llm_parse_question(
         "matched_phrase": None,
         "focus": focus,
         "focus_labels": [labels[f] for f in focus],
-        "filters": data.get("filters", []),
         "areas": [],
         "admin": None,
         "steps": [],
@@ -2295,42 +2266,19 @@ def render_nl_search(
         "one relation is matched on the first and the rest reported."
     )
 
-    tab_en, tab_ar = st.tabs(["🇬🇧 English", "🇸🇦 العربية"])
-    question = ""
-    asked = False
-    
-    with tab_en:
-        col_input, col_go = st.columns([6, 1])
-        with col_input:
-            question = st.text_input(
-                "Question",
-                key="nl_question",
-                placeholder=(
-                    "What schools are near Cathays community with attendance "
-                    "below 90?"
-                ),
-                label_visibility="collapsed",
-            )
-        with col_go:
-            asked = st.button("Ask", type="primary", use_container_width=True, key="ask_en")
-    
-    with tab_ar:
-        col_input_ar, col_go_ar = st.columns([6, 1])
-        with col_input_ar:
-            question_ar = st.text_input(
-                "اطرح سؤالك هنا (Ask your question here)",
-                key="nl_question_ar",
-                placeholder=(
-                    "مثال: المدارس القريبة من مجتمع كاثيز مع حضور أقل من 90% أو LSOAs داخل سوانسي مع حضور منخفض (e.g., schools near Cathays community with attendance below 90% or LSOAs inside Swansea with low attendance)"
-                ),
-                label_visibility="visible",
-            )
-        with col_go_ar:
-            asked_ar = st.button("اسأل", type="primary", use_container_width=True, key="ask_ar")
-        
-        if question_ar and asked_ar:
-            question = question_ar
-            asked = True
+    col_input, col_go = st.columns([6, 1])
+    with col_input:
+        question = st.text_input(
+            "Question",
+            key="nl_question",
+            placeholder=(
+                "What schools are near Cathays community with attendance "
+                "below 90?"
+            ),
+            label_visibility="collapsed",
+        )
+    with col_go:
+        asked = st.button("Ask", type="primary", use_container_width=True)
 
     if st.session_state.pop("nl_autorun", False):
         asked = True
