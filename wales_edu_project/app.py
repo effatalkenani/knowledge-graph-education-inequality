@@ -8282,10 +8282,60 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
     if not cypher:
         return False
     _missing = None
-    if "$lsoa" in cypher and "lsoa" not in params:
+    if "$admin" in cypher and "admin" in params:
+        pass
+    elif "$lsoa" in cypher and "lsoa" not in params:
         _missing = "an LSOA"
     elif "$admin" in cypher and "admin" not in params:
         _missing = "an administrative unit"
+    # The sentence usually names the kind of thing it wants back, and that
+    # is a different question from which relation to travel. "LSOAs inside
+    # Cardiff" and "communities inside Cardiff" walk the same containment,
+    # and differ only in what they return. Honouring the named output stops
+    # the reader having to accept whatever the matched form happens to give.
+    _lowq = str(intent.get("text") or "").lower()
+    _wants_schools = any(w in _lowq for w in _SCHOOL_WORDS)
+    _out = None
+    if not _wants_schools and admin:
+        if any(w in _lowq for w in ("lsoa", "lsoas",
+                                    "\u0645\u0646\u0637\u0642\u0629 \u0625\u062d\u0635\u0627\u0626\u064a\u0629")):
+            _out = "LSOA"
+        elif any(w in _lowq for w in ("communities", "community",
+                                      "\u0645\u062c\u062a\u0645\u0639")):
+            _out = "Community"
+        elif any(w in _lowq for w in ("wards", "ward",
+                                      "\u062f\u0648\u0627\u0626\u0631",
+                                      "\u062f\u0627\u0626\u0631\u0629")):
+            _out = "Ward"
+
+    if _out == "LSOA":
+        cypher = """
+MATCH (a:AdminUnit {uri:$admin})
+MATCH (u:AdminUnit)
+WHERE u = a OR (u)-[:WITHIN*1..3]->(a)
+MATCH (u)-[:INTERSECTS]->(l:LSOA)
+OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
+WITH l, count(DISTINCT s) AS schools,
+     round(avg(s.fsm_pct),1) AS avg_fsm_pct,
+     round(avg(s.attendance_pct),1) AS avg_attendance_pct
+RETURN
+    l.code AS lsoa_code,
+    coalesce(l.name, l.LSOA_Name, l.code) AS lsoa_name,
+    l.deprivation AS deprivation,
+    l.wimd_decile AS wimd_decile,
+    schools, avg_fsm_pct, avg_attendance_pct
+ORDER BY lsoa_code
+LIMIT $limit
+"""
+        chain = ("", "WITHIN downward, then INTERSECTS",
+                 "Native, then Geometry-origin")
+        _missing = None
+    elif _out in ("Community", "Ward"):
+        cypher = LENS_UNIT_CYPHER["inside"]
+        params["nbr_type"] = _out
+        chain = LENS_MODES["inside"]
+        _missing = None
+
     # "Needs an LSOA" was only ever true of the eight forms, not of the
     # graph: TOUCHES and WITHIN between administrative units are stored and
     # audited, and the lens answers near and touches over them. Before
@@ -8293,11 +8343,32 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
     # units are stored bilingually -- Cardiff is "Caerdydd - Cardiff" -- so
     # a plain name misses by a prefix, not by a spelling error.
     if _missing == "an LSOA" and not admin:
-        _w = [
+        # An Arabic sentence carries no Latin token to match against the
+        # graph's English names, but the model's own reading of it does:
+        # it writes out "Cathays" even when the reader typed the name in
+        # Arabic script. Both sources are searched, so a question asked in
+        # either language can still resolve a place.
+        _src = str(intent.get("text") or "")
+        try:
+            _src += " " + " ".join(
+                str(s) for s in (st.session_state.get("nl_last") or {}).get("steps", [])
+            )
+        except Exception:
+            pass
+        _w = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z'\-]{3,}", _src)]
+        _w += [
             w.strip(",.?!'\"").lower()
             for w in str(intent.get("text") or "").split()
             if len(w.strip(",.?!'\"")) >= 4
-        ][:8]
+        ]
+        _stop = {
+            "near", "inside", "which", "what", "schools", "school", "areas",
+            "regions", "units", "community", "communities", "ward", "wards",
+            "with", "that", "from", "query", "asks", "form", "corresponding",
+            "administrative", "attendance", "deprivation", "lsoa", "lsoas",
+            "the", "and", "for", "unit", "region", "step", "steps", "maps",
+        }
+        _w = [w for w in dict.fromkeys(_w) if w not in _stop][:10]
         _cand = None
         if _w:
             try:
@@ -8484,7 +8555,12 @@ LIMIT 3000
             "question with schools in it, or use the Education lens with "
             "Return set to Schools, and the answer will map."
         )
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    # lsoa_codes exists so the map can draw an administrative answer. It is
+    # not part of the answer: a reader who asked for communities should see
+    # communities, not a column of statistical codes that makes it look as
+    # though the question was answered at the wrong level.
+    _show = df.drop(columns=["lsoa_codes"]) if "lsoa_codes" in df.columns else df
+    st.dataframe(_show, use_container_width=True, hide_index=True)
     return True
 
 
