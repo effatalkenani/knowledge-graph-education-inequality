@@ -2323,6 +2323,66 @@ MODE_NOTE = {
 }
 
 
+# ---------------------------------------------------------------------------
+# COMPOSED CHAIN — the only query in this file that crosses all three sources
+# in one answer. It is deliberately NOT one of the eight SCQ forms: it is a
+# composition of three relations with three different provenances, and its
+# purpose is to show that composition is possible, not to add a ninth form.
+#
+#   AdminUnit --TOUCHES--> AdminUnit    Native YAGO2geo
+#             --INTERSECTS--> LSOA      Geometry-origin (computed here)
+#             <--LOCATED_IN-- School    Project-integrated data join
+#
+# nbr.type = anchor.type keeps the neighbour at the same administrative level.
+# Without it the query silently mixes levels and the provenance claim breaks.
+# All three filters are nullable, so one template serves every combination.
+# ---------------------------------------------------------------------------
+COMPOSED_CHAIN_CYPHER = """
+MATCH (anchor:AdminUnit {uri:$admin})
+MATCH (anchor)-[:TOUCHES]-(nbr:AdminUnit)
+WHERE nbr.type = anchor.type
+MATCH (nbr)-[:INTERSECTS]->(l:LSOA)
+MATCH (l)<-[:LOCATED_IN]-(s:School)
+WHERE ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)
+  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)
+  AND ($dep IS NULL OR l.deprivation = $dep)
+RETURN DISTINCT
+    coalesce(s.school_name, s.name, s.code) AS school,
+    s.phase_group                           AS phase,
+    coalesce(nbr.name, nbr.uri)             AS via_unit,
+    nbr.type                                AS via_type,
+    l.code                                  AS lsoa_code,
+    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,
+    l.deprivation                           AS deprivation,
+    l.wimd_decile                           AS wimd_decile,
+    s.fsm_pct                               AS fsm_pct,
+    s.attendance_pct                        AS attendance_pct,
+    s.capped9_score                         AS capped9_score
+ORDER BY fsm_pct DESC
+LIMIT $limit
+"""
+
+
+def composed_anchor_options(cfg: Dict[str, str]) -> List[Tuple[str, str]]:
+    """Administrative units that can anchor the composed chain.
+
+    Unlike admin_options, this is not restricted to Ward and Community.
+    A direct INTERSECTS count confirmed all three types carry the relation:
+    Community 8,423, UnitaryAuthority 2,407, Ward 2,344.
+    """
+    return safe_options(cfg, """
+    MATCH (a:AdminUnit)
+    WHERE a.type IN ['Ward', 'Community', 'UnitaryAuthority']
+      AND EXISTS { MATCH (a)-[:TOUCHES]-(:AdminUnit) }
+      AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+    RETURN DISTINCT
+        a.uri AS value,
+        coalesce(a.name, a.uri) + ' | ' + a.type AS label
+    ORDER BY label
+    LIMIT 20000
+    """)
+
+
 SCQ_META = {
     "SCQ1": {
         "label": "SCQ1 — LSOA borders / touches",
@@ -2647,6 +2707,37 @@ LIMIT $limit
         "cypher": SCQ8_ANSWER_CYPHER,
         "cypher_evidence": SCQ8_EVIDENCE_CYPHER,
         "cypher_reverse_evidence": SCQ8_REVERSE_EVIDENCE_CYPHER,
+    },
+
+    "COMPOSED": {
+        "label": (
+            "Composed \u2014 native adjacency + computed intersect + schools "
+            "(not an SCQ form)"
+        ),
+        "question": (
+            "Which schools are in LSOAs intersecting the administrative "
+            "units that touch the selected unit?"
+        ),
+        "task": "Integration demonstration",
+        "keyword_sentence": (
+            "This is not a ninth spatial form. It composes three relations "
+            "with three different provenances in one answer: native "
+            "YAGO2geo TOUCHES between administrative units, the "
+            "geometry-origin INTERSECTS computed by this project, and the "
+            "School-LSOA data join. It exists to show that composition "
+            "across the two hierarchies is possible once the statistical "
+            "geography is integrated \u2014 not to raise any coverage score."
+        ),
+        "relation": "TOUCHES + INTERSECTS + LOCATED_IN",
+        "provenance": "Native + Geometry-origin + Project-integrated",
+        "param_type": "composed_admin",
+        "result_label": "Schools reached through the composed chain",
+        "evaluation_note": (
+            "Demonstrator answer: Yes. "
+            "Native education-use-case model answer: No. "
+            "Counts toward model completeness: No."
+        ),
+        "cypher": COMPOSED_CHAIN_CYPHER,
     },
 }
 
@@ -6645,6 +6736,57 @@ def page_scq_demonstrator(
 
         params["admin"] = selected_admin[0]
 
+    elif param_type == "composed_admin":
+        anchors = composed_anchor_options(cfg)
+        if not anchors:
+            st.error(
+                "No administrative unit in this database carries both a "
+                "native TOUCHES edge and a computed INTERSECTS edge, so the "
+                "composed chain cannot be run here."
+            )
+            return
+
+        choices = [("", "\u2014 choose an administrative unit \u2014")] + list(anchors)
+        selected = st.selectbox(
+            "Anchor unit",
+            choices,
+            format_func=lambda option: option[1],
+            key="COMPOSED_anchor",
+            help=(
+                "Ward, Community and Unitary Authority are all offered here. "
+                "The neighbour is always kept at the same level as the unit "
+                "you choose."
+            ),
+        )
+        if not selected[0]:
+            st.info("Choose an administrative unit to anchor the chain.")
+            return
+
+        params["admin"] = selected[0]
+
+        filt = st.radio(
+            "Education filter",
+            ["None", "High FSM", "Low attendance", "High deprivation"],
+            horizontal=True,
+            key="COMPOSED_filter",
+            help=(
+                "One optional filter on the schools returned. The spatial "
+                "part of the chain is unchanged by this choice."
+            ),
+        )
+        params["fsm_min"] = 30.0 if filt == "High FSM" else None
+        params["att_max"] = 90.0 if filt == "Low attendance" else None
+        params["dep"] = "High" if filt == "High deprivation" else None
+
+        st.caption(
+            "Chain: AdminUnit --TOUCHES--> AdminUnit (Native YAGO2geo) "
+            "\u2192 --INTERSECTS--> LSOA (Geometry-origin) "
+            "\u2192 <--LOCATED_IN-- School (Project-integrated). "
+            "This answer was possible because of relations added by this "
+            "project. It does not raise the coverage of the original "
+            "YAGO2geo model."
+        )
+
     run_query = st.button(
         t("run_query"),
         type="primary",
@@ -6767,7 +6909,7 @@ def page_scq_demonstrator(
             (
                 "<div class='solutionbox'>"
                 f"<b>{t('implemented_answer')}:</b> "
-                f"{strong_answers[scq_key]}"
+                f"{strong_answers.get(scq_key, meta['keyword_sentence'])}"
                 "<br><br>"
                 f"<b>{t('eval_status')}:</b> "
                 f"{meta.get('evaluation_note', 'See provenance above.')}"
@@ -7090,73 +7232,38 @@ def page_evaluation() -> None:
         unsafe_allow_html=True,
     )
 
-    # Four named coverage cards. Model coverage and demonstrator coverage
-    # are spelled out in full because the figure 6/8 appears twice with two
-    # different meanings: once earned by geometry computed in this
-    # demonstrator, once held natively by the administrative hierarchy.
-    # Naming them fully is what stops the two being read as one number.
-    st.markdown(
-        """
-<style>
-.eval-cov-grid {
-display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
-gap:.7rem; margin:.4rem 0 .2rem 0;
-}
-@media (max-width:1150px){.eval-cov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
-@media (max-width:640px){.eval-cov-grid{grid-template-columns:1fr;}}
-.eval-cov-card {
-position:relative; background:#ffffff; border:1px solid #e5e7eb;
-border-radius:12px; padding:1rem .9rem .85rem .9rem; overflow:hidden;
-box-shadow:0 3px 10px rgba(15,23,42,.035);
-}
-.eval-cov-card::before {
-content:""; position:absolute; top:0; left:0; right:0; height:4px;
-background:linear-gradient(90deg,#9e1b32,#b8283f);
-}
-.eval-cov-label {
-font-size:.78rem; line-height:1.32; font-weight:700; color:#475569;
-margin:.15rem 0 .5rem 0; min-height:3.1em;
-}
-.eval-cov-value {
-font-size:1.65rem; font-weight:800; color:#9e1b32; line-height:1.05;
-letter-spacing:-.01em;
-}
-.eval-cov-note {
-font-size:.86rem; line-height:1.55; color:#3f4a5a;
-background:#fdf2f4; border:1px solid #f3d3da;
-border-left:4px solid #9e1b32; border-radius:10px;
-padding:.7rem .85rem; margin:.6rem 0 .2rem 0;
-}
-@media (prefers-color-scheme: dark) {
-.eval-cov-card {background:#181b21; border-color:#2f3540; box-shadow:none;}
-.eval-cov-label {color:#b3bdca;}
-.eval-cov-value {color:#f2879c;}
-.eval-cov-note {color:#d3dae4; background:#241a1e; border-color:#4a2b33;
-border-left-color:#f2879c;}
-}
-</style>
-<div class="eval-cov-grid">
-<div class="eval-cov-card" title="All eight SCQs are in the denominator, including SCQ5 and SCQ6, which are reclassified rather than dropped. No education question is answered by a native YAGO2geo relation.">
-<div class="eval-cov-label">Education — native model coverage (SpCom)</div>
-<div class="eval-cov-value">0 / 8</div>
-</div>
-<div class="eval-cov-card">
-<div class="eval-cov-label">Education — demonstrator coverage (geometry-origin)</div>
-<div class="eval-cov-value">6 / 8</div>
-</div>
-<div class="eval-cov-card" title="The same eight forms scored over the administrative hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay native failures.">
-<div class="eval-cov-label">Administrative — native or derivable model coverage (SpCom)</div>
-<div class="eval-cov-value">6 / 8</div>
-</div>
-<div class="eval-cov-card">
-<div class="eval-cov-label">Native LSOA answers</div>
-<div class="eval-cov-value">0</div>
-</div>
-</div>
-<div class="eval-cov-note">The demonstrator answers six of the eight forms for the education use case, all from geometry computed here rather than asserted by YAGO2geo. SCQ5 and SCQ6 are reclassified for this use case and are answered by neither. Demonstrator coverage is not model coverage.</div>
-""",
-        unsafe_allow_html=True,
-    )
+    # Three equal-sized metric cards
+    m1, m2, m3 = st.columns(3)
+
+    with m1:
+        st.metric(
+            label="Education native coverage",
+            value="0 native LSOA answers",
+        )
+
+    with m2:
+        st.metric(
+            label="Native SpCom — education",
+            value="0/8 = 0.00",
+            help=(
+                "All eight SCQs are in the denominator, including SCQ5 and "
+                "SCQ6, which are reclassified rather than dropped. No "
+                "education question is answered by a native YAGO2geo "
+                "relation."
+            ),
+        )
+
+    with m3:
+        st.metric(
+            label="Native SpCom — administrative",
+            value="6/8 = 0.75",
+            help=(
+                "The same eight forms scored over the administrative "
+                "hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and "
+                "SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay "
+                "native failures."
+            ),
+        )
 
     # Formal IJGI SpCom equation
     eq1, eq2 = st.columns(2)
