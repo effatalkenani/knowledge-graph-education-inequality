@@ -1812,7 +1812,77 @@ _LENS_MODE_PHRASES = [
 _SCHOOL_WORDS = ("school", "مدرسة", "مدارس", "المدارس", "المدرسة")
 
 
-def parse_lens_intent(text, admin_pair):
+# The kind-word a reader writes beside a place name ("Cathays community")
+# names the type of THAT place. Without reading it, the ranking below fell
+# back to a blanket preference for Ward, so a question about a Community was
+# answered for the Ward of the same name -- correct figures for a place the
+# reader never asked about. The same word must therefore not be reused as the
+# type of the NEIGHBOUR, which is the second half of the same defect.
+_UNIT_TYPE_WORDS = [
+    ("UnitaryAuthority", ("unitary authority", "unitary authorities",
+                          "county borough", "\u0633\u0644\u0637\u0629",
+                          "\u0645\u062d\u0627\u0641\u0638\u0629")),
+    ("Community", ("community", "communities",
+                   "\u0645\u062c\u062a\u0645\u0639",
+                   "\u0645\u062c\u062a\u0645\u0639\u0627\u062a")),
+    ("Ward", ("ward", "wards", "\u062f\u0627\u0626\u0631\u0629",
+              "\u062f\u0648\u0627\u0626\u0631")),
+]
+
+
+def _name_tokens(raw_name: str) -> List[str]:
+    """Each half of a bilingual name, so "Caerdydd - Cardiff" matches either.
+
+    Module level rather than nested, because the lens reads the same tokens
+    when deciding which kind-word belongs to the anchor.
+    """
+    pieces = re.split(r"[-/\u2013,]", raw_name)
+    return [
+        p.strip().lower()
+        for p in pieces
+        if len(p.strip()) >= 4
+    ] or [raw_name.strip().lower()]
+
+
+def _beside_patterns(name: str, word: str) -> Tuple[str, str]:
+    """The two orders a reader writes: "Cathays community", "community of Cathays"."""
+    esc, w = re.escape(name), re.escape(word)
+    return (
+        rf"\b{esc}\b[\s\-,'\u2019]*{w}\b",
+        rf"\b{w}\b[\s\-,'\u2019]*(?:of\s+|the\s+)?{esc}\b",
+    )
+
+
+def type_word_beside(low: str, name: str) -> str | None:
+    """The unit type named immediately beside `name`, or None.
+
+    Nothing is inferred from a kind-word elsewhere in the sentence, because
+    that one usually describes what is being asked FOR.
+    """
+    for utype, words in _UNIT_TYPE_WORDS:
+        for word in words:
+            if any(re.search(pat, low) for pat in _beside_patterns(name, word)):
+                return utype
+    return None
+
+
+def strip_anchor_type_words(low: str, tokens: List[str]) -> str:
+    """Remove only the kind-word attached to the anchor's own name.
+
+    Banning the whole type instead would lose the second, genuine mention:
+    "which communities touch Cathays community" names Community twice, once
+    for the anchor and once for what is being asked for.
+    """
+    out = low
+    for tok in tokens:
+        for _utype, words in _UNIT_TYPE_WORDS:
+            for word in words:
+                for pat in _beside_patterns(tok, word):
+                    out = re.sub(pat, tok, out, count=1)
+    return out
+
+
+def parse_lens_intent(text, admin_pair, require_school=True):
     """Route a school question anchored on an administrative unit.
 
     Returns a dict of pending lens settings, or None. It fires only when the
@@ -1822,10 +1892,13 @@ def parse_lens_intent(text, admin_pair):
     a relation that the sentence did not contain.
     """
     low = (text or "").lower()
-    if not any(w in low for w in _SCHOOL_WORDS) or not admin_pair:
+    if not admin_pair:
+        return None
+    if require_school and not any(w in low for w in _SCHOOL_WORDS):
         return None
     label = str(admin_pair[1])
-    atype = label.rsplit("|", 1)[-1].strip() if "|" in label else None
+    parts = [p.strip() for p in label.split("|")]
+    atype = parts[1] if len(parts) > 1 else None
     if not atype:
         return None
     mode = None
@@ -1835,21 +1908,35 @@ def parse_lens_intent(text, admin_pair):
             break
     if mode is None:
         mode = "direct"
+
+    # Any kind-word standing beside the anchor's own name describes the
+    # anchor. Reading it as the neighbour type was what turned "schools near
+    # Cathays community" into anchor=Ward with neighbour=Community, a pair no
+    # row can satisfy.
+    rest = strip_anchor_type_words(low, _name_tokens(parts[0]))
+
     ntype = None
-    for cand in ("community", "ward", "unitaryauthority", "unitary authority"):
-        if cand in low:
-            ntype = {
-                "community": "Community",
-                "ward": "Ward",
-                "unitaryauthority": "UnitaryAuthority",
-                "unitary authority": "UnitaryAuthority",
-            }[cand]
+    for utype, words in _UNIT_TYPE_WORDS:
+        if any(
+            re.search(r"\b" + re.escape(w) + r"\b", rest) for w in words
+        ):
+            ntype = utype
             break
+
+    # Near is defined in the paper inside ONE division: disjoint regions
+    # joined by a path of two touches edges between regions of the same kind.
+    # A neighbour type different from the anchor's cannot be satisfied, so it
+    # is dropped here and reported, rather than silently returning nothing.
+    dropped = None
+    if mode == "near" and ntype and ntype != atype:
+        dropped, ntype = ntype, None
+
     return {
         "atype": atype,
         "uri": admin_pair[0],
         "mode": mode,
         "ntype": ntype,
+        "dropped_ntype": dropped,
     }
 
 
@@ -1935,14 +2022,6 @@ def parse_spatial_question(
     # requiring the whole name to appear in the sentence never matched: a
     # reader writes "Cardiff", not both halves. Each half is tested on its
     # own, as a whole word.
-    def _name_tokens(raw_name: str) -> List[str]:
-        pieces = re.split(r"[-/\u2013,]", raw_name)
-        return [
-            p.strip().lower()
-            for p in pieces
-            if len(p.strip()) >= 4
-        ] or [raw_name.strip().lower()]
-
     # Only the two containment forms use an administrative unit. Reporting a
     # match for the others put "Blaenau Gwent | UnitaryAuthority" beside a
     # question about neighbouring LSOAs, which reads as though the unit had
@@ -1966,10 +2045,15 @@ def parse_spatial_question(
         if not hit_token:
             continue
         name = hit_token
-        # An exact word beats a name that merely occurs inside the sentence,
-        # and a unitary authority beats a community of the same name.
+        # A kind-word written beside the name settles the type outright; the
+        # blanket preference below applies only when the reader gave none.
+        # Cardiff has a Ward, a Community and a Unitary Authority of the same
+        # name, so guessing here silently answers a different question.
         score = 40
-        if "unitaryauthority" in unit_type:
+        beside = type_word_beside(low, name)
+        if beside:
+            score += 80 if beside.lower() == unit_type else -40
+        elif "unitaryauthority" in unit_type:
             score += 20
         elif "ward" in unit_type:
             score += 10
@@ -2410,21 +2494,19 @@ def render_nl_search(
         not _lens
         and parsed.get("admin")
         and not parsed.get("areas")
-        and scq in ("SCQ1", "SCQ2", "SCQ3", "SCQ4")
+        and scq in (None, "SCQ1", "SCQ2", "SCQ3", "SCQ4")
     ):
-        _low = (parsed.get("text") or "").lower()
-        _mode = "direct"
-        for _name, _phrases in _LENS_MODE_PHRASES:
-            if any(p in _low for p in _phrases):
-                _mode = _name
-                break
-        _lens = {
-            "atype": str(parsed["admin"][1]).rsplit("|", 1)[-1].strip(),
-            "uri": parsed["admin"][0],
-            "mode": _mode,
-            "ntype": None,
-        }
-        _want_units = not any(w in _low for w in _SCHOOL_WORDS)
+        # A question that names a unit and no LSOA cannot be answered by an
+        # LSOA-anchored form, and a question that names a unit but matches no
+        # form at all used to produce nothing whatever. Both go to the lens,
+        # read by the same rules as a school question so that the anchor type
+        # and the neighbour type are separated identically.
+        _lens = parse_lens_intent(
+            parsed.get("text", ""), parsed.get("admin"), require_school=False
+        )
+        _want_units = not any(
+            w in (parsed.get("text") or "").lower() for w in _SCHOOL_WORDS
+        )
 
     st.session_state["nl_answer"] = {
         "want": "units" if _want_units else "schools",
@@ -2456,6 +2538,11 @@ def render_nl_search(
         changed.append(f"relation: {LENS_MODES[_lens['mode']][0]}")
         if _lens["ntype"]:
             changed.append(f"related unit type: {_lens['ntype']}")
+        if _lens.get("dropped_ntype"):
+            changed.append(
+                f"the kind you named ({_lens['dropped_ntype']}) was not "
+                "applied \u2014 near is defined inside one division"
+            )
 
     if scq:
         st.session_state[f"scq_ran_{scq}"] = True
@@ -7348,7 +7435,7 @@ def page_scq_demonstrator(
         params["admin"] = selected[0]
 
         nbr_type = None
-        if mode != "direct":
+        if mode not in ("direct", "near"):
             nbr_choice = st.selectbox(
                 "Which kind of related unit?", ["Any type"] + types,
                 key="LENS_ntype",
@@ -7359,6 +7446,16 @@ def page_scq_demonstrator(
                 ),
             )
             nbr_type = None if nbr_choice == "Any type" else nbr_choice
+        elif mode == "near":
+            # The control is withheld rather than disabled, because offering
+            # a choice the definition cannot honour is what produced empty
+            # answers with no reason attached.
+            st.caption(
+                "Near is defined inside one division: disjoint units of the "
+                "same kind joined by a path of two touches edges (IJGI 2024, "
+                "\u00a73.4). The related unit is therefore the same kind as "
+                "the one you started from, and no type choice applies."
+            )
         params["nbr_type"] = nbr_type
 
         # The school path needs INTERSECTS, which only some types carry.
@@ -8280,7 +8377,17 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
             cypher = LENS_UNIT_CYPHER[mode]
         else:
             cypher = LENS_CYPHER.get(mode)
-        params["nbr_type"] = intent.get("ntype")
+        # Same rule as the panel: near cannot carry a neighbour type. A
+        # model-parsed sentence can still propose one, so the guard lives
+        # here as well as in the rule parser.
+        params["nbr_type"] = None if mode == "near" else intent.get("ntype")
+        if mode == "near" and intent.get("ntype"):
+            st.caption(
+                f"Your sentence named {intent['ntype']} as the kind of unit "
+                "to return, but near is defined inside one division "
+                "(IJGI 2024, \u00a73.4), so the answer is over units of the "
+                "same kind as the one you started from."
+            )
         chain = LENS_MODES.get(mode, ("", "", ""))
     else:
         meta = SCQ_META.get(kind)
