@@ -8398,7 +8398,22 @@ LIMIT 6
 """, {"words": _w})
             except Exception:
                 _cand = None
-        if _cand is not None and len(_cand) == 1:
+        if _cand is not None and not _cand.empty:
+            # Requiring exactly one match was the root of this failure:
+            # "Cathays" matches both "Cathays" and "Cathays Community", so
+            # the recovery declined and the reader got nothing. Ties are
+            # broken deterministically instead -- an exact word match first,
+            # then the shortest name -- and the unit chosen is printed above
+            # the answer, so the choice is visible rather than silent.
+            if len(_cand) > 1:
+                _wl = set(_w)
+                _cand = _cand.assign(
+                    _exact=[
+                        0 if str(n).lower() in _wl else 1
+                        for n in _cand["name"]
+                    ],
+                    _len=[len(str(n)) for n in _cand["name"]],
+                ).sort_values(["_exact", "_len", "name"])
             admin = _cand.iloc[0]["uri"]
             params["admin"] = admin
             _low = str(intent.get("text") or "").lower()
