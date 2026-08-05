@@ -1723,6 +1723,45 @@ _EDU_FILTER_RULES = [
 ]
 
 
+# Negation reverses a question's meaning, and matching only the positive
+# phrase inside it would return the exact opposite of what was asked. Any
+# sentence carrying one of these is refused rather than half-understood.
+_NEGATION_WORDS = (
+    "not near", "not adjacent", "not touching", "not bordering",
+    "non-adjacent", "not neighbour", "not neighbor", "far from",
+    "outside", "except", "other than",
+    "\u0644\u064a\u0633", "\u063a\u064a\u0631", "\u0628\u0639\u064a\u062f",
+    "\u062e\u0627\u0631\u062c", "\u0645\u0627\u0639\u062f\u0627",
+)
+
+
+def has_negation(text):
+    low = (text or "").lower()
+    return any(w in low for w in _NEGATION_WORDS)
+
+
+def parse_threshold_value(text):
+    """The number the sentence actually names, if it names one.
+
+    Without this the app recognised "attendance below 85" and then applied
+    its own default of 90 \u2014 an answer to a question nobody asked.
+    """
+    m = re.search(
+        r"(?:below|under|less than|above|over|greater than|<=?|>=?|"
+        r"\u0627\u0642\u0644|\u0623\u0642\u0644|\u062a\u062d\u062a|"
+        r"\u0627\u0643\u062b\u0631|\u0623\u0643\u062b\u0631|"
+        r"\u0641\u0648\u0642)[^0-9]{0,12}(\d{1,3})",
+        (text or "").lower(),
+    )
+    if not m:
+        return None
+    try:
+        v = float(m.group(1))
+    except ValueError:
+        return None
+    return v if 0 < v <= 100 else None
+
+
 def parse_education_filter(text):
     """Return the filter a sentence names, or None. Never guesses."""
     low = (text or "").lower()
@@ -2198,43 +2237,15 @@ def render_nl_search(
     # collapsed by default so the box stays the first thing a reader meets.
     # The second group is the honest half: questions the box cannot parse,
     # named rather than hidden, with the control that can answer them.
-    with st.expander("Example questions", expanded=False):
-        st.caption(
-            "Each of these exercises a different relation and a different "
-            "provenance. Clicking one fills the box and runs it."
-        )
-        _ex = [
-            ("Which LSOAs directly border Blaenau Gwent 001A?",
-             "computed adjacency \u2014 Geometry-origin"),
-            ("Which communities are near Cathays?",
-             "native adjacency \u2014 YAGO2geo"),
-            ("Which wards or communities intersect Cathays?",
-             "the cross-hierarchy seam \u2014 Geometry-origin"),
-            ("What schools are near Cathays community with attendance "
-             "below 90?",
-             "native adjacency, then the seam, then schools and a threshold "
-             "\u2014 the whole chain in one sentence"),
-        ]
-        for _q, _why in _ex:
-            if st.button(_q, key=f"nl_ex_{abs(hash(_q))}",
-                         use_container_width=True, help=_why):
-                st.session_state["nl_question"] = _q
-                st.session_state["nl_autorun"] = True
-                st.rerun()
 
-        st.markdown(
-            "<div class='nl-warn' style='margin-top:.8rem'>"
-            "<b>What the box still cannot do.</b> A sentence naming more "
-            "than one relation is matched on the first it recognises, and "
-            "the rest is reported rather than assumed. A question anchored "
-            "on a school rather than a place \u2014 <i>which schools are "
-            "near my school?</i> \u2014 is not routed automatically; use "
-            "<b>From a school</b> in the list below, which travels the "
-            "computed LSOA relations YAGO2geo does not hold. Naming the "
-            "questions the box cannot take is part of the result, not a gap "
-            "in it.</div>",
-            unsafe_allow_html=True,
-        )
+    # One short line instead of a suggestion list: it says what the box
+    # reads and what it refuses, which is the part a reader needs.
+    st.caption(
+        "The box reads the relation and the place in a sentence, and a "
+        "numeric threshold where one is given. A negated sentence is "
+        "refused rather than half-matched, and a sentence naming more than "
+        "one relation is matched on the first and the rest reported."
+    )
 
     col_input, col_go = st.columns([6, 1])
     with col_input:
@@ -2356,6 +2367,17 @@ def render_nl_search(
     # The question's own answer is parked here, complete and independent of
     # the manual panel. It carries everything the query needs, so the answer
     # can be produced without a single widget being created.
+    if has_negation(parsed.get("text", "")):
+        st.session_state["nl_answer"] = {"kind": None}
+        st.session_state["nl_negated"] = True
+        changed.append(
+            "the sentence is negated, so no form was run \u2014 the eight "
+            "forms match a relation, not its complement, and answering the "
+            "positive half would invert your question"
+        )
+        st.session_state["nl_controls_set"] = changed
+        st.rerun()
+
     _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
 
     # A question that names an administrative unit and no LSOA cannot be
@@ -2396,6 +2418,7 @@ def render_nl_search(
         ),
         "areas": [a[0] for a in (parsed.get("areas") or [])],
         "filter": edu,
+        "value": parse_threshold_value(parsed.get("text", "")),
     }
     if _lens:
         _lens["filter"] = edu or "None"
@@ -2775,19 +2798,19 @@ def lens_unit_types(cfg):
 LENS_UNIT_CYPHER = {
     'touches': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'near': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES*2]-(nbr:AdminUnit)\nWHERE nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'inside': (
         'MATCH (anchor:AdminUnit {uri:$admin})<-[:WITHIN]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'contains': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:WITHIN]->(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     )
 }
 
@@ -6889,6 +6912,11 @@ def page_scq_demonstrator(
     # the reader has to be able to see what the sentence chose.
     if _answered:
         st.divider()
+    if st.session_state.get("scq_manual_open") and _answered:
+        # The panel is the other route. Keeping the sentence's answer on
+        # screen beside it would leave two results with no way to tell which
+        # belongs to what was just done.
+        st.session_state.pop("nl_answer", None)
     _open = st.checkbox(
         "Choose the question yourself",
         value=False,
@@ -8245,11 +8273,21 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         return True
 
     edu = intent.get("filter")
-    params["fsm_min"] = 30.0 if edu == "High FSM" else None
-    params["att_max"] = 90.0 if edu == "Low attendance" else None
+    _val = intent.get("value")
+    params["fsm_min"] = (
+        (_val if _val is not None else 30.0) if edu == "High FSM" else None
+    )
+    params["att_max"] = (
+        (_val if _val is not None else 90.0) if edu == "Low attendance" else None
+    )
     params["dep"] = "High" if edu == "High deprivation" else None
 
     st.markdown("### Answer to your question")
+    if edu and _val is None:
+        st.caption(
+            f"No number was found in the sentence, so the project default "
+            f"was used for {edu.lower()}."
+        )
     try:
         df = run_cypher(cfg, cypher, params)
     except Exception as exc:
@@ -8290,6 +8328,44 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
             )
         except Exception as exc:
             st.caption(f"The map could not be drawn for this answer: {exc}")
+    elif admin:
+        # An administrative answer carries no LSOA code, so the eight forms
+        # cannot be mapped on their own. Rather than alter those queries --
+        # their rows are reported figures -- a companion query fetches the
+        # LSOAs the answer's units cover, through the computed INTERSECTS.
+        # The table stays the answer; the map is a view of where it falls.
+        try:
+            _areas_df = run_cypher(cfg, """
+MATCH (a:AdminUnit {uri:$admin})
+MATCH (u:AdminUnit)
+WHERE u = a OR (u)-[:WITHIN*1..3]->(a)
+MATCH (u)-[:INTERSECTS]->(l:LSOA)
+RETURN DISTINCT l.code AS lsoa_code
+LIMIT 3000
+""", {"admin": admin})
+        except Exception:
+            _areas_df = None
+        if _areas_df is not None and not _areas_df.empty:
+            st.caption(
+                f"The map shows the {len(_areas_df):,} LSOAs that the units "
+                "in this answer cover. Administrative boundaries are not "
+                "stored in this graph, so the extent is drawn through the "
+                "computed INTERSECTS relation \u2014 Geometry-origin, not "
+                "native. The table above is the answer; the map is where it "
+                "falls."
+            )
+            try:
+                render_answer_map(
+                    cfg, _areas_df, focus_code=None,
+                    key="nl_answer_map_admin", focus_admin=admin,
+                )
+            except Exception as exc:
+                st.caption(f"The map could not be drawn: {exc}")
+        else:
+            st.info(
+                "No map for this answer. The units it names reach no LSOA "
+                "through any stored relation, so there is no extent to draw."
+            )
     else:
         st.info(
             "No map for this answer. The map draws LSOA boundaries, which "
