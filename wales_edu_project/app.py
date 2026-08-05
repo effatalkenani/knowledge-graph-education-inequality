@@ -1762,6 +1762,25 @@ def parse_threshold_value(text):
     return v if 0 < v <= 100 else None
 
 
+# School phase is a THIRD condition, independent of the spatial relation and
+# of the education threshold. It used to be dropped in silence: a question
+# asking for secondary schools got every phase back and said nothing.
+_PHASE_WORDS = {
+    "Secondary": ("secondary", "\u062b\u0627\u0646\u0648"),
+    "Primary": ("primary", "\u0627\u0628\u062a\u062f\u0627\u0626"),
+    "Special": ("special school", "\u062e\u0627\u0635"),
+    "All-age": ("all-age", "all age"),
+}
+
+
+def parse_school_phase(text):
+    low = (text or "").lower()
+    for label, words in _PHASE_WORDS.items():
+        if any(w in low for w in words):
+            return label
+    return None
+
+
 def parse_education_filter(text):
     """Return the filter a sentence names, or None. Never guesses."""
     low = (text or "").lower()
@@ -2419,6 +2438,8 @@ def render_nl_search(
         "areas": [a[0] for a in (parsed.get("areas") or [])],
         "filter": edu,
         "value": parse_threshold_value(parsed.get("text", "")),
+        "phase": parse_school_phase(parsed.get("text", "")),
+        "text": parsed.get("text", ""),
     }
     if _lens:
         _lens["filter"] = edu or "None"
@@ -2615,7 +2636,7 @@ _LENS_TAIL = """
 MATCH (l)<-[:LOCATED_IN]-(s:School)
 WHERE ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)
   AND ($att_max IS NULL OR s.attendance_pct <= $att_max)
-  AND ($dep IS NULL OR l.deprivation = $dep)
+  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)
 RETURN DISTINCT
     coalesce(s.school_name, s.name, s.code) AS school,
     s.phase_group                           AS phase,
@@ -2692,11 +2713,11 @@ LENS_MODES = {
 # schools are near my school" is answered through statistical geography,
 # not administrative geography, and the provenance line says so.
 SCHOOL_LENS_CYPHER = {
-    "same": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+    "same": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
     "touch": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
-              "MATCH (home)-[:LSOA_TOUCHES]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+              "MATCH (home)-[:LSOA_TOUCHES]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
     "near": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
-             "MATCH (home)-[:GRAPH_NEAR]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+             "MATCH (home)-[:GRAPH_NEAR]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
 }
 SCHOOL_LENS_MODES = {
     "same": ("Schools in the same LSOA",
@@ -7351,6 +7372,7 @@ def page_scq_demonstrator(
             ["None", "High FSM", "Low attendance", "High deprivation"],
             horizontal=True, key="LENS_filter",
         )
+        params["phase"] = None
         params["fsm_min"] = 30.0 if filt == "High FSM" else None
         params["att_max"] = 90.0 if filt == "Low attendance" else None
         params["dep"] = "High" if filt == "High deprivation" else None
@@ -7407,6 +7429,7 @@ def page_scq_demonstrator(
             ["None", "High FSM", "Low attendance", "High deprivation"],
             horizontal=True, key="SLENS_filter",
         )
+        params["phase"] = None
         params["fsm_min"] = 30.0 if sfilt == "High FSM" else None
         params["att_max"] = 90.0 if sfilt == "Low attendance" else None
         params["dep"] = "High" if sfilt == "High deprivation" else None
@@ -8270,9 +8293,41 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         st.warning(
             f"The form matched by your question needs {_missing}, and no "
             f"{_missing} in the sentence could be matched to a name in the "
-            "graph. Check the spelling, or open the panel below and choose "
-            "one."
+            "graph."
         )
+        # Telling a reader their name was not found, without showing what the
+        # graph does call it, leaves them guessing. Welsh units are stored
+        # bilingually -- Cardiff is "Caerdydd - Cardiff" -- so a plain name
+        # often misses by a prefix rather than by a spelling error.
+        _words = [
+            w.strip(",.?!'\"") for w in str(intent.get("text") or "").split()
+            if len(w.strip(",.?!'\"")) >= 4
+        ][:6]
+        if _words:
+            try:
+                _near = run_cypher(cfg, """
+UNWIND $words AS w
+MATCH (a:AdminUnit)
+WHERE a.name IS NOT NULL AND toLower(a.name) CONTAINS toLower(w)
+RETURN DISTINCT a.name AS name, a.type AS type
+ORDER BY name
+LIMIT 12
+""", {"words": _words})
+            except Exception:
+                _near = None
+            if _near is not None and not _near.empty:
+                st.caption(
+                    "Names in the graph that contain a word from your "
+                    "question. Welsh units are stored bilingually, so the "
+                    "graph's name is often longer than the one you typed:"
+                )
+                st.dataframe(_near, use_container_width=True, hide_index=True)
+            else:
+                st.caption(
+                    "No administrative name in the graph contains any word "
+                    "from your question. Open the panel below and pick one "
+                    "from the list."
+                )
         return True
 
     edu = intent.get("filter")
@@ -8284,6 +8339,7 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         (_val if _val is not None else 90.0) if edu == "Low attendance" else None
     )
     params["dep"] = "High" if edu == "High deprivation" else None
+    params["phase"] = intent.get("phase")
 
     st.markdown("### Answer to your question")
     if edu and _val is None:
