@@ -2353,7 +2353,21 @@ def render_nl_search(
     # hold no filter, so answering there would answer a different question.
     # The settings are parked rather than written, because the option lists
     # they must match are only known once the branch queries the graph.
+    # The question's own answer is parked here, complete and independent of
+    # the manual panel. It carries everything the query needs, so the answer
+    # can be produced without a single widget being created.
     _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
+    st.session_state["nl_answer"] = {
+        "kind": "LENS" if _lens else scq,
+        "mode": (_lens or {}).get("mode"),
+        "ntype": (_lens or {}).get("ntype"),
+        "admin": (
+            (_lens or {}).get("uri")
+            or (parsed["admin"][0] if parsed.get("admin") else None)
+        ),
+        "areas": [a[0] for a in (parsed.get("areas") or [])],
+        "filter": edu,
+    }
     if _lens:
         _lens["filter"] = edu or "None"
         st.session_state["LENS_pending"] = _lens
@@ -2374,12 +2388,7 @@ def render_nl_search(
 
     st.session_state["nl_controls_set"] = changed
     _resolved = bool(parsed.get("areas")) or bool(parsed.get("admin"))
-    if changed and _resolved:
-        # The sentence set something real, so the panel must be visible to
-        # show what it set; leaving it closed would hide the provenance of
-        # the answer from the reader who asked for it.
-        st.session_state["scq_manual_open"] = True
-    elif changed:
+    if changed and not _resolved:
         # A form was matched but no place in the sentence could be resolved.
         # Opening the panel here would demand a value the reader never gave
         # and make a naming problem look like a broken question.
@@ -6810,6 +6819,9 @@ def page_scq_demonstrator(
     render_nl_search(nl_lsoas, nl_admin)
     render_nl_understanding()
 
+    # The answer belongs directly under the question that produced it.
+    _answered = render_question_answer(cfg)
+
     # The question and the controls are one path, not two. Without saying so,
     # a reader cannot tell whether a selector still holds a value from the
     # last question or one they chose themselves, which is exactly how a
@@ -6846,6 +6858,8 @@ def page_scq_demonstrator(
     # a reader wondering whether a selector holds a value they never set.
     # When a question drives the controls the panel opens itself, because
     # the reader has to be able to see what the sentence chose.
+    if _answered:
+        st.divider()
     _open = st.checkbox(
         "Choose the question yourself",
         value=False,
@@ -8137,6 +8151,94 @@ border-left-color:#f2879c;}
         ),
         unsafe_allow_html=True,
     )
+
+def render_question_answer(cfg: Dict[str, str]) -> bool:
+    """Answer the typed question directly, without the manual panel.
+
+    The panel and the question box used to be one path: the sentence set the
+    widgets and the widgets built the query, so an answer could not exist
+    unless the panel was open. This function is the separation. It takes the
+    intent parked by the parser, chooses an approved template, binds its
+    parameters and renders the answer and its map on its own. The panel stays
+    what it should be: a way to ask without a sentence.
+    """
+    intent = st.session_state.get("nl_answer")
+    if not intent or not intent.get("kind"):
+        return False
+    kind = intent["kind"]
+    areas = intent.get("areas") or []
+    admin = intent.get("admin")
+
+    params: Dict[str, Any] = {"limit": 5000}
+    if areas:
+        params["lsoa"] = areas[0]
+        params["lsoa_a"] = areas[0]
+        params["lsoa_b"] = areas[1] if len(areas) > 1 else areas[0]
+    if admin:
+        params["admin"] = admin
+
+    if kind == "LENS":
+        mode = intent.get("mode") or "direct"
+        cypher = LENS_CYPHER.get(mode)
+        params["nbr_type"] = intent.get("ntype")
+        chain = LENS_MODES.get(mode, ("", "", ""))
+    else:
+        meta = SCQ_META.get(kind)
+        if not meta:
+            return False
+        cypher = meta["cypher"]
+        # A cross-hierarchy question naming a unit and no LSOA has to run
+        # from the administrative side, exactly as the toggle would set it.
+        if kind in ("SCQ7", "SCQ8") and admin and not areas:
+            cypher = meta.get("cypher_reverse", cypher)
+        chain = ("", meta.get("relation", ""), meta.get("provenance", ""))
+
+    if not cypher:
+        return False
+    if "$lsoa" in cypher and "lsoa" not in params:
+        return False
+    if "$admin" in cypher and "admin" not in params:
+        return False
+
+    edu = intent.get("filter")
+    params["fsm_min"] = 30.0 if edu == "High FSM" else None
+    params["att_max"] = 90.0 if edu == "Low attendance" else None
+    params["dep"] = "High" if edu == "High deprivation" else None
+
+    st.markdown("### Answer to your question")
+    try:
+        df = run_cypher(cfg, cypher, params)
+    except Exception as exc:
+        st.error(f"The question could not be run: {exc}")
+        return True
+
+    if df is None or df.empty:
+        st.warning(
+            "That question ran but returned nothing. The relation exists; "
+            "no row in the graph satisfies it for the place and filter you "
+            "named. An empty answer is a result, not a fault."
+        )
+        return True
+
+    st.caption(
+        f"{len(df):,} row(s). Relation chain: {chain[1] or chain[0]}  "
+        f"\u2014  Provenance: {chain[2]}. "
+        "Where a chain mixes provenances, the answer was possible because of "
+        "relations added by this project and does not raise the coverage of "
+        "the original YAGO2geo model."
+    )
+    try:
+        render_answer_map(
+            cfg, df,
+            focus_code=(areas[0] if areas else None),
+            key="nl_answer_map",
+            focus_admin=admin,
+        )
+    except Exception as exc:
+        st.caption(f"The map could not be drawn for this answer: {exc}")
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    return True
+
 
 def render_seam_context(cfg: Dict[str, str]) -> None:
     """The cross-hierarchy seam: the bridge diagram, its live counts and
