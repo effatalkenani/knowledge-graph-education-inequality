@@ -2087,6 +2087,48 @@ def render_nl_search(
     # grouped by the relation they exercise. Grouping matters: it shows that
     # each relation answers a family of questions rather than one, which is
     # the point the eight-form framework is making.
+    # Examples must be drawn before the input: Streamlit refuses to write to
+    # a widget's state after that widget exists in the same run. Each one
+    # exercises a different relation and a different provenance, so clicking
+    # through them walks the reader across the boundary the project is about.
+    # Examples must be drawn before the input: Streamlit refuses to write to
+    # a widget's state after that widget exists in the same run. They are
+    # collapsed by default so the box stays the first thing a reader meets.
+    # The second group is the honest half: questions the box cannot parse,
+    # named rather than hidden, with the control that can answer them.
+    with st.expander("Example questions", expanded=False):
+        st.caption(
+            "Each of these exercises a different relation and a different "
+            "provenance. Clicking one fills the box and runs it."
+        )
+        _ex = [
+            ("Which LSOAs directly border Blaenau Gwent 001A?",
+             "computed adjacency \u2014 Geometry-origin"),
+            ("Which communities are near Cathays?",
+             "native adjacency \u2014 YAGO2geo"),
+            ("Which wards or communities intersect Cathays?",
+             "the cross-hierarchy seam \u2014 Geometry-origin"),
+        ]
+        for _q, _why in _ex:
+            if st.button(_q, key=f"nl_ex_{abs(hash(_q))}",
+                         use_container_width=True, help=_why):
+                st.session_state["nl_question"] = _q
+                st.session_state["nl_autorun"] = True
+                st.rerun()
+
+        st.markdown(
+            "<div class='nl-warn' style='margin-top:.8rem'>"
+            "<b>Not answerable from this box yet.</b> Neither parser reads a "
+            "numeric threshold, so a question such as "
+            "<i>which schools near Cathays have attendance below 90?</i> "
+            "is understood spatially but not filtered. Ask the spatial half "
+            "here, then use <b>Education lens</b> or <b>From a school</b> in "
+            "the list below, where the filter is an explicit control. "
+            "Saying which questions the box cannot take is part of the "
+            "result, not a gap in it.</div>",
+            unsafe_allow_html=True,
+        )
+
     col_input, col_go = st.columns([6, 1])
     with col_input:
         question = st.text_input(
@@ -2169,6 +2211,18 @@ def render_nl_search(
     if scq and parsed["admin"]:
         st.session_state[f"{scq}_admin"] = parsed["admin"]
         changed.append(parsed["admin"][1])
+
+    # A cross-hierarchy question that names an administrative unit and no
+    # LSOA has to start from the administrative side. Without this the form
+    # opens on its LSOA direction and then asks for an LSOA the sentence
+    # never mentioned, which reads as a failure even though the answer was
+    # available from the other direction over the same stored facts.
+    if scq in ("SCQ7", "SCQ8"):
+        if parsed["admin"] and not parsed["areas"]:
+            st.session_state[f"{scq}_direction"] = "admin"
+            changed.append("started from the administrative unit")
+        elif parsed["areas"]:
+            st.session_state[f"{scq}_direction"] = "lsoa"
     if scq:
         st.session_state[f"scq_ran_{scq}"] = True
 
@@ -2324,24 +2378,22 @@ MODE_NOTE = {
 
 
 # ---------------------------------------------------------------------------
-# COMPOSED CHAIN — the only query in this file that crosses all three sources
-# in one answer. It is deliberately NOT one of the eight SCQ forms: it is a
-# composition of three relations with three different provenances, and its
-# purpose is to show that composition is possible, not to add a ninth form.
+# EDUCATION LENS — schools reached through any relation the graph already has
 #
-#   AdminUnit --TOUCHES--> AdminUnit    Native YAGO2geo
-#             --INTERSECTS--> LSOA      Geometry-origin (computed here)
-#             <--LOCATED_IN-- School    Project-integrated data join
+# Not a ninth SCQ form. Each variant composes relations with DIFFERENT
+# provenances in one answer, which is the thing the integration made possible:
 #
-# nbr.type = anchor.type keeps the neighbour at the same administrative level.
-# Without it the query silently mixes levels and the provenance claim breaks.
-# All three filters are nullable, so one template serves every combination.
+#   anchor --INTERSECTS--> LSOA <--LOCATED_IN-- School     (Geometry-origin)
+#   anchor --TOUCHES-->    unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
+#   anchor <--WITHIN--     unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
+#   anchor --WITHIN-->     unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
+#
+# A direct INTERSECTS count confirmed all three anchor types carry the
+# relation: Community 8,423, UnitaryAuthority 2,407, Ward 2,344. The
+# neighbour type is a free parameter, so Community->Ward, Ward->Community and
+# every other pair the data actually holds can be asked for.
 # ---------------------------------------------------------------------------
-COMPOSED_CHAIN_CYPHER = """
-MATCH (anchor:AdminUnit {uri:$admin})
-MATCH (anchor)-[:TOUCHES]-(nbr:AdminUnit)
-WHERE nbr.type = anchor.type
-MATCH (nbr)-[:INTERSECTS]->(l:LSOA)
+_LENS_TAIL = """
 MATCH (l)<-[:LOCATED_IN]-(s:School)
 WHERE ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)
   AND ($att_max IS NULL OR s.attendance_pct <= $att_max)
@@ -2349,8 +2401,8 @@ WHERE ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)
 RETURN DISTINCT
     coalesce(s.school_name, s.name, s.code) AS school,
     s.phase_group                           AS phase,
-    coalesce(nbr.name, nbr.uri)             AS via_unit,
-    nbr.type                                AS via_type,
+    __VIA__                                 AS via_unit,
+    __VIATYPE__                             AS via_type,
     l.code                                  AS lsoa_code,
     coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,
     l.deprivation                           AS deprivation,
@@ -2362,26 +2414,176 @@ ORDER BY fsm_pct DESC
 LIMIT $limit
 """
 
+_LENS_SELF = "coalesce(anchor.name, anchor.uri)"
+_LENS_NBR = "coalesce(nbr.name, nbr.uri)"
 
-def composed_anchor_options(cfg: Dict[str, str]) -> List[Tuple[str, str]]:
-    """Administrative units that can anchor the composed chain.
+LENS_CYPHER = {
+    "direct": (
+        "MATCH (anchor:AdminUnit {uri:$admin})-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_SELF).replace("__VIATYPE__", "anchor.type")
+    ),
+    "touches": (
+        "MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\n"
+        "WHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n"
+        "MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+    ),
+    "inside": (
+        "MATCH (anchor:AdminUnit {uri:$admin})<-[:WITHIN]-(nbr:AdminUnit)\n"
+        "WHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n"
+        "MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+    ),
+    "contains": (
+        "MATCH (anchor:AdminUnit {uri:$admin})-[:WITHIN]->(nbr:AdminUnit)\n"
+        "WHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n"
+        "MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+    ),
+}
 
-    Unlike admin_options, this is not restricted to Ward and Community.
-    A direct INTERSECTS count confirmed all three types carry the relation:
-    Community 8,423, UnitaryAuthority 2,407, Ward 2,344.
-    """
+LENS_MODES = {
+    "direct": (
+        "Schools inside this unit",
+        "AdminUnit --INTERSECTS--> LSOA <--LOCATED_IN-- School",
+        "Geometry-origin, then Project-integrated",
+    ),
+    "touches": (
+        "Schools in units that TOUCH this one",
+        "AdminUnit --TOUCHES--> AdminUnit --INTERSECTS--> LSOA "
+        "<--LOCATED_IN-- School",
+        "Native YAGO2geo, then Geometry-origin, then Project-integrated",
+    ),
+    "inside": (
+        "Schools in units INSIDE this one",
+        "AdminUnit <--WITHIN-- AdminUnit --INTERSECTS--> LSOA "
+        "<--LOCATED_IN-- School",
+        "Native YAGO2geo, then Geometry-origin, then Project-integrated",
+    ),
+    "contains": (
+        "Schools in the unit that CONTAINS this one",
+        "AdminUnit --WITHIN--> AdminUnit --INTERSECTS--> LSOA "
+        "<--LOCATED_IN-- School",
+        "Native YAGO2geo, then Geometry-origin, then Project-integrated",
+    ),
+}
+
+
+# School-anchored lens. This travels the COMPUTED side of the graph:
+# LSOA_TOUCHES is geometry-origin, GRAPH_NEAR is derived from it. "Which
+# schools are near my school" is answered through statistical geography,
+# not administrative geography, and the provenance line says so.
+SCHOOL_LENS_CYPHER = {
+    "same": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+    "touch": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
+              "MATCH (home)-[:LSOA_TOUCHES]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+    "near": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
+             "MATCH (home)-[:GRAPH_NEAR]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+}
+SCHOOL_LENS_MODES = {
+    "same": ("Schools in the same LSOA",
+             "School --LOCATED_IN--> LSOA <--LOCATED_IN-- School",
+             "Project-integrated"),
+    "touch": ("Schools in LSOAs that touch mine",
+              "School --LOCATED_IN--> LSOA --LSOA_TOUCHES--> LSOA <--LOCATED_IN-- School",
+              "Project-integrated, then Geometry-origin"),
+    "near": ("Schools in LSOAs graph-near mine (two touches-steps)",
+             "School --LOCATED_IN--> LSOA --GRAPH_NEAR--> LSOA <--LOCATED_IN-- School",
+             "Project-integrated, then Derived from Geometry-origin"),
+}
+
+
+def school_lens_options(cfg):
+    """Schools placed in an LSOA, so a spatial answer is possible."""
     return safe_options(cfg, """
-    MATCH (a:AdminUnit)
-    WHERE a.type IN ['Ward', 'Community', 'UnitaryAuthority']
-      AND EXISTS { MATCH (a)-[:TOUCHES]-(:AdminUnit) }
-      AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
-    RETURN DISTINCT
-        a.uri AS value,
-        coalesce(a.name, a.uri) + ' | ' + a.type AS label
+    MATCH (s:School)-[:LOCATED_IN]->(l:LSOA)
+    WHERE s.code IS NOT NULL
+    RETURN DISTINCT s.code AS value,
+           coalesce(s.school_name, s.name, s.code)
+             + ' | ' + coalesce(l.name, l.code) AS label
     ORDER BY label
     LIMIT 20000
     """)
 
+
+def types_with_intersects(cfg):
+    """Administrative types that can reach an LSOA, and therefore schools.
+
+    A verified count returned Community 8,423, UnitaryAuthority 2,407,
+    Ward 2,344 and nothing else. Types outside this set can still be asked
+    about as units; they simply cannot carry a school answer, and saying so
+    is part of the result rather than a failure of the interface.
+    """
+    return {
+        str(v) for v, _ in safe_options(cfg, """
+        MATCH (a:AdminUnit)-[:INTERSECTS]->(:LSOA)
+        RETURN DISTINCT a.type AS value, a.type AS label
+        """)
+    }
+
+
+def lens_anchor_options(cfg, unit_type):
+    """Administrative units of one type that can reach an LSOA at all."""
+    return safe_options(cfg, f"""
+    MATCH (a:AdminUnit)
+    WHERE a.type = '{unit_type}'
+      AND (
+        EXISTS {{ MATCH (a)-[:INTERSECTS]->(:LSOA) }}
+        OR EXISTS {{ MATCH (a)-[:TOUCHES]-(:AdminUnit)-[:INTERSECTS]->(:LSOA) }}
+        OR EXISTS {{ MATCH (a)<-[:WITHIN]-(:AdminUnit)-[:INTERSECTS]->(:LSOA) }}
+      )
+    RETURN DISTINCT a.uri AS value,
+           coalesce(a.name, a.uri) + ' | {unit_type}' AS label
+    ORDER BY label
+    LIMIT 20000
+    """)
+
+
+def lens_unit_types(cfg):
+    """Every administrative type present, most numerous first."""
+    return [
+        str(v) for v, _ in safe_options(cfg, """
+        MATCH (a:AdminUnit)
+        RETURN a.type AS value, a.type + ' (' + toString(count(*)) + ')' AS label
+        ORDER BY count(*) DESC
+        """)
+    ]
+
+
+# Units-as-answer variants. The same relation heads as the school lens, but
+# returning the administrative units themselves. "Which communities are near
+# Cathays" is a question ABOUT communities: answering it with schools would
+# answer a different question. Near follows the IJGI 2024 definition exactly:
+# disjoint, with a path of two touches edges.
+LENS_UNIT_CYPHER = {
+    'touches': (
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    ),
+    'near': (
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES*2]-(nbr:AdminUnit)\nWHERE nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    ),
+    'inside': (
+        'MATCH (anchor:AdminUnit {uri:$admin})<-[:WITHIN]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    ),
+    'contains': (
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:WITHIN]->(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    )
+}
+
+LENS_MODES["near"] = (
+    "Units two touches-steps away (near)",
+    "AdminUnit --TOUCHES--> AdminUnit --TOUCHES--> AdminUnit "
+    "--INTERSECTS--> LSOA <--LOCATED_IN-- School",
+    "Derived from Native, then Geometry-origin, then Project-integrated",
+)
+LENS_CYPHER["near"] = (
+    'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES*2]-(nbr:AdminUnit)\nWHERE nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+    + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+)
 
 SCQ_META = {
     "SCQ1": {
@@ -2709,35 +2911,55 @@ LIMIT $limit
         "cypher_reverse_evidence": SCQ8_REVERSE_EVIDENCE_CYPHER,
     },
 
-    "COMPOSED": {
-        "label": (
-            "Composed \u2014 native adjacency + computed intersect + schools "
-            "(not an SCQ form)"
-        ),
+    "LENS": {
+        "label": "Education lens \u2014 schools through any stored relation (not an SCQ form)",
         "question": (
-            "Which schools are in LSOAs intersecting the administrative "
-            "units that touch the selected unit?"
+            "Which schools are reachable from the selected administrative "
+            "unit through the relation you choose?"
         ),
         "task": "Integration demonstration",
         "keyword_sentence": (
-            "This is not a ninth spatial form. It composes three relations "
-            "with three different provenances in one answer: native "
-            "YAGO2geo TOUCHES between administrative units, the "
-            "geometry-origin INTERSECTS computed by this project, and the "
-            "School-LSOA data join. It exists to show that composition "
-            "across the two hierarchies is possible once the statistical "
-            "geography is integrated \u2014 not to raise any coverage score."
+            "This is not a ninth spatial form. It lets one question travel "
+            "along any relation the graph already holds \u2014 native "
+            "TOUCHES or WITHIN between administrative units, then the "
+            "geometry-origin INTERSECTS into statistical geography, then the "
+            "School data join \u2014 and reports the provenance of every "
+            "link separately. It demonstrates composition; it raises no "
+            "coverage score."
         ),
-        "relation": "TOUCHES + INTERSECTS + LOCATED_IN",
-        "provenance": "Native + Geometry-origin + Project-integrated",
-        "param_type": "composed_admin",
-        "result_label": "Schools reached through the composed chain",
+        "relation": "chosen at run time",
+        "provenance": "mixed \u2014 shown per link",
+        "param_type": "education_lens",
+        "result_label": "Schools reached",
         "evaluation_note": (
             "Demonstrator answer: Yes. "
             "Native education-use-case model answer: No. "
             "Counts toward model completeness: No."
         ),
-        "cypher": COMPOSED_CHAIN_CYPHER,
+        "cypher": LENS_CYPHER["direct"],
+    },
+
+    "SCHOOL_LENS": {
+        "label": "From a school \u2014 nearby schools through computed LSOA relations (not an SCQ form)",
+        "question": "Which schools are near the selected school, through the computed LSOA adjacency?",
+        "task": "Integration demonstration",
+        "keyword_sentence": (
+            "This travels the computed statistical side of the graph rather "
+            "than the native administrative one: LSOA_TOUCHES is "
+            "geometry-origin and GRAPH_NEAR is derived from it. YAGO2geo "
+            "asserts neither, which is why this question is unanswerable "
+            "from the original model and answerable after integration."
+        ),
+        "relation": "LOCATED_IN + LSOA_TOUCHES / GRAPH_NEAR",
+        "provenance": "Project-integrated, then Geometry-origin",
+        "param_type": "school_lens",
+        "result_label": "Nearby schools",
+        "evaluation_note": (
+            "Demonstrator answer: Yes. "
+            "Native education-use-case model answer: No. "
+            "Counts toward model completeness: No."
+        ),
+        "cypher": SCHOOL_LENS_CYPHER["touch"],
     },
 }
 
@@ -6414,6 +6636,12 @@ def page_scq_demonstrator(
     # last question or one they chose themselves, which is exactly how a
     # result for the wrong unit gets read as an answer.
     _driven = st.session_state.get("nl_controls_set") or []
+    # Once the reader changes the form themselves, the sentence no longer
+    # describes what is on screen. Claiming otherwise would misreport the
+    # provenance of the answer, so the notice is dropped instead.
+    _nl_last = st.session_state.get("nl_last") or {}
+    if _nl_last.get("scq") and st.session_state.get("scq_select") != _nl_last.get("scq"):
+        _driven = []
     if st.session_state.get("nl_question") and _driven:
         col_note, col_clear = st.columns([5, 1])
         with col_note:
@@ -6736,52 +6964,156 @@ def page_scq_demonstrator(
 
         params["admin"] = selected_admin[0]
 
-    elif param_type == "composed_admin":
-        anchors = composed_anchor_options(cfg)
+    elif param_type == "education_lens":
+        types = lens_unit_types(cfg)
+        if not types:
+            st.error("No administrative units were found in this database.")
+            return
+
+        c1, c2 = st.columns(2)
+        with c1:
+            anchor_type = st.selectbox(
+                "Start from which kind of unit?", types, key="LENS_atype",
+            )
+        with c2:
+            mode = st.selectbox(
+                "Which relation?",
+                list(LENS_MODES),
+                format_func=lambda m: LENS_MODES[m][0],
+                key="LENS_mode",
+            )
+
+        want = st.radio(
+            "Return",
+            ["Schools", "Administrative units"],
+            horizontal=True,
+            key="LENS_return",
+            help=(
+                "A question about communities is answered with communities. "
+                "Choose Schools only when the question asks about schools."
+            ),
+        )
+
+        anchors = lens_anchor_options(cfg, anchor_type)
         if not anchors:
-            st.error(
-                "No administrative unit in this database carries both a "
-                "native TOUCHES edge and a computed INTERSECTS edge, so the "
-                "composed chain cannot be run here."
+            st.warning(
+                f"No {anchor_type} in this graph can reach an LSOA by any "
+                "stored relation, so no school can be attached to it. "
+                "That absence is a result, not an error."
             )
             return
 
-        choices = [("", "\u2014 choose an administrative unit \u2014")] + list(anchors)
+        choices = [("", "\u2014 choose a unit \u2014")] + list(anchors)
         selected = st.selectbox(
-            "Anchor unit",
-            choices,
-            format_func=lambda option: option[1],
-            key="COMPOSED_anchor",
-            help=(
-                "Ward, Community and Unitary Authority are all offered here. "
-                "The neighbour is always kept at the same level as the unit "
-                "you choose."
-            ),
+            "Unit", choices, format_func=lambda o: o[1], key="LENS_unit",
         )
         if not selected[0]:
-            st.info("Choose an administrative unit to anchor the chain.")
+            st.info("Choose a unit to start from.")
             return
-
         params["admin"] = selected[0]
+
+        nbr_type = None
+        if mode != "direct":
+            nbr_choice = st.selectbox(
+                "Which kind of related unit?", ["Any type"] + types,
+                key="LENS_ntype",
+                help=(
+                    "Leave as Any to see every type the relation reaches, "
+                    "or pick one to ask a specific pair such as Community "
+                    "to Ward."
+                ),
+            )
+            nbr_type = None if nbr_choice == "Any type" else nbr_choice
+        params["nbr_type"] = nbr_type
+
+        # The school path needs INTERSECTS, which only some types carry.
+        # Report that limit explicitly instead of returning an empty table.
+        if want == "Schools":
+            reachable = types_with_intersects(cfg)
+            blocked = None
+            if mode == "direct" and anchor_type not in reachable:
+                blocked = anchor_type
+            elif mode != "direct" and nbr_type and nbr_type not in reachable:
+                blocked = nbr_type
+            if blocked:
+                st.warning(
+                    f"This question cannot currently be answered from the "
+                    f"represented relations. No stored relation connects "
+                    f"{blocked} to LSOA, so no school can be attached to it. "
+                    f"Only {', '.join(sorted(reachable))} carry INTERSECTS. "
+                    f"Switch Return to Administrative units to ask about the "
+                    f"units themselves."
+                )
+                return
 
         filt = st.radio(
             "Education filter",
             ["None", "High FSM", "Low attendance", "High deprivation"],
-            horizontal=True,
-            key="COMPOSED_filter",
-            help=(
-                "One optional filter on the schools returned. The spatial "
-                "part of the chain is unchanged by this choice."
-            ),
+            horizontal=True, key="LENS_filter",
         )
         params["fsm_min"] = 30.0 if filt == "High FSM" else None
         params["att_max"] = 90.0 if filt == "Low attendance" else None
         params["dep"] = "High" if filt == "High deprivation" else None
 
+        if want == "Administrative units" and mode in LENS_UNIT_CYPHER:
+            st.session_state["LENS_active_cypher"] = LENS_UNIT_CYPHER[mode]
+        elif want == "Administrative units":
+            st.warning(
+                "The direct relation returns the unit you already chose, "
+                "so units are not a meaningful answer here. Showing "
+                "schools instead."
+            )
+            st.session_state["LENS_active_cypher"] = LENS_CYPHER[mode]
+        else:
+            st.session_state["LENS_active_cypher"] = LENS_CYPHER[mode]
+        label, chain, prov = LENS_MODES[mode]
         st.caption(
-            "Chain: AdminUnit --TOUCHES--> AdminUnit (Native YAGO2geo) "
-            "\u2192 --INTERSECTS--> LSOA (Geometry-origin) "
-            "\u2192 <--LOCATED_IN-- School (Project-integrated). "
+            f"Chain: {chain}  \u2014  Provenance: {prov}. "
+            "This answer was possible because of relations added by this "
+            "project. It does not raise the coverage of the original "
+            "YAGO2geo model."
+        )
+
+    elif param_type == "school_lens":
+        schools = school_lens_options(cfg)
+        if not schools:
+            st.warning(
+                "No school in this graph is placed in an LSOA, so no "
+                "school-anchored question can be answered. That absence is "
+                "a result, not an error."
+            )
+            return
+        s1, s2 = st.columns(2)
+        with s1:
+            picked = st.selectbox(
+                "School",
+                [("", "\u2014 choose a school \u2014")] + list(schools),
+                format_func=lambda o: o[1],
+                key="SLENS_school",
+            )
+        with s2:
+            smode = st.selectbox(
+                "Which relation?",
+                list(SCHOOL_LENS_MODES),
+                format_func=lambda m: SCHOOL_LENS_MODES[m][0],
+                key="SLENS_mode",
+            )
+        if not picked[0]:
+            st.info("Choose a school to start from.")
+            return
+        params["school"] = picked[0]
+        sfilt = st.radio(
+            "Education filter",
+            ["None", "High FSM", "Low attendance", "High deprivation"],
+            horizontal=True, key="SLENS_filter",
+        )
+        params["fsm_min"] = 30.0 if sfilt == "High FSM" else None
+        params["att_max"] = 90.0 if sfilt == "Low attendance" else None
+        params["dep"] = "High" if sfilt == "High deprivation" else None
+        st.session_state["SLENS_active_cypher"] = SCHOOL_LENS_CYPHER[smode]
+        _l, _c, _p = SCHOOL_LENS_MODES[smode]
+        st.caption(
+            f"Chain: {_c}  \u2014  Provenance: {_p}. "
             "This answer was possible because of relations added by this "
             "project. It does not raise the coverage of the original "
             "YAGO2geo model."
@@ -6797,6 +7129,16 @@ def page_scq_demonstrator(
         if (scq_key in ("SCQ7", "SCQ8") and direction == "admin")
         else meta["cypher"]
     )
+
+    if param_type == "education_lens":
+        active_cypher = st.session_state.get(
+            "LENS_active_cypher", meta["cypher"]
+        )
+
+    if param_type == "school_lens":
+        active_cypher = st.session_state.get(
+            "SLENS_active_cypher", meta["cypher"]
+        )
 
     if scq_key == "SCQ3":
         active_cypher = (
@@ -7232,38 +7574,73 @@ def page_evaluation() -> None:
         unsafe_allow_html=True,
     )
 
-    # Three equal-sized metric cards
-    m1, m2, m3 = st.columns(3)
-
-    with m1:
-        st.metric(
-            label="Education native coverage",
-            value="0 native LSOA answers",
-        )
-
-    with m2:
-        st.metric(
-            label="Native SpCom — education",
-            value="0/8 = 0.00",
-            help=(
-                "All eight SCQs are in the denominator, including SCQ5 and "
-                "SCQ6, which are reclassified rather than dropped. No "
-                "education question is answered by a native YAGO2geo "
-                "relation."
-            ),
-        )
-
-    with m3:
-        st.metric(
-            label="Native SpCom — administrative",
-            value="6/8 = 0.75",
-            help=(
-                "The same eight forms scored over the administrative "
-                "hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and "
-                "SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay "
-                "native failures."
-            ),
-        )
+    # Four named coverage cards. Model coverage and demonstrator coverage
+    # are spelled out in full because the figure 6/8 appears twice with two
+    # different meanings: once earned by geometry computed in this
+    # demonstrator, once held natively by the administrative hierarchy.
+    # Naming them fully is what stops the two being read as one number.
+    st.markdown(
+        """
+<style>
+.eval-cov-grid {
+display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+gap:.7rem; margin:.4rem 0 .2rem 0;
+}
+@media (max-width:1150px){.eval-cov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (max-width:640px){.eval-cov-grid{grid-template-columns:1fr;}}
+.eval-cov-card {
+position:relative; background:#ffffff; border:1px solid #e5e7eb;
+border-radius:12px; padding:1rem .9rem .85rem .9rem; overflow:hidden;
+box-shadow:0 3px 10px rgba(15,23,42,.035);
+}
+.eval-cov-card::before {
+content:""; position:absolute; top:0; left:0; right:0; height:4px;
+background:linear-gradient(90deg,#9e1b32,#b8283f);
+}
+.eval-cov-label {
+font-size:.78rem; line-height:1.32; font-weight:700; color:#475569;
+margin:.15rem 0 .5rem 0; min-height:3.1em;
+}
+.eval-cov-value {
+font-size:1.65rem; font-weight:800; color:#9e1b32; line-height:1.05;
+letter-spacing:-.01em;
+}
+.eval-cov-note {
+font-size:.86rem; line-height:1.55; color:#3f4a5a;
+background:#fdf2f4; border:1px solid #f3d3da;
+border-left:4px solid #9e1b32; border-radius:10px;
+padding:.7rem .85rem; margin:.6rem 0 .2rem 0;
+}
+@media (prefers-color-scheme: dark) {
+.eval-cov-card {background:#181b21; border-color:#2f3540; box-shadow:none;}
+.eval-cov-label {color:#b3bdca;}
+.eval-cov-value {color:#f2879c;}
+.eval-cov-note {color:#d3dae4; background:#241a1e; border-color:#4a2b33;
+border-left-color:#f2879c;}
+}
+</style>
+<div class="eval-cov-grid">
+<div class="eval-cov-card" title="All eight SCQs are in the denominator, including SCQ5 and SCQ6, which are reclassified rather than dropped. No education question is answered by a native YAGO2geo relation.">
+<div class="eval-cov-label">Education — native model coverage (SpCom)</div>
+<div class="eval-cov-value">0 / 8</div>
+</div>
+<div class="eval-cov-card">
+<div class="eval-cov-label">Education — demonstrator coverage (geometry-origin)</div>
+<div class="eval-cov-value">6 / 8</div>
+</div>
+<div class="eval-cov-card" title="The same eight forms scored over the administrative hierarchy: SCQ1, SCQ4, SCQ5 and SCQ6 directly, SCQ2 and SCQ3 by traversal over native touches. SCQ7 and SCQ8 stay native failures.">
+<div class="eval-cov-label">Administrative — native or derivable model coverage (SpCom)</div>
+<div class="eval-cov-value">6 / 8</div>
+</div>
+<div class="eval-cov-card">
+<div class="eval-cov-label">Native LSOA answers</div>
+<div class="eval-cov-value">0</div>
+</div>
+</div>
+<div class="eval-cov-note">The demonstrator answers six of the eight forms for the education use case, all from geometry computed here rather than asserted by YAGO2geo. SCQ5 and SCQ6 are reclassified for this use case and are answered by neither. Demonstrator coverage is not model coverage.</div>
+""",
+        unsafe_allow_html=True,
+    )
 
     # Formal IJGI SpCom equation
     eq1, eq2 = st.columns(2)
