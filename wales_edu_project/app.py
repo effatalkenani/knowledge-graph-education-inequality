@@ -1693,6 +1693,58 @@ NL_FOCUS_RULES: List[Tuple[str, List[str], str]] = [
 _NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
 
 
+# Which lens mode a phrase asks for. Order matters: the longest and most
+# specific phrases are tested first, so "not near" never matches "near".
+_LENS_MODE_PHRASES = [
+    ("near",     ("near", "nearby", "close to", "two steps")),
+    ("touches",  ("touch", "touching", "border", "bordering", "adjacent",
+                  "neighbour", "neighbor", "next to")),
+    ("inside",   ("inside", "within", "contained in", "in this", "in the")),
+    ("contains", ("contains", "parent of", "which authority", "belongs to")),
+]
+
+
+def parse_lens_intent(text, admin_pair):
+    """Route a school question anchored on an administrative unit.
+
+    Returns a dict of pending lens settings, or None. It fires only when the
+    sentence asks about SCHOOLS and names an administrative unit, because
+    those are exactly the questions the eight spatial forms cannot hold: they
+    are anchored on LSOAs and carry no filter. Nothing here guesses a unit or
+    a relation that the sentence did not contain.
+    """
+    low = (text or "").lower()
+    if "school" not in low or not admin_pair:
+        return None
+    label = str(admin_pair[1])
+    atype = label.rsplit("|", 1)[-1].strip() if "|" in label else None
+    if not atype:
+        return None
+    mode = None
+    for name, phrases in _LENS_MODE_PHRASES:
+        if any(p in low for p in phrases):
+            mode = name
+            break
+    if mode is None:
+        mode = "direct"
+    ntype = None
+    for cand in ("community", "ward", "unitaryauthority", "unitary authority"):
+        if cand in low:
+            ntype = {
+                "community": "Community",
+                "ward": "Ward",
+                "unitaryauthority": "UnitaryAuthority",
+                "unitary authority": "UnitaryAuthority",
+            }[cand]
+            break
+    return {
+        "atype": atype,
+        "uri": admin_pair[0],
+        "mode": mode,
+        "ntype": ntype,
+    }
+
+
 def parse_spatial_question(
     text: str,
     lsoa_options: List[Tuple[str, str]] | None = None,
@@ -2108,6 +2160,10 @@ def render_nl_search(
              "native adjacency \u2014 YAGO2geo"),
             ("Which wards or communities intersect Cathays?",
              "the cross-hierarchy seam \u2014 Geometry-origin"),
+            ("What schools are near Cathays community with attendance "
+             "below 90?",
+             "native adjacency, then the seam, then schools and a threshold "
+             "\u2014 the whole chain in one sentence"),
         ]
         for _q, _why in _ex:
             if st.button(_q, key=f"nl_ex_{abs(hash(_q))}",
@@ -2118,14 +2174,15 @@ def render_nl_search(
 
         st.markdown(
             "<div class='nl-warn' style='margin-top:.8rem'>"
-            "<b>Not answerable from this box yet.</b> Neither parser reads a "
-            "numeric threshold, so a question such as "
-            "<i>which schools near Cathays have attendance below 90?</i> "
-            "is understood spatially but not filtered. Ask the spatial half "
-            "here, then use <b>Education lens</b> or <b>From a school</b> in "
-            "the list below, where the filter is an explicit control. "
-            "Saying which questions the box cannot take is part of the "
-            "result, not a gap in it.</div>",
+            "<b>What the box still cannot do.</b> A sentence naming more "
+            "than one relation is matched on the first it recognises, and "
+            "the rest is reported rather than assumed. A question anchored "
+            "on a school rather than a place \u2014 <i>which schools are "
+            "near my school?</i> \u2014 is not routed automatically; use "
+            "<b>From a school</b> in the list below, which travels the "
+            "computed LSOA relations YAGO2geo does not hold. Naming the "
+            "questions the box cannot take is part of the result, not a gap "
+            "in it.</div>",
             unsafe_allow_html=True,
         )
 
@@ -2134,7 +2191,10 @@ def render_nl_search(
         question = st.text_input(
             "Question",
             key="nl_question",
-            placeholder="Which LSOAs directly border Blaenau Gwent 001A?",
+            placeholder=(
+                "What schools are near Cathays community with attendance "
+                "below 90?"
+            ),
             label_visibility="collapsed",
         )
     with col_go:
@@ -2223,10 +2283,36 @@ def render_nl_search(
             changed.append("started from the administrative unit")
         elif parsed["areas"]:
             st.session_state[f"{scq}_direction"] = "lsoa"
+    # A school question anchored on an administrative unit belongs to the
+    # lens, not to one of the eight forms: the eight are LSOA-anchored and
+    # hold no filter, so answering there would answer a different question.
+    # The settings are parked rather than written, because the option lists
+    # they must match are only known once the branch queries the graph.
+    _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
+    if _lens:
+        _lens["filter"] = edu or "None"
+        st.session_state["LENS_pending"] = _lens
+        st.session_state["scq_select"] = "LENS"
+        scq = "LENS"
+        changed = [
+            c for c in changed
+            if not str(c).startswith("SCQ")
+        ]
+        changed.insert(0, "Education lens")
+        changed.append(f"start from {_lens['atype']}")
+        changed.append(f"relation: {LENS_MODES[_lens['mode']][0]}")
+        if _lens["ntype"]:
+            changed.append(f"related unit type: {_lens['ntype']}")
+
     if scq:
         st.session_state[f"scq_ran_{scq}"] = True
 
     st.session_state["nl_controls_set"] = changed
+    if changed:
+        # The sentence set something, so the panel must be visible to show
+        # what it set; leaving it closed would hide the provenance of the
+        # answer from the reader who asked for it.
+        st.session_state["scq_manual_open"] = True
     if changed:
         st.rerun()
 
@@ -6661,6 +6747,29 @@ def page_scq_demonstrator(
     # Nothing is pre-selected. A default would answer a question the reader
     # never asked, and once a question box sits above these controls there is
     # no way to tell a default apart from something the sentence set.
+    # The manual route is folded away by default. The box above is the way
+    # in; the eight forms and their selectors are the way to override it or
+    # to work without a sentence. Keeping them closed until asked for stops
+    # a reader wondering whether a selector holds a value they never set.
+    # When a question drives the controls the panel opens itself, because
+    # the reader has to be able to see what the sentence chose.
+    _open = st.checkbox(
+        "Choose the question yourself",
+        value=False,
+        key="scq_manual_open",
+        help=(
+            "Open this to pick one of the eight spatial forms, or either "
+            "lens, and set its parameters by hand. A question typed above "
+            "opens it automatically and fills it in."
+        ),
+    )
+    if not _open:
+        st.caption(
+            "The eight spatial forms and the two lenses are folded away. "
+            "Ask a question above, or open the panel to choose one yourself."
+        )
+        return
+
     scq_key = st.selectbox(
         t("select_scq"),
         [""] + list(SCQ_META.keys()),
@@ -6970,6 +7079,23 @@ def page_scq_demonstrator(
             st.error("No administrative units were found in this database.")
             return
 
+        # Settings parked by the question box are applied here, and only
+        # when the value actually exists in the list the graph returned.
+        _pend = st.session_state.pop("LENS_pending", None)
+        if _pend:
+            if _pend.get("atype") in types:
+                st.session_state["LENS_atype"] = _pend["atype"]
+            if _pend.get("mode") in LENS_MODES:
+                st.session_state["LENS_mode"] = _pend["mode"]
+            st.session_state["LENS_return"] = "Schools"
+            if _pend.get("filter") in (
+                "None", "High FSM", "Low attendance", "High deprivation"
+            ):
+                st.session_state["LENS_filter"] = _pend["filter"]
+            if _pend.get("ntype") in types:
+                st.session_state["LENS_ntype"] = _pend["ntype"]
+            st.session_state["LENS_pending_uri"] = _pend.get("uri")
+
         c1, c2 = st.columns(2)
         with c1:
             anchor_type = st.selectbox(
@@ -7004,6 +7130,13 @@ def page_scq_demonstrator(
             return
 
         choices = [("", "\u2014 choose a unit \u2014")] + list(anchors)
+        _want = st.session_state.pop("LENS_pending_uri", None)
+        if _want:
+            _hit = next(
+                (o for o in choices if o[0] == _want), None
+            )
+            if _hit is not None:
+                st.session_state["LENS_unit"] = _hit
         selected = st.selectbox(
             "Unit", choices, format_func=lambda o: o[1], key="LENS_unit",
         )
