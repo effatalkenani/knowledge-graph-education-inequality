@@ -1695,13 +1695,63 @@ _NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
 
 # Which lens mode a phrase asks for. Order matters: the longest and most
 # specific phrases are tested first, so "not near" never matches "near".
+# Education thresholds are read SEPARATELY from the spatial form. A sentence
+# can carry both ("schools near Cathays with attendance below 90"), and the
+# two halves are answered by different machinery: the eight SCQ forms hold no
+# filter control at all, while the lens keys do. Reading them apart means a
+# threshold is never silently dropped and never silently invented.
+# Both languages are matched, because an Arabic sentence that is understood
+# and then routed to a form that cannot hold it is worse than one refused.
+_EDU_FILTER_RULES = [
+    ("Low attendance", (
+        r"attendance\s*(?:is\s*)?(?:below|under|less than|<=?)\s*\d+",
+        r"low attendance", r"poor attendance", r"persistent absence",
+        r"حضور[\u0600-\u06ff\s]*(?:اقل|أقل|تحت|دون)[^0-9]{0,10}\d+",
+        r"(?:ضعف|انخفاض)\s*(?:ال)?حضور",
+        r"حضور\s*(?:منخفض|ضعيف)",
+    )),
+    ("High FSM", (
+        r"(?:fsm|free school meals?)\s*(?:is\s*)?(?:above|over|greater than|>=?)\s*\d+",
+        r"high fsm", r"high free school meals?", r"most fsm",
+        r"وجبات[\u0600-\u06ff\s]*مجاني",
+    )),
+    ("High deprivation", (
+        r"high(?:ly)? deprived", r"high deprivation", r"most deprived",
+        r"deprived areas?",
+        r"حرمان", r"محروم",
+    )),
+]
+
+
+def parse_education_filter(text):
+    """Return the filter a sentence names, or None. Never guesses."""
+    low = (text or "").lower()
+    for label, patterns in _EDU_FILTER_RULES:
+        for pat in patterns:
+            if re.search(pat, low):
+                return label
+    return None
+
+
+# The eight spatial forms take no education filter; only the lens keys do.
+_FILTERABLE_FORMS = ("LENS", "SCHOOL_LENS")
+
+
 _LENS_MODE_PHRASES = [
-    ("near",     ("near", "nearby", "close to", "two steps")),
+    ("near",     ("near", "nearby", "close to", "two steps",
+                  "قريب", "القريب", "قريبة")),
     ("touches",  ("touch", "touching", "border", "bordering", "adjacent",
-                  "neighbour", "neighbor", "next to")),
-    ("inside",   ("inside", "within", "contained in", "in this", "in the")),
+                  "neighbour", "neighbor", "next to",
+                  "بجوار", "مجاور", "المجاور", "المجاورة", "تلامس")),
+    ("inside",   ("inside", "within", "contained in", "in this", "in the",
+                  "داخل", "ضمن")),
     ("contains", ("contains", "parent of", "which authority", "belongs to")),
 ]
+
+
+# School markers in both languages. Testing only the English word sent
+# every Arabic question to an LSOA-anchored form that could not hold it.
+_SCHOOL_WORDS = ("school", "مدرسة", "مدارس", "المدارس", "المدرسة")
 
 
 def parse_lens_intent(text, admin_pair):
@@ -1714,7 +1764,7 @@ def parse_lens_intent(text, admin_pair):
     a relation that the sentence did not contain.
     """
     low = (text or "").lower()
-    if "school" not in low or not admin_pair:
+    if not any(w in low for w in _SCHOOL_WORDS) or not admin_pair:
         return None
     label = str(admin_pair[1])
     atype = label.rsplit("|", 1)[-1].strip() if "|" in label else None
@@ -2283,6 +2333,21 @@ def render_nl_search(
             changed.append("started from the administrative unit")
         elif parsed["areas"]:
             st.session_state[f"{scq}_direction"] = "lsoa"
+    # A threshold in the sentence is carried to the controls that can hold
+    # one, and reported plainly when the chosen form cannot. Dropping it in
+    # silence would let a reader believe a filter had been applied.
+    edu = parse_education_filter(parsed.get("text", ""))
+    if edu:
+        st.session_state["LENS_filter"] = edu
+        st.session_state["SLENS_filter"] = edu
+        if scq in _FILTERABLE_FORMS:
+            changed.append(f"education filter: {edu}")
+        else:
+            changed.append(
+                f"education filter recognised ({edu}) but this form has no "
+                f"filter \u2014 it is ready in Education lens and From a school"
+            )
+
     # A school question anchored on an administrative unit belongs to the
     # lens, not to one of the eight forms: the eight are LSOA-anchored and
     # hold no filter, so answering there would answer a different question.
