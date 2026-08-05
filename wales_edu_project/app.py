@@ -8271,15 +8271,33 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         "relations added by this project and does not raise the coverage of "
         "the original YAGO2geo model."
     )
-    try:
-        render_answer_map(
-            cfg, df,
-            focus_code=(areas[0] if areas else None),
-            key="nl_answer_map",
-            focus_admin=admin,
+    # The map harvests LSOA codes, because LSOA polygons are the only
+    # boundaries this graph stores. An answer made of administrative units
+    # carries no such code, so nothing can be drawn — and saying that is
+    # better than an empty space the reader has to interpret.
+    import re as _re
+    _has_lsoa = any(
+        bool(_re.match(r"^W\d{8}$", str(v)))
+        for col in df.columns for v in df[col].head(50).tolist()
+    )
+    if _has_lsoa:
+        try:
+            render_answer_map(
+                cfg, df,
+                focus_code=(areas[0] if areas else None),
+                key="nl_answer_map",
+                focus_admin=admin,
+            )
+        except Exception as exc:
+            st.caption(f"The map could not be drawn for this answer: {exc}")
+    else:
+        st.info(
+            "No map for this answer. The map draws LSOA boundaries, which "
+            "are the geometry this project loaded; this answer is a list of "
+            "administrative units and carries no LSOA code. Ask the same "
+            "question with schools in it, or use the Education lens with "
+            "Return set to Schools, and the answer will map."
         )
-    except Exception as exc:
-        st.caption(f"The map could not be drawn for this answer: {exc}")
     st.dataframe(df, use_container_width=True, hide_index=True)
     return True
 
