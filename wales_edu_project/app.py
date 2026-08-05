@@ -6871,6 +6871,13 @@ def page_scq_demonstrator(
     render_nl_search(nl_lsoas, nl_admin)
     render_nl_understanding()
 
+    # The panel is the other route, so the sentence's answer is dropped
+    # BEFORE it is drawn, not after. Clearing it afterwards left the old
+    # answer on screen for one more run, which is why it took two clicks
+    # to go away.
+    if st.session_state.get("scq_manual_open"):
+        st.session_state.pop("nl_answer", None)
+
     # The answer belongs directly under the question that produced it.
     _answered = render_question_answer(cfg)
 
@@ -6912,11 +6919,7 @@ def page_scq_demonstrator(
     # the reader has to be able to see what the sentence chose.
     if _answered:
         st.divider()
-    if st.session_state.get("scq_manual_open") and _answered:
-        # The panel is the other route. Keeping the sentence's answer on
-        # screen beside it would leave two results with no way to tell which
-        # belongs to what was just done.
-        st.session_state.pop("nl_answer", None)
+
     _open = st.checkbox(
         "Choose the question yourself",
         value=False,
@@ -8348,11 +8351,11 @@ LIMIT 3000
         if _areas_df is not None and not _areas_df.empty:
             st.caption(
                 f"The map shows the {len(_areas_df):,} LSOAs that the units "
-                "in this answer cover. Administrative boundaries are not "
-                "stored in this graph, so the extent is drawn through the "
-                "computed INTERSECTS relation \u2014 Geometry-origin, not "
-                "native. The table above is the answer; the map is where it "
-                "falls."
+                "in this answer cover, drawn through the computed INTERSECTS "
+                "relation \u2014 Geometry-origin, not native. Administrative "
+                "polygons are stored too (`a.wkt`) and the panel below draws "
+                "them directly for SCQ5 and SCQ6; this view shows the "
+                "statistical extent instead. The table above is the answer."
             )
             try:
                 render_answer_map(
