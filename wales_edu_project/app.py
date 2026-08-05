@@ -6317,8 +6317,14 @@ def page_scq_demonstrator(
         nl_admin = admin_options(cfg, "admin_parent")
     except Exception:
         nl_admin = []
-    render_nl_search(nl_lsoas, nl_admin)
-    render_nl_understanding()
+    # The deterministic panel is the instrument: every figure reported in
+    # the dissertation was produced by it. The sentence box is a
+    # demonstration of query understanding and it misroutes often enough
+    # that it should not be the first thing a reader meets. So it is folded
+    # away, and the eight forms are open.
+    with st.expander("Ask a question in your own words", expanded=False):
+        render_nl_search(nl_lsoas, nl_admin)
+        render_nl_understanding()
 
     # The question and the controls are one path, not two. Without saying so,
     # a reader cannot tell whether a selector still holds a value from the
@@ -6344,6 +6350,27 @@ def page_scq_demonstrator(
     # Nothing is pre-selected. A default would answer a question the reader
     # never asked, and once a question box sits above these controls there is
     # no way to tell a default apart from something the sentence set.
+    # One route at a time. The panel is open by default; the sentence box
+    # above is opened deliberately. Nothing below is created while the panel
+    # is closed, so no query runs and no control holds a value the reader
+    # never set.
+    _open = st.checkbox(
+        "Choose the question yourself",
+        value=True,
+        key="scq_manual_open",
+        help=(
+            "Open this to pick one of the eight spatial forms and set its "
+            "parameters by hand. A question typed in the box above fills "
+            "them in for you."
+        ),
+    )
+    if not _open:
+        st.caption(
+            "The eight spatial forms are folded away. Tick the box to "
+            "choose one, or open the sentence box above."
+        )
+        return
+
     scq_key = st.selectbox(
         t("select_scq"),
         [""] + list(SCQ_META.keys()),
