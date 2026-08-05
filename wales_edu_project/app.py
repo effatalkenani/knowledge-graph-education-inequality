@@ -2357,7 +2357,36 @@ def render_nl_search(
     # the manual panel. It carries everything the query needs, so the answer
     # can be produced without a single widget being created.
     _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
+
+    # A question that names an administrative unit and no LSOA cannot be
+    # answered by an LSOA-anchored form: SCQ1, SCQ2 and SCQ4 all require a
+    # statistical anchor and there is no administrative variant of them.
+    # The lens holds the same relations over the administrative graph, so
+    # the question goes there instead of dying in a form that cannot take
+    # it. Whether the answer is units or schools is decided by the sentence.
+    _want_units = False
+    if (
+        not _lens
+        and parsed.get("admin")
+        and not parsed.get("areas")
+        and scq in ("SCQ1", "SCQ2", "SCQ3", "SCQ4")
+    ):
+        _low = (parsed.get("text") or "").lower()
+        _mode = "direct"
+        for _name, _phrases in _LENS_MODE_PHRASES:
+            if any(p in _low for p in _phrases):
+                _mode = _name
+                break
+        _lens = {
+            "atype": str(parsed["admin"][1]).rsplit("|", 1)[-1].strip(),
+            "uri": parsed["admin"][0],
+            "mode": _mode,
+            "ntype": None,
+        }
+        _want_units = not any(w in _low for w in _SCHOOL_WORDS)
+
     st.session_state["nl_answer"] = {
+        "want": "units" if _want_units else "schools",
         "kind": "LENS" if _lens else scq,
         "mode": (_lens or {}).get("mode"),
         "ntype": (_lens or {}).get("ntype"),
@@ -8179,7 +8208,10 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
 
     if kind == "LENS":
         mode = intent.get("mode") or "direct"
-        cypher = LENS_CYPHER.get(mode)
+        if intent.get("want") == "units" and mode in LENS_UNIT_CYPHER:
+            cypher = LENS_UNIT_CYPHER[mode]
+        else:
+            cypher = LENS_CYPHER.get(mode)
         params["nbr_type"] = intent.get("ntype")
         chain = LENS_MODES.get(mode, ("", "", ""))
     else:
@@ -8195,10 +8227,22 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
 
     if not cypher:
         return False
+    _missing = None
     if "$lsoa" in cypher and "lsoa" not in params:
-        return False
-    if "$admin" in cypher and "admin" not in params:
-        return False
+        _missing = "an LSOA"
+    elif "$admin" in cypher and "admin" not in params:
+        _missing = "an administrative unit"
+    if _missing:
+        # Silence here was the worst behaviour of all: the reader saw a form
+        # chosen, a banner claiming the controls were set, and no answer and
+        # no reason. Naming the missing piece is the minimum owed.
+        st.warning(
+            f"The form matched by your question needs {_missing}, and no "
+            f"{_missing} in the sentence could be matched to a name in the "
+            "graph. Check the spelling, or open the panel below and choose "
+            "one."
+        )
+        return True
 
     edu = intent.get("filter")
     params["fsm_min"] = 30.0 if edu == "High FSM" else None
