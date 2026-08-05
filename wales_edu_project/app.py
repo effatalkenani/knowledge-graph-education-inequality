@@ -259,6 +259,8 @@ section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover
 }
 .solutionbox {background:#fff7ed; border:1px solid #e5e7eb;}
 .warningbox {background:#fffbeb; border:1px solid #e5e7eb;}
+.nl-warn {background:#fffbe6; border-left:5px solid #f59e0b; padding:.75rem 1rem; border-radius:9px; margin-bottom:10px; color:#f59e0b;}
+.nl-warn-orange {background:#fff7ed; border-left:5px solid #fb923c; padding:.75rem 1rem; border-radius:9px; margin-bottom:10px; color:#fb923c;}
 .successbox {background:#f0fdf4; border:1px solid #e5e7eb;}
 .final-strip {background:linear-gradient(135deg,#fff7ed,#f0fdf4); border:1px solid #e5e7eb;}
 .warning-strip {background:#fff7ed; border:1px solid #e5e7eb;}
@@ -268,10 +270,10 @@ section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover
     unsafe_allow_html=True,
 )
 
-DEFAULT_URI = st.secrets.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-DEFAULT_USER = st.secrets.get("NEO4J_USER", "neo4j")
-DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "QWEasd1QWE")
-DEFAULT_DATABASE = st.secrets.get("NEO4J_DATABASE", "wales-education-kg")
+DEFAULT_URI = st.secrets["NEO4J_URI"]
+DEFAULT_USER = st.secrets["NEO4J_USER"]
+DEFAULT_PASSWORD = st.secrets["NEO4J_PASSWORD"]
+DEFAULT_DATABASE = st.secrets["NEO4J_DATABASE"]
 
 
 # =============================================================================
@@ -1693,6 +1695,166 @@ NL_FOCUS_RULES: List[Tuple[str, List[str], str]] = [
 _NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
 
 
+# Which lens mode a phrase asks for. Order matters: the longest and most
+# specific phrases are tested first, so "not near" never matches "near".
+# Education thresholds are read SEPARATELY from the spatial form. A sentence
+# can carry both ("schools near Cathays with attendance below 90"), and the
+# two halves are answered by different machinery: the eight SCQ forms hold no
+# filter control at all, while the lens keys do. Reading them apart means a
+# threshold is never silently dropped and never silently invented.
+# Both languages are matched, because an Arabic sentence that is understood
+# and then routed to a form that cannot hold it is worse than one refused.
+_EDU_FILTER_RULES = [
+    ("Low attendance", (
+        r"attendance\s*(?:is\s*)?(?:be?llow|below|under|less than|<=?)\s*\d+",
+        r"low attendance", r"poor attendance", r"persistent absence",
+        r"حضور[\u0600-\u06ff\s]*(?:اقل|أقل|تحت|دون)[^0-9]{0,10}\d+",
+        r"(?:ضعف|انخفاض)\s*(?:ال)?حضور",
+        r"حضور\s*(?:منخفض|ضعيف)",
+    )),
+    ("High FSM", (
+        r"(?:fsm|free school meals?)\s*(?:is\s*)?(?:above|over|greater than|>=?)\s*\d+",
+        r"high fsm", r"high free school meals?", r"most fsm",
+        r"وجبات[\u0600-\u06ff\s]*مجاني",
+    )),
+    ("High deprivation", (
+        r"high(?:ly)? deprived", r"high deprivation", r"most deprived",
+        r"deprived areas?",
+        r"حرمان", r"محروم",
+    )),
+]
+
+
+# Negation reverses a question's meaning, and matching only the positive
+# phrase inside it would return the exact opposite of what was asked. Any
+# sentence carrying one of these is refused rather than half-understood.
+_NEGATION_WORDS = (
+    "not near", "not adjacent", "not touching", "not bordering",
+    "non-adjacent", "not neighbour", "not neighbor", "far from",
+    "outside", "except", "other than",
+    "\u0644\u064a\u0633", "\u063a\u064a\u0631", "\u0628\u0639\u064a\u062f",
+    "\u062e\u0627\u0631\u062c", "\u0645\u0627\u0639\u062f\u0627",
+)
+
+
+def has_negation(text):
+    low = (text or "").lower()
+    return any(w in low for w in _NEGATION_WORDS)
+
+
+def parse_threshold_value(text):
+    """The number the sentence actually names, if it names one.
+
+    Without this the app recognised "attendance below 85" and then applied
+    its own default of 90 \u2014 an answer to a question nobody asked.
+    """
+    m = re.search(
+        r"(?:below|under|less than|above|over|greater than|<=?|>=?|"
+        r"\u0627\u0642\u0644|\u0623\u0642\u0644|\u062a\u062d\u062a|"
+        r"\u0627\u0643\u062b\u0631|\u0623\u0643\u062b\u0631|"
+        r"\u0641\u0648\u0642)[^0-9]{0,12}(\d{1,3})",
+        (text or "").lower(),
+    )
+    if not m:
+        return None
+    try:
+        v = float(m.group(1))
+    except ValueError:
+        return None
+    return v if 0 < v <= 100 else None
+
+
+# School phase is a THIRD condition, independent of the spatial relation and
+# of the education threshold. It used to be dropped in silence: a question
+# asking for secondary schools got every phase back and said nothing.
+_PHASE_WORDS = {
+    "Secondary": ("secondary", "\u062b\u0627\u0646\u0648"),
+    "Primary": ("primary", "\u0627\u0628\u062a\u062f\u0627\u0626"),
+    "Special": ("special school", "\u062e\u0627\u0635"),
+    "All-age": ("all-age", "all age"),
+}
+
+
+def parse_school_phase(text):
+    low = (text or "").lower()
+    for label, words in _PHASE_WORDS.items():
+        if any(w in low for w in words):
+            return label
+    return None
+
+
+def parse_education_filter(text):
+    """Return the filter a sentence names, or None. Never guesses."""
+    low = (text or "").lower()
+    for label, patterns in _EDU_FILTER_RULES:
+        for pat in patterns:
+            if re.search(pat, low):
+                return label
+    return None
+
+
+# The eight spatial forms take no education filter; only the lens keys do.
+_FILTERABLE_FORMS = ("LENS", "SCHOOL_LENS")
+
+
+_LENS_MODE_PHRASES = [
+    ("near",     ("near", "nearby", "close to", "two steps",
+                  "قريب", "القريب", "قريبة")),
+    ("touches",  ("touch", "touching", "border", "bordering", "adjacent",
+                  "neighbour", "neighbor", "next to",
+                  "بجوار", "مجاور", "المجاور", "المجاورة", "تلامس")),
+    ("inside",   ("inside", "within", "contained in", "in this", "in the",
+                  "داخل", "ضمن")),
+    ("contains", ("contains", "parent of", "which authority", "belongs to")),
+]
+
+
+# School markers in both languages. Testing only the English word sent
+# every Arabic question to an LSOA-anchored form that could not hold it.
+_SCHOOL_WORDS = ("school", "مدرسة", "مدارس", "المدارس", "المدرسة")
+
+
+def parse_lens_intent(text, admin_pair):
+    """Route a school question anchored on an administrative unit.
+
+    Returns a dict of pending lens settings, or None. It fires only when the
+    sentence asks about SCHOOLS and names an administrative unit, because
+    those are exactly the questions the eight spatial forms cannot hold: they
+    are anchored on LSOAs and carry no filter. Nothing here guesses a unit or
+    a relation that the sentence did not contain.
+    """
+    low = (text or "").lower()
+    if not any(w in low for w in _SCHOOL_WORDS) or not admin_pair:
+        return None
+    label = str(admin_pair[1])
+    atype = label.rsplit("|", 1)[-1].strip() if "|" in label else None
+    if not atype:
+        return None
+    mode = None
+    for name, phrases in _LENS_MODE_PHRASES:
+        if any(p in low for p in phrases):
+            mode = name
+            break
+    if mode is None:
+        mode = "direct"
+    ntype = None
+    for cand in ("community", "ward", "unitaryauthority", "unitary authority"):
+        if cand in low:
+            ntype = {
+                "community": "Community",
+                "ward": "Ward",
+                "unitaryauthority": "UnitaryAuthority",
+                "unitary authority": "UnitaryAuthority",
+            }[cand]
+            break
+    return {
+        "atype": atype,
+        "uri": admin_pair[0],
+        "mode": mode,
+        "ntype": ntype,
+    }
+
+
 def parse_spatial_question(
     text: str,
     lsoa_options: List[Tuple[str, str]] | None = None,
@@ -1737,6 +1899,7 @@ def parse_spatial_question(
             "No spatial relation was recognised. Name one of: border, near, "
             "between, not adjacent, contains, within, intersect."
         )
+    
 
     for key, phrases, label in NL_FOCUS_RULES:
         if any(p in low for p in phrases):
@@ -1787,7 +1950,7 @@ def parse_spatial_question(
     # match for the others put "Blaenau Gwent | UnitaryAuthority" beside a
     # question about neighbouring LSOAs, which reads as though the unit had
     # been used when it had not.
-    admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6"}
+    admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6", "SCQ7", "SCQ8"}
 
     candidates: List[Tuple[int, str, Tuple[str, str]]] = []
     for option in (admin_options or []) if admin_relevant else []:
@@ -1806,17 +1969,23 @@ def parse_spatial_question(
         if not hit_token:
             continue
         name = hit_token
-        # An exact word beats a name that merely occurs inside the sentence,
-        # and a unitary authority beats a community of the same name.
-        score = 40
+        # Prioritize Unitary Authorities, then Communities, then Wards.
+        # An exact word match is better than a partial match.
+        score = 0
         if "unitaryauthority" in unit_type:
+            score += 30
+        elif "community" in unit_type:
             score += 20
         elif "ward" in unit_type:
             score += 10
-        score += min(len(name), 20)
+        # Add score for length of matched token, to prefer longer, more specific matches
+        score += min(len(hit_token), 20)
+        # If the full name is present in the query, give a bonus
+        if re.search(r"\b" + re.escape(label.lower()) + r"\b", low):
+            score += 10
         candidates.append((score, name, (uri, label)))
 
-    if not candidates and found["scq"] in {"SCQ5", "SCQ6"}:
+    if not candidates and found["scq"] in {"SCQ5", "SCQ6", "SCQ7", "SCQ8"}:
         found["unmatched"].append(
             "No administrative unit in the question was recognised, so the "
             "unit selected below was left as it was. Name the unit, or "
@@ -1832,9 +2001,29 @@ def parse_spatial_question(
             found["unmatched"].append(
                 "More than one unit matches that name equally well ("
                 + ", ".join(str(c[2][1]) for c in [best] + rivals[:3])
-                + "). The first was used; choose it from the list below to "
-                "be certain."
+                + "). The first was used; please select from the list below to "
+                + "disambiguate."
             )
+
+    # Smart Defaulting: If the relation involves an administrative unit and no hierarchical
+    # level (LSOA, Ward, Community) is specified, default to LSOA and add a warning.
+    if found["scq"] in {"SCQ5", "SCQ6", "SCQ7", "SCQ8"} and found["admin"]:
+        ntype = None
+        for cand in ("lsoa", "ward", "community", "unitaryauthority"):
+            if cand in low:
+                ntype = cand.upper()
+                break
+        if not ntype:
+            # Default to LSOA if no specific type is mentioned for these SCQs
+            ntype = "LSOA"
+            found["steps"].append(
+                f"No specific administrative level (LSOA, Ward, Community, UnitaryAuthority) was explicitly mentioned for the selected administrative unit. Defaulting to {ntype} for granular analysis."
+            )
+            found["unmatched"].append(
+                f"⚠️ Defaulting to {ntype} level for the administrative unit. The system also supports Ward, Community, and UnitaryAuthority levels. "
+                "Specify your preferred level in the question for different results, e.g., 'What LSOAs are near Cathays community?'"
+            )
+        found["admin_type_default"] = ntype
 
     return found
 
@@ -1971,6 +2160,7 @@ def llm_parse_question(
             '"focus": subset of ["fsm","attendance","performance",'
             '"deprivation"], "codes": [LSOA codes like W01001440], '
             '"place": free text place name or null, '
+            '"filters": [{"metric": "attendance", "operator": "<", "value": 90}], '
             '"reason": one short sentence}.'
         )
         response = client.chat.completions.create(
@@ -2013,6 +2203,7 @@ def llm_parse_question(
         "matched_phrase": None,
         "focus": focus,
         "focus_labels": [labels[f] for f in focus],
+        "filters": data.get("filters", []),
         "areas": [],
         "admin": None,
         "steps": [],
@@ -2036,11 +2227,8 @@ def llm_parse_question(
         resolver_text, lsoa_options, admin_options
     )
     result["areas"] = resolved["areas"]
-    # Every form that can take an administrative anchor must receive it.
-    # Restricting this to SCQ5 and SCQ6 dropped the unit for SCQ1, SCQ2,
-    # SCQ4, SCQ7 and SCQ8, so a question that named a community lost it at
-    # this line and the reader was told an LSOA was needed instead.
-    result["admin"] = resolved["admin"]
+    if scq in {"SCQ5", "SCQ6"}:
+        result["admin"] = resolved["admin"]
     result["steps"].extend(resolved["steps"][1:] if resolved["steps"] else [])
     result["unmatched"].extend(
         u for u in resolved["unmatched"]
@@ -2090,16 +2278,38 @@ def render_nl_search(
     # grouped by the relation they exercise. Grouping matters: it shows that
     # each relation answers a family of questions rather than one, which is
     # the point the eight-form framework is making.
+    # Examples must be drawn before the input: Streamlit refuses to write to
+    # a widget's state after that widget exists in the same run. Each one
+    # exercises a different relation and a different provenance, so clicking
+    # through them walks the reader across the boundary the project is about.
+    # Examples must be drawn before the input: Streamlit refuses to write to
+    # a widget's state after that widget exists in the same run. They are
+    # collapsed by default so the box stays the first thing a reader meets.
+    # The second group is the honest half: questions the box cannot parse,
+    # named rather than hidden, with the control that can answer them.
+
+    # One short line instead of a suggestion list: it says what the box
+    # reads and what it refuses, which is the part a reader needs.
+    st.caption(
+        "The box reads the relation and the place in a sentence, and a "
+        "numeric threshold where one is given. A negated sentence is "
+        "refused rather than half-matched, and a sentence naming more than "
+        "one relation is matched on the first and the rest reported."
+    )
+
     col_input, col_go = st.columns([6, 1])
     with col_input:
         question = st.text_input(
             "Question",
             key="nl_question",
-            placeholder="Which LSOAs directly border Blaenau Gwent 001A?",
+            placeholder=(
+                "What schools are near Cathays community with attendance "
+                "below 90?"
+            ),
             label_visibility="collapsed",
         )
     with col_go:
-        asked = st.button("Ask", type="primary", use_container_width=True)
+        asked = st.button("Ask", type="primary", use_container_width=True, key="ask_en")
 
     if st.session_state.pop("nl_autorun", False):
         asked = True
@@ -2172,10 +2382,122 @@ def render_nl_search(
     if scq and parsed["admin"]:
         st.session_state[f"{scq}_admin"] = parsed["admin"]
         changed.append(parsed["admin"][1])
+
+    # A cross-hierarchy question that names an administrative unit and no
+    # LSOA has to start from the administrative side. Without this the form
+    # opens on its LSOA direction and then asks for an LSOA the sentence
+    # never mentioned, which reads as a failure even though the answer was
+    # available from the other direction over the same stored facts.
+    if scq in ("SCQ7", "SCQ8"):
+        if parsed["admin"] and not parsed["areas"]:
+            st.session_state[f"{scq}_direction"] = "admin"
+            changed.append("started from the administrative unit")
+        elif parsed["areas"]:
+            st.session_state[f"{scq}_direction"] = "lsoa"
+    # A threshold in the sentence is carried to the controls that can hold
+    # one, and reported plainly when the chosen form cannot. Dropping it in
+    # silence would let a reader believe a filter had been applied.
+    edu = parse_education_filter(parsed.get("text", ""))
+    if edu:
+        st.session_state["LENS_filter"] = edu
+        st.session_state["SLENS_filter"] = edu
+        if scq in _FILTERABLE_FORMS:
+            changed.append(f"education filter: {edu}")
+        else:
+            changed.append(
+                f"education filter recognised ({edu}) but this form has no "
+                f"filter \u2014 it is ready in Education lens and From a school"
+            )
+
+    # A school question anchored on an administrative unit belongs to the
+    # lens, not to one of the eight forms: the eight are LSOA-anchored and
+    # hold no filter, so answering there would answer a different question.
+    # The settings are parked rather than written, because the option lists
+    # they must match are only known once the branch queries the graph.
+    # The question's own answer is parked here, complete and independent of
+    # the manual panel. It carries everything the query needs, so the answer
+    # can be produced without a single widget being created.
+    if has_negation(parsed.get("text", "")):
+        st.session_state["nl_answer"] = {"kind": None}
+        st.session_state["nl_negated"] = True
+        changed.append(
+            "the sentence is negated, so no form was run \u2014 the eight "
+            "forms match a relation, not its complement, and answering the "
+            "positive half would invert your question"
+        )
+        st.session_state["nl_controls_set"] = changed
+        st.rerun()
+
+    _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
+
+    # A question that names an administrative unit and no LSOA cannot be
+    # answered by an LSOA-anchored form: SCQ1, SCQ2 and SCQ4 all require a
+    # statistical anchor and there is no administrative variant of them.
+    # The lens holds the same relations over the administrative graph, so
+    # the question goes there instead of dying in a form that cannot take
+    # it. Whether the answer is units or schools is decided by the sentence.
+    _want_units = False
+    if (
+        not _lens
+        and parsed.get("admin")
+        and not parsed.get("areas")
+        and scq in ("SCQ1", "SCQ2", "SCQ3", "SCQ4")
+    ):
+        _low = (parsed.get("text") or "").lower()
+        _mode = "direct"
+        for _name, _phrases in _LENS_MODE_PHRASES:
+            if any(p in _low for p in _phrases):
+                _mode = _name
+                break
+        _lens = {
+            "atype": str(parsed["admin"][1]).rsplit("|", 1)[-1].strip(),
+            "uri": parsed["admin"][0],
+            "mode": _mode,
+            "ntype": None,
+        }
+        _want_units = not any(w in _low for w in _SCHOOL_WORDS)
+
+    st.session_state["nl_answer"] = {
+        "want": "units" if _want_units else "schools",
+        "kind": "LENS" if _lens else scq,
+        "mode": (_lens or {}).get("mode"),
+        "ntype": (_lens or {}).get("ntype"),
+        "admin": (
+            (_lens or {}).get("uri")
+            or (parsed["admin"][0] if parsed.get("admin") else None)
+        ),
+        "areas": [a[0] for a in (parsed.get("areas") or [])],
+        "filter": edu,
+        "value": parse_threshold_value(parsed.get("text", "")),
+        "phase": parse_school_phase(parsed.get("text", "")),
+        "text": parsed.get("text", ""),
+        "admin_label": (parsed["admin"][1] if parsed.get("admin") else None),
+    }
+    if _lens:
+        _lens["filter"] = edu or "None"
+        st.session_state["LENS_pending"] = _lens
+        st.session_state["scq_select"] = "LENS"
+        scq = "LENS"
+        changed = [
+            c for c in changed
+            if not str(c).startswith("SCQ")
+        ]
+        changed.insert(0, "Education lens")
+        changed.append(f"start from {_lens['atype']}")
+        changed.append(f"relation: {LENS_MODES[_lens['mode']][0]}")
+        if _lens["ntype"]:
+            changed.append(f"related unit type: {_lens['ntype']}")
+
     if scq:
         st.session_state[f"scq_ran_{scq}"] = True
 
     st.session_state["nl_controls_set"] = changed
+    _resolved = bool(parsed.get("areas")) or bool(parsed.get("admin"))
+    if changed and not _resolved:
+        # A form was matched but no place in the sentence could be resolved.
+        # Opening the panel here would demand a value the reader never gave
+        # and make a naming problem look like a broken question.
+        st.session_state["nl_unresolved"] = True
     if changed:
         st.rerun()
 
@@ -2217,6 +2539,19 @@ def render_nl_understanding() -> None:
         if badge_class == "nl-src-rule"
         else "model output validated against the same vocabulary"
     )
+    llm_discussion = ""
+    if badge_class == "nl-src-llm":
+        llm_discussion = (
+            "<div class=\'nl-warn\'>⚠️ **Note on LLM Parsing and Spatial Reasoning:** "
+            "While general-purpose LLMs like BERT/BioBERT can process natural language, "
+            "they often struggle with the precise, topological, and hierarchical spatial "
+            "reasoning required for policy analysis. This demonstrator prioritizes a "
+            "rule-based approach for spatial competency questions (SCQs) to ensure "
+            "deterministic, verifiable, and contextually accurate results, which is "
+            "crucial for policy-makers. The QPKG approach, with its explicit spatial "
+            "relations and provenance, offers superior reliability for this specific "
+            "spatial policy context compared to general LLM interpretations.</div>"
+        )
     st.markdown(
         "<div class='nl-read'>"
         f"<div class='nl-src {badge_class}'>Parsed by {escape(source)} "
@@ -2225,6 +2560,7 @@ def render_nl_understanding() -> None:
         f"<div class='nl-chips'>{''.join(chips) or '&mdash;'}</div>"
         + (f"<ol class='nl-steps'>{steps}</ol>" if steps else "")
         + warn
+        + llm_discussion
         + "</div>",
         unsafe_allow_html=True,
     )
@@ -2326,19 +2662,252 @@ MODE_NOTE = {
 }
 
 
+# ---------------------------------------------------------------------------
+# EDUCATION LENS — schools reached through any relation the graph already has
+#
+# Not a ninth SCQ form. Each variant composes relations with DIFFERENT
+# provenances in one answer, which is the thing the integration made possible:
+#
+#   anchor --INTERSECTS--> LSOA <--LOCATED_IN-- School     (Geometry-origin)
+#   anchor --TOUCHES-->    unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
+#   anchor <--WITHIN--     unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
+#   anchor --WITHIN-->     unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
+#
+# A direct INTERSECTS count confirmed all three anchor types carry the
+# relation: Community 8,423, UnitaryAuthority 2,407, Ward 2,344. The
+# neighbour type is a free parameter, so Community->Ward, Ward->Community and
+# every other pair the data actually holds can be asked for.
+# ---------------------------------------------------------------------------
+_LENS_TAIL = """
+MATCH (l)<-[:LOCATED_IN]-(s:School)
+WHERE ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)
+  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)
+  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)
+RETURN DISTINCT
+    coalesce(s.school_name, s.name, s.code) AS school,
+    s.phase_group                           AS phase,
+    __VIA__                                 AS via_unit,
+    __VIATYPE__                             AS via_type,
+    l.code                                  AS lsoa_code,
+    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,
+    l.deprivation                           AS deprivation,
+    l.wimd_decile                           AS wimd_decile,
+    s.fsm_pct                               AS fsm_pct,
+    s.attendance_pct                        AS attendance_pct,
+    s.capped9_score                         AS capped9_score
+ORDER BY fsm_pct DESC
+LIMIT $limit
+"""
+
+_LENS_SELF = "coalesce(anchor.name, anchor.uri)"
+_LENS_NBR = "coalesce(nbr.name, nbr.uri)"
+
+LENS_CYPHER = {
+    "direct": (
+        "MATCH (anchor:AdminUnit {uri:$admin})-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_SELF).replace("__VIATYPE__", "anchor.type")
+    ),
+    "touches": (
+        "MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\n"
+        "WHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n"
+        "MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+    ),
+    "inside": (
+        "MATCH (anchor:AdminUnit {uri:$admin})<-[:WITHIN]-(nbr:AdminUnit)\n"
+        "WHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n"
+        "MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+    ),
+    "contains": (
+        "MATCH (anchor:AdminUnit {uri:$admin})-[:WITHIN]->(nbr:AdminUnit)\n"
+        "WHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n"
+        "MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\n"
+        + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+    ),
+}
+
+LENS_MODES = {
+    "direct": (
+        "Schools inside this unit",
+        "AdminUnit --INTERSECTS--> LSOA <--LOCATED_IN-- School",
+        "Geometry-origin, then Project-integrated",
+    ),
+    "touches": (
+        "Schools in units that TOUCH this one",
+        "AdminUnit --TOUCHES--> AdminUnit --INTERSECTS--> LSOA "
+        "<--LOCATED_IN-- School",
+        "Native YAGO2geo, then Geometry-origin, then Project-integrated",
+    ),
+    "inside": (
+        "Schools in units INSIDE this one",
+        "AdminUnit <--WITHIN-- AdminUnit --INTERSECTS--> LSOA "
+        "<--LOCATED_IN-- School",
+        "Native YAGO2geo, then Geometry-origin, then Project-integrated",
+    ),
+    "contains": (
+        "Schools in the unit that CONTAINS this one",
+        "AdminUnit --WITHIN--> AdminUnit --INTERSECTS--> LSOA "
+        "<--LOCATED_IN-- School",
+        "Native YAGO2geo, then Geometry-origin, then Project-integrated",
+    ),
+}
+
+
+# School-anchored lens. This travels the COMPUTED side of the graph:
+# LSOA_TOUCHES is geometry-origin, GRAPH_NEAR is derived from it. "Which
+# schools are near my school" is answered through statistical geography,
+# not administrative geography, and the provenance line says so.
+SCHOOL_LENS_CYPHER = {
+    "same": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+    "touch": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
+              "MATCH (home)-[:LSOA_TOUCHES]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+    "near": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
+             "MATCH (home)-[:GRAPH_NEAR]-(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
+}
+SCHOOL_LENS_MODES = {
+    "same": ("Schools in the same LSOA",
+             "School --LOCATED_IN--> LSOA <--LOCATED_IN-- School",
+             "Project-integrated"),
+    "touch": ("Schools in LSOAs that touch mine",
+              "School --LOCATED_IN--> LSOA --LSOA_TOUCHES--> LSOA <--LOCATED_IN-- School",
+              "Project-integrated, then Geometry-origin"),
+    "near": ("Schools in LSOAs graph-near mine (two touches-steps)",
+             "School --LOCATED_IN--> LSOA --GRAPH_NEAR--> LSOA <--LOCATED_IN-- School",
+             "Project-integrated, then Derived from Geometry-origin"),
+}
+
+
+def school_lens_options(cfg):
+    """Schools placed in an LSOA, so a spatial answer is possible."""
+    return safe_options(cfg, """
+    MATCH (s:School)-[:LOCATED_IN]->(l:LSOA)
+    WHERE s.code IS NOT NULL
+    RETURN DISTINCT s.code AS value,
+           coalesce(s.school_name, s.name, s.code)
+             + ' | ' + coalesce(l.name, l.code) AS label
+    ORDER BY label
+    LIMIT 20000
+    """)
+
+
+def types_with_intersects(cfg):
+    """Administrative types that can reach an LSOA, and therefore schools.
+
+    A verified count returned Community 8,423, UnitaryAuthority 2,407,
+    Ward 2,344 and nothing else. Types outside this set can still be asked
+    about as units; they simply cannot carry a school answer, and saying so
+    is part of the result rather than a failure of the interface.
+    """
+    return {
+        str(v) for v, _ in safe_options(cfg, """
+        MATCH (a:AdminUnit)-[:INTERSECTS]->(:LSOA)
+        RETURN DISTINCT a.type AS value, a.type AS label
+        """)
+    }
+
+
+def nl_admin_options(cfg):
+    """Every named administrative unit the question box should recognise.
+
+    Scoped to units that intersect an LSOA. Every LSOA in this graph is
+    Welsh, so this is the Welsh administrative geography and nothing else.
+    Without the scope the list carried the whole of Great Britain, and a
+    question about Cathays resolved to a ward in Devon because a naive
+    substring match had 19,000 more chances to be wrong.
+
+    The box previously resolved names against `admin_options(cfg,
+    "admin_parent")`, which returns only units that HAVE a child. A Community
+    such as Cathays has none, so it was never recognised, `admin` came back
+    empty, and every school question fell through to an LSOA-anchored form
+    that then asked for an LSOA the sentence never named. This list is the
+    three types that can anchor a question, whether or not they are parents.
+    """
+    return safe_options(cfg, """
+    MATCH (a:AdminUnit)
+    WHERE a.type IN ['Ward', 'Community', 'UnitaryAuthority']
+      AND a.uri IS NOT NULL
+      AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+    RETURN DISTINCT
+        a.uri AS value,
+        coalesce(a.name, a.uri) + ' | ' + a.type AS label
+    ORDER BY label
+    LIMIT 25000
+    """)
+
+
+def lens_anchor_options(cfg, unit_type):
+    """Administrative units of one type that can reach an LSOA at all."""
+    return safe_options(cfg, f"""
+    MATCH (a:AdminUnit)
+    WHERE a.type = '{unit_type}'
+      AND (
+        EXISTS {{ MATCH (a)-[:INTERSECTS]->(:LSOA) }}
+        OR EXISTS {{ MATCH (a)-[:TOUCHES]-(:AdminUnit)-[:INTERSECTS]->(:LSOA) }}
+        OR EXISTS {{ MATCH (a)<-[:WITHIN]-(:AdminUnit)-[:INTERSECTS]->(:LSOA) }}
+      )
+    RETURN DISTINCT a.uri AS value,
+           coalesce(a.name, a.uri) + ' | {unit_type}' AS label
+    ORDER BY label
+    LIMIT 20000
+    """)
+
+
+def lens_unit_types(cfg):
+    """Every administrative type present, most numerous first."""
+    return [
+        str(v) for v, _ in safe_options(cfg, """
+        MATCH (a:AdminUnit)
+        RETURN a.type AS value, a.type + ' (' + toString(count(*)) + ')' AS label
+        ORDER BY count(*) DESC
+        """)
+    ]
+
+
+# Units-as-answer variants. The same relation heads as the school lens, but
+# returning the administrative units themselves. "Which communities are near
+# Cathays" is a question ABOUT communities: answering it with schools would
+# answer a different question. Near follows the IJGI 2024 definition exactly:
+# disjoint, with a path of two touches edges.
+LENS_UNIT_CYPHER = {
+    'touches': (
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    ),
+    'near': (
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(mid:AdminUnit)-[:TOUCHES]-(nbr:AdminUnit)\nWHERE mid.type = anchor.type\n  AND nbr.type = anchor.type\n  AND nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    ),
+    'inside': (
+        'MATCH (anchor:AdminUnit {uri:$admin})<-[:WITHIN]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    ),
+    'contains': (
+        'MATCH (anchor:AdminUnit {uri:$admin})-[:WITHIN]->(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+    )
+}
+
+LENS_MODES["near"] = (
+    "Units two touches-steps away (near)",
+    "AdminUnit --TOUCHES--> AdminUnit --TOUCHES--> AdminUnit "
+    "--INTERSECTS--> LSOA <--LOCATED_IN-- School",
+    "Derived from Native, then Geometry-origin, then Project-integrated",
+)
+LENS_CYPHER["near"] = (
+    'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(mid:AdminUnit)-[:TOUCHES]-(nbr:AdminUnit)\nWHERE mid.type = anchor.type\n  AND nbr.type = anchor.type\n  AND nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
+    + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
+)
+
 SCQ_META = {
     "SCQ1": {
         "label": "SCQ1 — LSOA borders / touches",
         "question": (
-            "Which neighbouring LSOAs directly border the selected LSOA, "
-            "and what school FSM / attendance / performance evidence is "
-            "visible in those neighbouring areas?"
+            "How do educational outcomes (e.g., FSM, attendance, performance) in LSOAs bordering a specific area compare, and what policy implications does this adjacency have?"
         ),
         "task": "Task 4.1 + Task 5.4",
         "keyword_sentence": (
-            "The demonstrator answers LSOA adjacency using the computed "
-            "LSOA_TOUCHES relation. This is Geometry-origin capability and "
-            "does not count as native YAGO2geo model completeness."
+            "This query identifies LSOAs directly bordering a selected LSOA and provides school FSM, attendance, and performance data for these adjacent areas. This helps policymakers understand localized educational disparities and the potential for spillover effects across immediate geographical boundaries."
         ),
         "relation": "LSOA_TOUCHES",
         "provenance": "Geometry-origin",
@@ -2377,15 +2946,11 @@ LIMIT $limit
     "SCQ2": {
         "label": "SCQ2 — LSOA near",
         "question": (
-            "Which LSOAs are qualitatively near the selected LSOA, "
-            "and do nearby school indicators show FSM / attendance / "
-            "secondary-performance pressure?"
+            "Are there clusters of LSOAs with similar educational pressures (e.g., high FSM, low attendance) that are qualitatively 'near' each other, and how might this inform regional intervention strategies?"
         ),
         "task": "Task 4.1 + Task 5.4",
         "keyword_sentence": (
-            "Near is represented by GRAPH_NEAR, which is derived through "
-            "graph traversal over the computed LSOA neighbourhood. It is "
-            "qualitative graph proximity, not a raw distance threshold."
+            "This query identifies LSOAs that are qualitatively 'near' a selected LSOA, based on graph traversal, and highlights school indicators such as FSM, attendance, and secondary performance. This helps policymakers detect broader patterns of educational pressure beyond direct adjacency, informing regional intervention planning."
         ),
         "relation": "GRAPH_NEAR",
         "provenance": "Derived from geometry-origin",
@@ -2423,15 +2988,10 @@ LIMIT $limit
 
     "SCQ3": {
         "label": "SCQ3 — LSOA between",
-        "question": "Which LSOAs lie between two selected LSOAs?",
+        "question": "Which LSOAs form a corridor between two specific LSOAs, and what are the educational characteristics of these intermediary areas that might influence policy decisions?",
         "task": "Task 4.1 + Task 3.3",
         "keyword_sentence": (
-            "Between is demonstrated as cycle-free paths over "
-            "LSOA_TOUCHES, following the paper's definition. The hop bound "
-            "is a tractability necessity, not a definitional choice, and "
-            "is reported with the result. Its education-policy fit is "
-            "still weak or optional, because the paper poses no between "
-            "question for this domain."
+            "This query identifies LSOAs that lie along cycle-free paths between two selected LSOAs, providing insights into potential corridors for policy interventions or resource allocation. Understanding the educational characteristics of these intermediary areas can inform targeted strategies."
         ),
         "relation": "LSOA_TOUCHES path",
         "provenance": "Derived from geometry-origin",
@@ -2447,15 +3007,11 @@ LIMIT $limit
     "SCQ4": {
         "label": "SCQ4 — LSOA not-adjacent",
         "question": (
-            "Which non-adjacent LSOAs show school FSM / attendance / "
-            "secondary-performance pressure compared with the selected "
-            "LSOA?"
+            "Beyond immediate neighbors, which LSOAs exhibit significantly different or similar educational performance (FSM, attendance, secondary performance) compared to a chosen LSOA, suggesting potential for comparative policy studies or identifying isolated issues?"
         ),
         "task": "Task 4.1 + Task 5.3",
         "keyword_sentence": (
-            "Not-adjacent is evaluated as the complement of the computed "
-            "LSOA_TOUCHES relation. Its provenance therefore remains "
-            "Derived from geometry-origin."
+            "This query identifies non-adjacent LSOAs that show contrasting or similar school FSM, attendance, or secondary performance compared to a selected LSOA. This can help policymakers identify isolated areas of concern or success, facilitating comparative analysis and targeted policy development."
         ),
         "relation": "NOT LSOA_TOUCHES",
         "provenance": "Derived from geometry-origin",
@@ -2499,15 +3055,11 @@ LIMIT $limit
     "SCQ5": {
         "label": "SCQ5 — Administrative contains",
         "question": (
-            "Which administrative parent units contain the selected "
-            "administrative unit?"
+            "What are the higher-level administrative units (e.g., local authorities, regions) that encompass a specific administrative area, and how does this hierarchy impact policy oversight and resource distribution?"
         ),
         "task": "Task 1.3 + Task 5.1",
         "keyword_sentence": (
-            "This query demonstrates the SCQ5 form within the native "
-            "administrative hierarchy by traversing WITHIN upward. "
-            "For the LSOA-based education use case, containment is "
-            "reclassified to the cross-hierarchy evaluation."
+            "This query identifies the administrative parent units that contain a selected administrative unit, demonstrating the hierarchical structure relevant for policy implementation and reporting. Understanding this hierarchy is crucial for effective policy oversight and resource allocation."
         ),
         "relation": "WITHIN upward traversal",
         "provenance": "Native",
@@ -2535,14 +3087,11 @@ LIMIT $limit
     "SCQ6": {
         "label": "SCQ6 — Administrative inside",
         "question": (
-            "Which administrative units are contained inside the selected "
-            "administrative unit?"
+            "Which smaller administrative units (e.g., wards, communities) are located within a larger administrative area, and how can policies be tailored to address their specific educational needs?"
         ),
         "task": "Task 1.3 + Task 5.1",
         "keyword_sentence": (
-            "This query demonstrates the SCQ6 form within the native "
-            "administrative hierarchy by traversing WITHIN downward. "
-            "It must not be presented as Ward–LSOA containment."
+            "This query identifies administrative units contained within a selected larger administrative unit, demonstrating how policies can be tailored to address specific educational needs at a more granular level within a defined administrative area."
         ),
         "relation": "WITHIN downward traversal",
         "provenance": "Native",
@@ -2570,17 +3119,11 @@ LIMIT $limit
     "SCQ7": {
         "label": "SCQ7 — Cross-hierarchy intersects",
         "question": (
-            "Which wards or communities intersect the selected LSOA, "
-            "and what school FSM / attendance / performance evidence is "
-            "located in that LSOA?"
+            "How do administrative boundaries (wards/communities) overlap with statistical areas (LSOAs), and what are the educational indicators (FSM, attendance, performance) within these intersecting regions?"
         ),
         "task": "Task 6.2 + Task 5.4",
         "keyword_sentence": (
-            "SCQ7 is the correct reclassification target for Ward–LSOA "
-            "containment-style questions. The relation crosses from the "
-            "administrative hierarchy to statistical geography using "
-            "computed INTERSECTS, so it is Geometry-origin rather than "
-            "Native YAGO2geo coverage."
+            "This query identifies administrative units (wards or communities) that intersect with a selected LSOA, providing school FSM, attendance, and performance data within that LSOA. This helps policymakers understand the local impact of policies across different geographical classifications."
         ),
         "relation": "INTERSECTS",
         "provenance": "Geometry-origin",
@@ -2626,16 +3169,11 @@ LIMIT $limit
     "SCQ8": {
         "label": "SCQ8 — Cross-hierarchy near",
         "question": (
-            "Which wards or communities intersect LSOAs that are graph-near "
-            "the selected LSOA, and what school indicators are visible in "
-            "those nearby LSOAs?"
+            "Which administrative units (wards/communities) are located near LSOAs that are qualitatively 'near' a selected LSOA, and what are the educational indicators in those areas?"
         ),
         "task": "Task 6.3 + Task 5.4",
         "keyword_sentence": (
-            "SCQ8 combines GRAPH_NEAR between LSOAs with INTERSECTS from "
-            "nearby LSOAs to wards or communities. It is useful for the "
-            "education demonstrator, but its provenance remains "
-            "Geometry-origin plus Derived."
+            "This query combines qualitative 'near' relationships between LSOAs with intersecting administrative units (wards or communities), providing a broader spatial context for educational indicators. This helps policymakers identify administrative areas influenced by educational trends in qualitatively nearby statistical areas."
         ),
         "relation": "INTERSECTS + GRAPH_NEAR",
         "provenance": "Geometry-origin + Derived",
@@ -2650,6 +3188,57 @@ LIMIT $limit
         "cypher": SCQ8_ANSWER_CYPHER,
         "cypher_evidence": SCQ8_EVIDENCE_CYPHER,
         "cypher_reverse_evidence": SCQ8_REVERSE_EVIDENCE_CYPHER,
+    },
+
+    "LENS": {
+        "label": "Education lens \u2014 schools through any stored relation (not an SCQ form)",
+        "question": (
+            "Which schools are reachable from the selected administrative "
+            "unit through the relation you choose?"
+        ),
+        "task": "Integration demonstration",
+        "keyword_sentence": (
+            "This is not a ninth spatial form. It lets one question travel "
+            "along any relation the graph already holds \u2014 native "
+            "TOUCHES or WITHIN between administrative units, then the "
+            "geometry-origin INTERSECTS into statistical geography, then the "
+            "School data join \u2014 and reports the provenance of every "
+            "link separately. It demonstrates composition; it raises no "
+            "coverage score."
+        ),
+        "relation": "chosen at run time",
+        "provenance": "mixed \u2014 shown per link",
+        "param_type": "education_lens",
+        "result_label": "Schools reached",
+        "evaluation_note": (
+            "Demonstrator answer: Yes. "
+            "Native education-use-case model answer: No. "
+            "Counts toward model completeness: No."
+        ),
+        "cypher": LENS_CYPHER["direct"],
+    },
+
+    "SCHOOL_LENS": {
+        "label": "From a school \u2014 nearby schools through computed LSOA relations (not an SCQ form)",
+        "question": "Which schools are near the selected school, through the computed LSOA adjacency?",
+        "task": "Integration demonstration",
+        "keyword_sentence": (
+            "This travels the computed statistical side of the graph rather "
+            "than the native administrative one: LSOA_TOUCHES is "
+            "geometry-origin and GRAPH_NEAR is derived from it. YAGO2geo "
+            "asserts neither, which is why this question is unanswerable "
+            "from the original model and answerable after integration."
+        ),
+        "relation": "LOCATED_IN + LSOA_TOUCHES / GRAPH_NEAR",
+        "provenance": "Project-integrated, then Geometry-origin",
+        "param_type": "school_lens",
+        "result_label": "Nearby schools",
+        "evaluation_note": (
+            "Demonstrator answer: Yes. "
+            "Native education-use-case model answer: No. "
+            "Counts toward model completeness: No."
+        ),
+        "cypher": SCHOOL_LENS_CYPHER["touch"],
     },
 }
 
@@ -3386,6 +3975,9 @@ def _cached_driver(uri: str, user: str, password: str):
 
 
 def get_driver(cfg: Dict[str, str]):
+    if not st.session_state.get("neo4j_connected_msg_shown"):
+        st.info(f"Attempting to connect to Neo4j: URI={cfg['uri']}, User={cfg['user']}, Database={cfg['database']}")
+        st.session_state["neo4j_connected_msg_shown"] = True
     return _cached_driver(cfg["uri"], cfg["user"], cfg["password"])
 
 
@@ -3625,6 +4217,7 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
 # =============================================================================
 # UI COMPONENTS
 # =============================================================================
+@st.cache_data(show_spinner=False)
 @st.cache_data(show_spinner=False)
 def _image_data_uri(filename: str) -> str:
     """An image beside app.py as an inline data URI.
@@ -6314,23 +6907,39 @@ def page_scq_demonstrator(
     except Exception:
         nl_lsoas = []
     try:
-        nl_admin = admin_options(cfg, "admin_parent")
+        nl_admin = nl_admin_options(cfg)
     except Exception:
         nl_admin = []
     # The deterministic panel is the instrument: every figure reported in
     # the dissertation was produced by it. The sentence box is a
-    # demonstration of query understanding and it misroutes often enough
-    # that it should not be the first thing a reader meets. So it is folded
-    # away, and the eight forms are open.
+    # demonstration of query understanding, and it misroutes often enough
+    # that it should not be the first thing a reader meets. So it is folded,
+    # and the eight forms are open.
     with st.expander("Ask a question in your own words", expanded=False):
         render_nl_search(nl_lsoas, nl_admin)
         render_nl_understanding()
+
+    # The panel is the other route, so the sentence's answer is dropped
+    # BEFORE it is drawn, not after. Clearing it afterwards left the old
+    # answer on screen for one more run, which is why it took two clicks
+    # to go away.
+    if st.session_state.get("scq_manual_open"):
+        st.session_state.pop("nl_answer", None)
+
+    # The answer belongs directly under the question that produced it.
+    _answered = render_question_answer(cfg)
 
     # The question and the controls are one path, not two. Without saying so,
     # a reader cannot tell whether a selector still holds a value from the
     # last question or one they chose themselves, which is exactly how a
     # result for the wrong unit gets read as an answer.
     _driven = st.session_state.get("nl_controls_set") or []
+    # Once the reader changes the form themselves, the sentence no longer
+    # describes what is on screen. Claiming otherwise would misreport the
+    # provenance of the answer, so the notice is dropped instead.
+    _nl_last = st.session_state.get("nl_last") or {}
+    if _nl_last.get("scq") and st.session_state.get("scq_select") != _nl_last.get("scq"):
+        _driven = []
     if st.session_state.get("nl_question") and _driven:
         col_note, col_clear = st.columns([5, 1])
         with col_note:
@@ -6350,24 +6959,29 @@ def page_scq_demonstrator(
     # Nothing is pre-selected. A default would answer a question the reader
     # never asked, and once a question box sits above these controls there is
     # no way to tell a default apart from something the sentence set.
-    # One route at a time. The panel is open by default; the sentence box
-    # above is opened deliberately. Nothing below is created while the panel
-    # is closed, so no query runs and no control holds a value the reader
-    # never set.
+    # The manual route is folded away by default. The box above is the way
+    # in; the eight forms and their selectors are the way to override it or
+    # to work without a sentence. Keeping them closed until asked for stops
+    # a reader wondering whether a selector holds a value they never set.
+    # When a question drives the controls the panel opens itself, because
+    # the reader has to be able to see what the sentence chose.
+    if _answered:
+        st.divider()
+
     _open = st.checkbox(
         "Choose the question yourself",
         value=True,
         key="scq_manual_open",
         help=(
-            "Open this to pick one of the eight spatial forms and set its "
-            "parameters by hand. A question typed in the box above fills "
-            "them in for you."
+            "Open this to pick one of the eight spatial forms, or either "
+            "lens, and set its parameters by hand. A question typed above "
+            "opens it automatically and fills it in."
         ),
     )
     if not _open:
         st.caption(
-            "The eight spatial forms are folded away. Tick the box to "
-            "choose one, or open the sentence box above."
+            "The eight spatial forms and the two lenses are folded away. "
+            "Tick the box to choose one, or open the sentence box above."
         )
         return
 
@@ -6386,6 +7000,16 @@ def page_scq_demonstrator(
             "own words and it will be chosen for you."
         )
         return
+
+    # Add policy-relevant notes for the selected SCQ
+    if scq_key:
+        label_text = SCQ_META[scq_key]["label"]
+        keyword_sentence_text = SCQ_META[scq_key]["keyword_sentence"]
+        st.info(
+            f"**Policy Relevance for {label_text}:** "
+            f"{keyword_sentence_text}"
+        )
+
 
     meta = SCQ_META[scq_key]
 
@@ -6674,6 +7298,187 @@ def page_scq_demonstrator(
 
         params["admin"] = selected_admin[0]
 
+    elif param_type == "education_lens":
+        types = lens_unit_types(cfg)
+        if not types:
+            st.error("No administrative units were found in this database.")
+            return
+
+        # Settings parked by the question box are applied here, and only
+        # when the value actually exists in the list the graph returned.
+        _pend = st.session_state.pop("LENS_pending", None)
+        if _pend:
+            if _pend.get("atype") in types:
+                st.session_state["LENS_atype"] = _pend["atype"]
+            if _pend.get("mode") in LENS_MODES:
+                st.session_state["LENS_mode"] = _pend["mode"]
+            st.session_state["LENS_return"] = "Schools"
+            if _pend.get("filter") in (
+                "None", "High FSM", "Low attendance", "High deprivation"
+            ):
+                st.session_state["LENS_filter"] = _pend["filter"]
+            if _pend.get("ntype") in types:
+                st.session_state["LENS_ntype"] = _pend["ntype"]
+            st.session_state["LENS_pending_uri"] = _pend.get("uri")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            anchor_type = st.selectbox(
+                "Start from which kind of unit?", types, key="LENS_atype",
+            )
+        with c2:
+            mode = st.selectbox(
+                "Which relation?",
+                list(LENS_MODES),
+                format_func=lambda m: LENS_MODES[m][0],
+                key="LENS_mode",
+            )
+
+        want = st.radio(
+            "Return",
+            ["Schools", "Administrative units"],
+            horizontal=True,
+            key="LENS_return",
+            help=(
+                "A question about communities is answered with communities. "
+                "Choose Schools only when the question asks about schools."
+            ),
+        )
+
+        anchors = lens_anchor_options(cfg, anchor_type)
+        if not anchors:
+            st.warning(
+                f"No {anchor_type} in this graph can reach an LSOA by any "
+                "stored relation, so no school can be attached to it. "
+                "That absence is a result, not an error."
+            )
+            return
+
+        choices = [("", "\u2014 choose a unit \u2014")] + list(anchors)
+        _want = st.session_state.pop("LENS_pending_uri", None)
+        if _want:
+            _hit = next(
+                (o for o in choices if o[0] == _want), None
+            )
+            if _hit is not None:
+                st.session_state["LENS_unit"] = _hit
+        selected = st.selectbox(
+            "Unit", choices, format_func=lambda o: o[1], key="LENS_unit",
+        )
+        if not selected[0]:
+            st.info("Choose a unit to start from.")
+            return
+        params["admin"] = selected[0]
+
+        nbr_type = None
+        if mode != "direct":
+            nbr_choice = st.selectbox(
+                "Which kind of related unit?", ["Any type"] + types,
+                key="LENS_ntype",
+                help=(
+                    "Leave as Any to see every type the relation reaches, "
+                    "or pick one to ask a specific pair such as Community "
+                    "to Ward."
+                ),
+            )
+            nbr_type = None if nbr_choice == "Any type" else nbr_choice
+        params["nbr_type"] = nbr_type
+
+        # The school path needs INTERSECTS, which only some types carry.
+        # Report that limit explicitly instead of returning an empty table.
+        if want == "Schools":
+            reachable = types_with_intersects(cfg)
+            blocked = None
+            if mode == "direct" and anchor_type not in reachable:
+                blocked = anchor_type
+            elif mode != "direct" and nbr_type and nbr_type not in reachable:
+                blocked = nbr_type
+            if blocked:
+                st.warning(
+                    f"This question cannot currently be answered from the "
+                    f"represented relations. No stored relation connects "
+                    f"{blocked} to LSOA, so no school can be attached to it. "
+                    f"Only {', '.join(sorted(reachable))} carry INTERSECTS. "
+                    f"Switch Return to Administrative units to ask about the "
+                    f"units themselves."
+                )
+                return
+
+        filt = st.radio(
+            "Education filter",
+            ["None", "High FSM", "Low attendance", "High deprivation"],
+            horizontal=True, key="LENS_filter",
+        )
+        params["phase"] = None
+        params["fsm_min"] = 30.0 if filt == "High FSM" else None
+        params["att_max"] = 90.0 if filt == "Low attendance" else None
+        params["dep"] = "High" if filt == "High deprivation" else None
+
+        if want == "Administrative units" and mode in LENS_UNIT_CYPHER:
+            st.session_state["LENS_active_cypher"] = LENS_UNIT_CYPHER[mode]
+        elif want == "Administrative units":
+            st.warning(
+                "The direct relation returns the unit you already chose, "
+                "so units are not a meaningful answer here. Showing "
+                "schools instead."
+            )
+            st.session_state["LENS_active_cypher"] = LENS_CYPHER[mode]
+        else:
+            st.session_state["LENS_active_cypher"] = LENS_CYPHER[mode]
+        label, chain, prov = LENS_MODES[mode]
+        st.caption(
+            f"Chain: {chain}  \u2014  Provenance: {prov}. "
+            "This answer was possible because of relations added by this "
+            "project. It does not raise the coverage of the original "
+            "YAGO2geo model."
+        )
+
+    elif param_type == "school_lens":
+        schools = school_lens_options(cfg)
+        if not schools:
+            st.warning(
+                "No school in this graph is placed in an LSOA, so no "
+                "school-anchored question can be answered. That absence is "
+                "a result, not an error."
+            )
+            return
+        s1, s2 = st.columns(2)
+        with s1:
+            picked = st.selectbox(
+                "School",
+                [("", "\u2014 choose a school \u2014")] + list(schools),
+                format_func=lambda o: o[1],
+                key="SLENS_school",
+            )
+        with s2:
+            smode = st.selectbox(
+                "Which relation?",
+                list(SCHOOL_LENS_MODES),
+                format_func=lambda m: SCHOOL_LENS_MODES[m][0],
+                key="SLENS_mode",
+            )
+        if not picked[0]:
+            st.info("Choose a school to start from.")
+            return
+        params["school"] = picked[0]
+        sfilt = st.radio(
+            "Education filter",
+            ["None", "High FSM", "Low attendance", "High deprivation"],
+            horizontal=True, key="SLENS_filter",
+        )
+        params["phase"] = None
+        params["fsm_min"] = 30.0 if sfilt == "High FSM" else None
+        params["att_max"] = 90.0 if sfilt == "Low attendance" else None
+        params["dep"] = "High" if sfilt == "High deprivation" else None
+        st.session_state["SLENS_active_cypher"] = SCHOOL_LENS_CYPHER[smode]
+        _l, _c, _p = SCHOOL_LENS_MODES[smode]
+        st.caption(
+            f"Chain: {_c}  \u2014  Provenance: {_p}. "
+            "This answer was possible because of relations added by this "
+            "project. It does not raise the coverage of the original "
+            "YAGO2geo model."
+        )
+
     run_query = st.button(
         t("run_query"),
         type="primary",
@@ -6684,6 +7489,16 @@ def page_scq_demonstrator(
         if (scq_key in ("SCQ7", "SCQ8") and direction == "admin")
         else meta["cypher"]
     )
+
+    if param_type == "education_lens":
+        active_cypher = st.session_state.get(
+            "LENS_active_cypher", meta["cypher"]
+        )
+
+    if param_type == "school_lens":
+        active_cypher = st.session_state.get(
+            "SLENS_active_cypher", meta["cypher"]
+        )
 
     if scq_key == "SCQ3":
         active_cypher = (
@@ -6796,7 +7611,7 @@ def page_scq_demonstrator(
             (
                 "<div class='solutionbox'>"
                 f"<b>{t('implemented_answer')}:</b> "
-                f"{strong_answers[scq_key]}"
+                f"{strong_answers.get(scq_key, meta['keyword_sentence'])}"
                 "<br><br>"
                 f"<b>{t('eval_status')}:</b> "
                 f"{meta.get('evaluation_note', 'See provenance above.')}"
@@ -7456,6 +8271,421 @@ border-left-color:#f2879c;}
         ),
         unsafe_allow_html=True,
     )
+
+def render_question_answer(cfg: Dict[str, str]) -> bool:
+    """Answer the typed question directly, without the manual panel.
+
+    The panel and the question box used to be one path: the sentence set the
+    widgets and the widgets built the query, so an answer could not exist
+    unless the panel was open. This function is the separation. It takes the
+    intent parked by the parser, chooses an approved template, binds its
+    parameters and renders the answer and its map on its own. The panel stays
+    what it should be: a way to ask without a sentence.
+    """
+    intent = st.session_state.get("nl_answer")
+    if not intent or not intent.get("kind"):
+        return False
+    kind = intent["kind"]
+    areas = intent.get("areas") or []
+    admin = intent.get("admin")
+
+    params: Dict[str, Any] = {"limit": 5000}
+    if areas:
+        params["lsoa"] = areas[0]
+        params["lsoa_a"] = areas[0]
+        params["lsoa_b"] = areas[1] if len(areas) > 1 else areas[0]
+    if admin:
+        params["admin"] = admin
+
+    if kind == "LENS":
+        mode = intent.get("mode") or "direct"
+        if intent.get("want") == "units" and mode in LENS_UNIT_CYPHER:
+            cypher = LENS_UNIT_CYPHER[mode]
+        else:
+            cypher = LENS_CYPHER.get(mode)
+        params["nbr_type"] = intent.get("ntype")
+        chain = LENS_MODES.get(mode, ("", "", ""))
+    else:
+        meta = SCQ_META.get(kind)
+        if not meta:
+            return False
+        cypher = meta["cypher"]
+        # A cross-hierarchy question naming a unit and no LSOA has to run
+        # from the administrative side, exactly as the toggle would set it.
+        if kind in ("SCQ7", "SCQ8") and admin and not areas:
+            cypher = meta.get("cypher_reverse", cypher)
+        chain = ("", meta.get("relation", ""), meta.get("provenance", ""))
+
+    if not cypher:
+        return False
+    _missing = None
+    if "$admin" in cypher and "admin" in params:
+        pass
+    elif "$lsoa" in cypher and "lsoa" not in params:
+        _missing = "an LSOA"
+    elif "$admin" in cypher and "admin" not in params:
+        _missing = "an administrative unit"
+    # The sentence usually names the kind of thing it wants back, and that
+    # is a different question from which relation to travel. "LSOAs inside
+    # Cardiff" and "communities inside Cardiff" walk the same containment,
+    # and differ only in what they return. Honouring the named output stops
+    # the reader having to accept whatever the matched form happens to give.
+    _lowq = str(intent.get("text") or "").lower()
+    _wants_schools = any(w in _lowq for w in _SCHOOL_WORDS)
+    _out = None
+    if not _wants_schools and admin:
+        if any(w in _lowq for w in ("lsoa", "lsoas",
+                                    "\u0645\u0646\u0637\u0642\u0629 \u0625\u062d\u0635\u0627\u0626\u064a\u0629")):
+            _out = "LSOA"
+        elif any(w in _lowq for w in ("communities", "community",
+                                      "\u0645\u062c\u062a\u0645\u0639")):
+            _out = "Community"
+        elif any(w in _lowq for w in ("wards", "ward",
+                                      "\u062f\u0648\u0627\u0626\u0631",
+                                      "\u062f\u0627\u0626\u0631\u0629")):
+            _out = "Ward"
+
+    if _out is None and intent.get("admin_type_default"):
+        _out = intent["admin_type_default"]
+
+    if _out == "LSOA":
+        cypher = """
+MATCH (a:AdminUnit {uri:$admin})
+MATCH (u:AdminUnit)
+WHERE u = a OR (u)-[:WITHIN*1..3]->(a)
+MATCH (u)-[:INTERSECTS]->(l:LSOA)
+OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
+WITH l, count(DISTINCT s) AS schools,
+     round(avg(s.fsm_pct),1) AS avg_fsm_pct,
+     round(avg(s.attendance_pct),1) AS avg_attendance_pct
+RETURN
+    l.code AS lsoa_code,
+    coalesce(l.name, l.LSOA_Name, l.code) AS lsoa_name,
+    l.deprivation AS deprivation,
+    l.wimd_decile AS wimd_decile,
+    schools, avg_fsm_pct, avg_attendance_pct
+ORDER BY lsoa_code
+LIMIT $limit
+"""
+        chain = ("", "WITHIN downward, then INTERSECTS",
+                 "Native, then Geometry-origin")
+        _missing = None
+    elif _out in ("Community", "Ward"):
+        cypher = LENS_UNIT_CYPHER["inside"]
+        params["nbr_type"] = _out
+        chain = LENS_MODES["inside"]
+        _missing = None
+
+    # "Needs an LSOA" was only ever true of the eight forms, not of the
+    # graph: TOUCHES and WITHIN between administrative units are stored and
+    # audited, and the lens answers near and touches over them. Before
+    # refusing, try to resolve the place as an administrative unit. Welsh
+    # units are stored bilingually -- Cardiff is "Caerdydd - Cardiff" -- so
+    # a plain name misses by a prefix, not by a spelling error.
+    if _missing == "an LSOA" and not admin:
+        # An Arabic sentence carries no Latin token to match against the
+        # graph's English names, but the model's own reading of it does:
+        # it writes out "Cathays" even when the reader typed the name in
+        # Arabic script. Both sources are searched, so a question asked in
+        # either language can still resolve a place.
+        _src = str(intent.get("text") or "")
+        try:
+            _src += " " + " ".join(
+                str(s) for s in (st.session_state.get("nl_last") or {}).get("steps", [])
+            )
+        except Exception:
+            pass
+        _w = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z'\-]{3,}", _src)]
+        _w += [
+            w.strip(",.?!'\"").lower()
+            for w in str(intent.get("text") or "").split()
+            if len(w.strip(",.?!'\"")) >= 4
+        ]
+        _stop = {
+            "near", "inside", "which", "what", "schools", "school", "areas",
+            "regions", "units", "community", "communities", "ward", "wards",
+            "with", "that", "from", "query", "asks", "form", "corresponding",
+            "administrative", "attendance", "deprivation", "lsoa", "lsoas",
+            "the", "and", "for", "unit", "region", "step", "steps", "maps",
+        }
+        _w = [w for w in dict.fromkeys(_w) if w not in _stop][:10]
+        _cand = None
+        if _w:
+            try:
+                _cand = run_cypher(cfg, """
+UNWIND $words AS w
+MATCH (a:AdminUnit)
+WHERE a.name IS NOT NULL
+  AND a.type IN ['Ward','Community','UnitaryAuthority']
+  AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+  AND toLower(a.name) CONTAINS w
+RETURN DISTINCT a.uri AS uri, a.name AS name, a.type AS type
+LIMIT 6
+""", {"words": _w})
+            except Exception:
+                _cand = None
+        if _cand is not None and not _cand.empty:
+            # Requiring exactly one match was the root of this failure:
+            # "Cathays" matches both "Cathays" and "Cathays Community", so
+            # the recovery declined and the reader got nothing. Ties are
+            # broken deterministically instead -- an exact word match first,
+            # then the shortest name -- and the unit chosen is printed above
+            # the answer, so the choice is visible rather than silent.
+            _tied = len(_cand)
+            if len(_cand) > 1:
+                _wl = set(_w)
+                _cand = _cand.assign(
+                    _exact=[
+                        0 if str(n).lower() in _wl else 1
+                        for n in _cand["name"]
+                    ],
+                    _len=[len(str(n)) for n in _cand["name"]],
+                ).sort_values(["_exact", "_len", "name"])
+            admin = _cand.iloc[0]["uri"]
+            params["admin"] = admin
+            if _tied > 1:
+                # A choice made among several matches must be declared. The
+                # rule is deterministic, but the reader still has to be told
+                # that a rule was applied and what it passed over.
+                _others = ", ".join(
+                    f"{r['name']} ({r['type']})"
+                    for _, r in _cand.iloc[1:6].iterrows()
+                )
+                st.error(
+                    f"**{_tied} units in the graph matched your wording.** "
+                    f"The answer below uses "
+                    f"**{_cand.iloc[0]['name']} ({_cand.iloc[0]['type']})**, "
+                    f"chosen by an exact-word match first and the shorter "
+                    f"name second. The others were: {_others}. "
+                    f"If you meant one of them, open the panel below and "
+                    f"choose it."
+                )
+            _low = str(intent.get("text") or "").lower()
+            _m = "touches"
+            for _name, _ph in _LENS_MODE_PHRASES:
+                if any(p in _low for p in _ph):
+                    _m = _name
+                    break
+            _units = not any(w in _low for w in _SCHOOL_WORDS)
+            cypher = (
+                LENS_UNIT_CYPHER.get(_m) if _units else None
+            ) or LENS_CYPHER.get(_m) or LENS_CYPHER["touches"]
+            params["nbr_type"] = None
+            chain = LENS_MODES.get(_m, ("", "", ""))
+            _missing = None
+            st.caption(
+                f"No LSOA was named, but \"{_cand.iloc[0]['name']}\" is an "
+                f"administrative unit in the graph, and TOUCHES and WITHIN "
+                f"between units are stored. The question was answered over "
+                f"the administrative graph instead of the statistical one."
+            )
+
+    if _missing:
+        # Silence here was the worst behaviour of all: the reader saw a form
+        # chosen, a banner claiming the controls were set, and no answer and
+        # no reason. Naming the missing piece is the minimum owed.
+        st.warning(
+            f"The eight spatial forms are anchored on {_missing}, and no "
+            f"{_missing} in your sentence could be matched to a name in the "
+            "graph. This is a limit of the form, not of the graph: TOUCHES "
+            "and WITHIN between administrative units are stored, and the "
+            "Education lens answers over them."
+        )
+        # Telling a reader their name was not found, without showing what the
+        # graph does call it, leaves them guessing. Welsh units are stored
+        # bilingually -- Cardiff is "Caerdydd - Cardiff" -- so a plain name
+        # often misses by a prefix rather than by a spelling error.
+        _words = [
+            w.strip(",.?!'\"") for w in str(intent.get("text") or "").split()
+            if len(w.strip(",.?!'\"")) >= 4
+        ][:6]
+        if _words:
+            try:
+                _near = run_cypher(cfg, """
+UNWIND $words AS w
+MATCH (a:AdminUnit)
+WHERE a.name IS NOT NULL
+  AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+  AND toLower(a.name) CONTAINS toLower(w)
+RETURN DISTINCT a.name AS name, a.type AS type
+ORDER BY name
+LIMIT 12
+""", {"words": _words})
+            except Exception:
+                _near = None
+            if _near is not None and not _near.empty:
+                st.caption(
+                    "Names in the graph that contain a word from your "
+                    "question. Welsh units are stored bilingually, so the "
+                    "graph's name is often longer than the one you typed:"
+                )
+                st.dataframe(_near, use_container_width=True, hide_index=True)
+            else:
+                st.caption(
+                    "No administrative name in the graph contains any word "
+                    "from your question. Open the panel below and pick one "
+                    "from the list."
+                )
+        return True
+
+    edu = intent.get("filter")
+    _val = intent.get("value")
+    params["fsm_min"] = (
+        (_val if _val is not None else 30.0) if edu == "High FSM" else None
+    )
+    params["att_max"] = (
+        (_val if _val is not None else 90.0) if edu == "Low attendance" else None
+    )
+    params["dep"] = "High" if edu == "High deprivation" else None
+    params["phase"] = intent.get("phase")
+
+    st.markdown("### Answer to your question")
+    # The resolved unit is printed before the answer, not buried in the
+    # parse trace. A name matched to the wrong unit produces figures that
+    # are entirely correct for a place the reader never asked about, and
+    # that is the one failure mode a reader cannot detect from the result.
+    if intent.get("admin_label"):
+        st.markdown(
+            f"**Answered for: {intent['admin_label']}** \u2014 if that is not "
+            "the place you meant, the name in your sentence matched a "
+            "different unit. Open the panel below and choose the right one."
+        )
+    if edu and _val is None:
+        st.caption(
+            f"No number was found in the sentence, so the project default "
+            f"was used for {edu.lower()}."
+        )
+    try:
+        df = run_cypher(cfg, cypher, params)
+    except Exception as exc:
+        st.error(f"The question could not be run: {exc}")
+        return True
+
+    if df is None or df.empty:
+        st.warning(
+            "That question ran but returned nothing. The relation exists; "
+            "no row in the graph satisfies it for the place and filter you "
+            "named. An empty answer is a result, not a fault."
+        )
+        # An empty containment answer usually means the unit sits at the
+        # bottom of the hierarchy, not that the question was wrong. Saying
+        # which is which turns a blank into a finding.
+        if admin:
+            try:
+                _d = run_cypher(cfg, """
+MATCH (a:AdminUnit {uri:$admin})
+OPTIONAL MATCH (c:AdminUnit)-[:WITHIN]->(a)
+OPTIONAL MATCH (a)-[:WITHIN]->(p:AdminUnit)
+OPTIONAL MATCH (a)-[:TOUCHES]-(n:AdminUnit)
+RETURN coalesce(a.name, a.uri) AS name, a.type AS type,
+       count(DISTINCT c) AS children,
+       count(DISTINCT p) AS parents,
+       count(DISTINCT n) AS neighbours
+""", {"admin": admin})
+            except Exception:
+                _d = None
+            if _d is not None and not _d.empty:
+                r = _d.iloc[0]
+                st.info(
+                    f"{r['name']} is a {r['type']}. In this graph it has "
+                    f"{int(r['children'])} unit(s) inside it, "
+                    f"{int(r['parents'])} unit(s) containing it, and "
+                    f"{int(r['neighbours'])} touching it. A Community rarely "
+                    "contains anything: the Welsh audit records only 8 "
+                    "community-to-ward containments in total. Ask what "
+                    "CONTAINS it, what TOUCHES it, or what schools fall "
+                    "inside it instead."
+                )
+        return True
+
+    st.caption(
+        f"{len(df):,} row(s). Relation chain: {chain[1] or chain[0]}  "
+        f"\u2014  Provenance: {chain[2]}. "
+        "Where a chain mixes provenances, the answer was possible because of "
+        "relations added by this project and does not raise the coverage of "
+        "the original YAGO2geo model."
+    )
+    # The map harvests LSOA codes, because LSOA polygons are the only
+    # boundaries this graph stores. An answer made of administrative units
+    # carries no such code, so nothing can be drawn — and saying that is
+    # better than an empty space the reader has to interpret.
+    import re as _re
+    _has_lsoa = any(
+        bool(_re.match(r"^W\d{8}$", str(v)))
+        for col in df.columns for v in df[col].head(50).tolist()
+    )
+    if _has_lsoa:
+        try:
+            render_answer_map(
+                cfg, df,
+                focus_code=(areas[0] if areas else None),
+                key="nl_answer_map",
+                focus_admin=admin,
+            )
+        except Exception as exc:
+            st.caption(f"The map could not be drawn for this answer: {exc}")
+        if edu or intent.get("phase"):
+            st.caption(
+                "The figures in the hover card are for EVERY school in that "
+                "LSOA, because the card is computed from the graph rather "
+                "than from this answer. The table below is the filtered "
+                "answer. Where the two differ, the table is the answer to "
+                "your question and the card is the context around it."
+            )
+    elif admin:
+        # An administrative answer carries no LSOA code, so the eight forms
+        # cannot be mapped on their own. Rather than alter those queries --
+        # their rows are reported figures -- a companion query fetches the
+        # LSOAs the answer's units cover, through the computed INTERSECTS.
+        # The table stays the answer; the map is a view of where it falls.
+        try:
+            _areas_df = run_cypher(cfg, """
+MATCH (a:AdminUnit {uri:$admin})
+MATCH (u:AdminUnit)
+WHERE u = a OR (u)-[:WITHIN*1..3]->(a)
+MATCH (u)-[:INTERSECTS]->(l:LSOA)
+RETURN DISTINCT l.code AS lsoa_code
+LIMIT 3000
+""", {"admin": admin})
+        except Exception:
+            _areas_df = None
+        if _areas_df is not None and not _areas_df.empty:
+            st.caption(
+                f"The map shows the {len(_areas_df):,} LSOAs that the units "
+                "in this answer cover, drawn through the computed INTERSECTS "
+                "relation \u2014 Geometry-origin, not native. Administrative "
+                "polygons are stored too (`a.wkt`) and the panel below draws "
+                "them directly for SCQ5 and SCQ6; this view shows the "
+                "statistical extent instead. The table above is the answer."
+            )
+            try:
+                render_answer_map(
+                    cfg, _areas_df, focus_code=None,
+                    key="nl_answer_map_admin", focus_admin=admin,
+                )
+            except Exception as exc:
+                st.caption(f"The map could not be drawn: {exc}")
+        else:
+            st.info(
+                "No map for this answer. The units it names reach no LSOA "
+                "through any stored relation, so there is no extent to draw."
+            )
+    else:
+        st.info(
+            "No map for this answer. The map draws LSOA boundaries, which "
+            "are the geometry this project loaded; this answer is a list of "
+            "administrative units and carries no LSOA code. Ask the same "
+            "question with schools in it, or use the Education lens with "
+            "Return set to Schools, and the answer will map."
+        )
+    # lsoa_codes exists so the map can draw an administrative answer. It is
+    # not part of the answer: a reader who asked for communities should see
+    # communities, not a column of statistical codes that makes it look as
+    # though the question was answered at the wrong level.
+    _show = df.drop(columns=["lsoa_codes"]) if "lsoa_codes" in df.columns else df
+    st.dataframe(_show, use_container_width=True, hide_index=True)
+    return True
+
 
 def render_seam_context(cfg: Dict[str, str]) -> None:
     """The cross-hierarchy seam: the bridge diagram, its live counts and
@@ -8172,6 +9402,9 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"phases": subset of ["primary","secondary","special"]\n'
             '"medium": "welsh" | "english"\n'
             '"authority": local authority or town name, e.g. "Cardiff"\n'
+            '"admin_unit_type": "LSOA" | "Ward" | "Community" | "AdminUnit" (infer if not explicit, e.g., "Cathays community" implies "Community")\n'
+            '"spatial_relation": "near" | "intersects" | "within" (interpret "near" broadly for proximity)\n'
+            '"spatial_target": "place name or administrative unit"\n'
             '"transport": "near" | "far"\n'
             '"ranges": [{"field": f, "min": n, "max": n}]\n'
             '"comparisons": [{"field": f, "op": ">=" or "<=", "value": n}]\n'
@@ -8262,6 +9495,65 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             "NOT EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
         )
         out["chips"].append("no transport stop within 800m")
+
+    admin_unit_type = str(data.get("admin_unit_type") or "").lower()
+    spatial_relation = str(data.get("spatial_relation") or "").lower()
+    spatial_target = str(data.get("spatial_target") or "").strip()
+
+    if spatial_target and not admin_unit_type:
+        # Attempt to infer admin_unit_type from spatial_target
+        if "community" in spatial_target.lower():
+            admin_unit_type = "community"
+        elif "ward" in spatial_target.lower():
+            admin_unit_type = "ward"
+        elif "lsoa" in spatial_target.lower():
+            admin_unit_type = "lsoa"
+        else:
+            out["unmatched"].append(
+                f"Could not infer administrative unit type for '{spatial_target}'. "
+                "Please specify LSOA, Ward, Community, or AdminUnit."
+            )
+
+    if admin_unit_type and spatial_relation and spatial_target:
+        cypher_condition = ""
+        target_label = admin_unit_type.capitalize() if admin_unit_type.lower() != "adminunit" else "AdminUnit"
+        
+        if spatial_relation == "near":
+            cypher_condition = (
+                f"EXISTS {{ MATCH (target_au:{target_label}) "
+                f"WHERE toLower(target_au.name) CONTAINS toLower($nl_spatial_target) "
+                f"MATCH (s)-[:LOCATED_IN]->(s_lsoa:LSOA) "
+                f"WHERE (s_lsoa)-[:DISTANCE_NEAR]->(target_au) OR (s_lsoa)-[:LOCATED_IN]->(target_au) }}"
+            )
+        elif spatial_relation == "intersects":
+            cypher_condition = (
+                f"EXISTS {{ MATCH (target_au:{target_label}) "
+                f"WHERE toLower(target_au.name) CONTAINS toLower($nl_spatial_target) "
+                f"MATCH (s)-[:LOCATED_IN]->(s_lsoa:LSOA) "
+                f"WHERE (s_lsoa)-[:INTERSECTS]->(target_au) OR (s_lsoa)-[:LOCATED_IN]->(target_au) }}"
+            )
+        elif spatial_relation == "within":
+            cypher_condition = (
+                f"EXISTS {{ MATCH (target_au:{target_label}) "
+                f"WHERE toLower(target_au.name) CONTAINS toLower($nl_spatial_target) "
+                f"MATCH (s)-[:LOCATED_IN]->(s_lsoa:LSOA) "
+                f"WHERE (s_lsoa)-[:WITHIN]->(target_au) OR (s_lsoa)-[:LOCATED_IN]->(target_au) }}"
+            )
+        else:
+            out["unmatched"].append(
+                f"Unsupported spatial relation \'{spatial_relation}\'. "
+                "Please use 'near', 'intersects', or 'within'."
+            )
+
+        if cypher_condition:
+            out["conditions"].append(cypher_condition)
+            out["params"]["nl_spatial_target"] = spatial_target
+            out["chips"].append(f"{spatial_relation} {spatial_target} ({admin_unit_type})")
+    elif spatial_target and not admin_unit_type:
+        out["unmatched"].append(
+            f"Spatial target \'{spatial_target}\' provided without an administrative unit type. "
+            "Please specify LSOA, Ward, Community, or AdminUnit."
+        )
 
     used_names = 0
     for item in (data.get("ranges") or []):
