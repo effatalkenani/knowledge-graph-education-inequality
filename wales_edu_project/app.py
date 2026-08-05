@@ -8286,14 +8286,65 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         _missing = "an LSOA"
     elif "$admin" in cypher and "admin" not in params:
         _missing = "an administrative unit"
+    # "Needs an LSOA" was only ever true of the eight forms, not of the
+    # graph: TOUCHES and WITHIN between administrative units are stored and
+    # audited, and the lens answers near and touches over them. Before
+    # refusing, try to resolve the place as an administrative unit. Welsh
+    # units are stored bilingually -- Cardiff is "Caerdydd - Cardiff" -- so
+    # a plain name misses by a prefix, not by a spelling error.
+    if _missing == "an LSOA" and not admin:
+        _w = [
+            w.strip(",.?!'\"").lower()
+            for w in str(intent.get("text") or "").split()
+            if len(w.strip(",.?!'\"")) >= 4
+        ][:8]
+        _cand = None
+        if _w:
+            try:
+                _cand = run_cypher(cfg, """
+UNWIND $words AS w
+MATCH (a:AdminUnit)
+WHERE a.name IS NOT NULL
+  AND a.type IN ['Ward','Community','UnitaryAuthority']
+  AND toLower(a.name) CONTAINS w
+RETURN DISTINCT a.uri AS uri, a.name AS name, a.type AS type
+LIMIT 6
+""", {"words": _w})
+            except Exception:
+                _cand = None
+        if _cand is not None and len(_cand) == 1:
+            admin = _cand.iloc[0]["uri"]
+            params["admin"] = admin
+            _low = str(intent.get("text") or "").lower()
+            _m = "touches"
+            for _name, _ph in _LENS_MODE_PHRASES:
+                if any(p in _low for p in _ph):
+                    _m = _name
+                    break
+            _units = not any(w in _low for w in _SCHOOL_WORDS)
+            cypher = (
+                LENS_UNIT_CYPHER.get(_m) if _units else None
+            ) or LENS_CYPHER.get(_m) or LENS_CYPHER["touches"]
+            params["nbr_type"] = None
+            chain = LENS_MODES.get(_m, ("", "", ""))
+            _missing = None
+            st.caption(
+                f"No LSOA was named, but \"{_cand.iloc[0]['name']}\" is an "
+                f"administrative unit in the graph, and TOUCHES and WITHIN "
+                f"between units are stored. The question was answered over "
+                f"the administrative graph instead of the statistical one."
+            )
+
     if _missing:
         # Silence here was the worst behaviour of all: the reader saw a form
         # chosen, a banner claiming the controls were set, and no answer and
         # no reason. Naming the missing piece is the minimum owed.
         st.warning(
-            f"The form matched by your question needs {_missing}, and no "
-            f"{_missing} in the sentence could be matched to a name in the "
-            "graph."
+            f"The eight spatial forms are anchored on {_missing}, and no "
+            f"{_missing} in your sentence could be matched to a name in the "
+            "graph. This is a limit of the form, not of the graph: TOUCHES "
+            "and WITHIN between administrative units are stored, and the "
+            "Education lens answers over them."
         )
         # Telling a reader their name was not found, without showing what the
         # graph does call it, leaves them guessing. Welsh units are stored
