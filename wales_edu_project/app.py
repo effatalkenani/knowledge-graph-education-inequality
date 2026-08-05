@@ -2440,6 +2440,7 @@ def render_nl_search(
         "value": parse_threshold_value(parsed.get("text", "")),
         "phase": parse_school_phase(parsed.get("text", "")),
         "text": parsed.get("text", ""),
+        "admin_label": (parsed["admin"][1] if parsed.get("admin") else None),
     }
     if _lens:
         _lens["filter"] = edu or "None"
@@ -2764,6 +2765,12 @@ def types_with_intersects(cfg):
 def nl_admin_options(cfg):
     """Every named administrative unit the question box should recognise.
 
+    Scoped to units that intersect an LSOA. Every LSOA in this graph is
+    Welsh, so this is the Welsh administrative geography and nothing else.
+    Without the scope the list carried the whole of Great Britain, and a
+    question about Cathays resolved to a ward in Devon because a naive
+    substring match had 19,000 more chances to be wrong.
+
     The box previously resolved names against `admin_options(cfg,
     "admin_parent")`, which returns only units that HAVE a child. A Community
     such as Cathays has none, so it was never recognised, `admin` came back
@@ -2775,6 +2782,7 @@ def nl_admin_options(cfg):
     MATCH (a:AdminUnit)
     WHERE a.type IN ['Ward', 'Community', 'UnitaryAuthority']
       AND a.uri IS NOT NULL
+      AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
     RETURN DISTINCT
         a.uri AS value,
         coalesce(a.name, a.uri) + ' | ' + a.type AS label
@@ -6889,8 +6897,14 @@ def page_scq_demonstrator(
         nl_admin = nl_admin_options(cfg)
     except Exception:
         nl_admin = []
-    render_nl_search(nl_lsoas, nl_admin)
-    render_nl_understanding()
+    # The deterministic panel is the instrument: every figure reported in
+    # the dissertation was produced by it. The sentence box is a
+    # demonstration of query understanding, and it misroutes often enough
+    # that it should not be the first thing a reader meets. So it is folded,
+    # and the eight forms are open.
+    with st.expander("Ask a question in your own words", expanded=False):
+        render_nl_search(nl_lsoas, nl_admin)
+        render_nl_understanding()
 
     # The panel is the other route, so the sentence's answer is dropped
     # BEFORE it is drawn, not after. Clearing it afterwards left the old
@@ -6943,7 +6957,7 @@ def page_scq_demonstrator(
 
     _open = st.checkbox(
         "Choose the question yourself",
-        value=False,
+        value=True,
         key="scq_manual_open",
         help=(
             "Open this to pick one of the eight spatial forms, or either "
@@ -6954,7 +6968,7 @@ def page_scq_demonstrator(
     if not _open:
         st.caption(
             "The eight spatial forms and the two lenses are folded away. "
-            "Ask a question above, or open the panel to choose one yourself."
+            "Tick the box to choose one, or open the sentence box above."
         )
         return
 
@@ -8377,6 +8391,7 @@ UNWIND $words AS w
 MATCH (a:AdminUnit)
 WHERE a.name IS NOT NULL
   AND a.type IN ['Ward','Community','UnitaryAuthority']
+  AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
   AND toLower(a.name) CONTAINS w
 RETURN DISTINCT a.uri AS uri, a.name AS name, a.type AS type
 LIMIT 6
@@ -8430,7 +8445,9 @@ LIMIT 6
                 _near = run_cypher(cfg, """
 UNWIND $words AS w
 MATCH (a:AdminUnit)
-WHERE a.name IS NOT NULL AND toLower(a.name) CONTAINS toLower(w)
+WHERE a.name IS NOT NULL
+  AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+  AND toLower(a.name) CONTAINS toLower(w)
 RETURN DISTINCT a.name AS name, a.type AS type
 ORDER BY name
 LIMIT 12
@@ -8464,6 +8481,16 @@ LIMIT 12
     params["phase"] = intent.get("phase")
 
     st.markdown("### Answer to your question")
+    # The resolved unit is printed before the answer, not buried in the
+    # parse trace. A name matched to the wrong unit produces figures that
+    # are entirely correct for a place the reader never asked about, and
+    # that is the one failure mode a reader cannot detect from the result.
+    if intent.get("admin_label"):
+        st.markdown(
+            f"**Answered for: {intent['admin_label']}** \u2014 if that is not "
+            "the place you meant, the name in your sentence matched a "
+            "different unit. Open the panel below and choose the right one."
+        )
     if edu and _val is None:
         st.caption(
             f"No number was found in the sentence, so the project default "
@@ -8481,6 +8508,35 @@ LIMIT 12
             "no row in the graph satisfies it for the place and filter you "
             "named. An empty answer is a result, not a fault."
         )
+        # An empty containment answer usually means the unit sits at the
+        # bottom of the hierarchy, not that the question was wrong. Saying
+        # which is which turns a blank into a finding.
+        if admin:
+            try:
+                _d = run_cypher(cfg, """
+MATCH (a:AdminUnit {uri:$admin})
+OPTIONAL MATCH (c:AdminUnit)-[:WITHIN]->(a)
+OPTIONAL MATCH (a)-[:WITHIN]->(p:AdminUnit)
+OPTIONAL MATCH (a)-[:TOUCHES]-(n:AdminUnit)
+RETURN coalesce(a.name, a.uri) AS name, a.type AS type,
+       count(DISTINCT c) AS children,
+       count(DISTINCT p) AS parents,
+       count(DISTINCT n) AS neighbours
+""", {"admin": admin})
+            except Exception:
+                _d = None
+            if _d is not None and not _d.empty:
+                r = _d.iloc[0]
+                st.info(
+                    f"{r['name']} is a {r['type']}. In this graph it has "
+                    f"{int(r['children'])} unit(s) inside it, "
+                    f"{int(r['parents'])} unit(s) containing it, and "
+                    f"{int(r['neighbours'])} touching it. A Community rarely "
+                    "contains anything: the Welsh audit records only 8 "
+                    "community-to-ward containments in total. Ask what "
+                    "CONTAINS it, what TOUCHES it, or what schools fall "
+                    "inside it instead."
+                )
         return True
 
     st.caption(
@@ -8509,6 +8565,14 @@ LIMIT 12
             )
         except Exception as exc:
             st.caption(f"The map could not be drawn for this answer: {exc}")
+        if edu or intent.get("phase"):
+            st.caption(
+                "The figures in the hover card are for EVERY school in that "
+                "LSOA, because the card is computed from the graph rather "
+                "than from this answer. The table below is the filtered "
+                "answer. Where the two differ, the table is the answer to "
+                "your question and the card is the context around it."
+            )
     elif admin:
         # An administrative answer carries no LSOA code, so the eight forms
         # cannot be mapped on their own. Rather than alter those queries --
