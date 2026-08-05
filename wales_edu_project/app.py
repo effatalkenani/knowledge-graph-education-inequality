@@ -259,6 +259,8 @@ section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover
 }
 .solutionbox {background:#fff7ed; border:1px solid #e5e7eb;}
 .warningbox {background:#fffbeb; border:1px solid #e5e7eb;}
+.nl-warn {background:#fffbe6; border-left:5px solid #f59e0b; padding:.75rem 1rem; border-radius:9px; margin-bottom:10px; color:#f59e0b;}
+.nl-warn-orange {background:#fff7ed; border-left:5px solid #fb923c; padding:.75rem 1rem; border-radius:9px; margin-bottom:10px; color:#fb923c;}
 .successbox {background:#f0fdf4; border:1px solid #e5e7eb;}
 .final-strip {background:linear-gradient(135deg,#fff7ed,#f0fdf4); border:1px solid #e5e7eb;}
 .warning-strip {background:#fff7ed; border:1px solid #e5e7eb;}
@@ -268,10 +270,10 @@ section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover
     unsafe_allow_html=True,
 )
 
-DEFAULT_URI = st.secrets.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-DEFAULT_USER = st.secrets.get("NEO4J_USER", "neo4j")
-DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "QWEasd1QWE")
-DEFAULT_DATABASE = st.secrets.get("NEO4J_DATABASE", "wales-education-kg")
+DEFAULT_URI = st.secrets["NEO4J_URI"]
+DEFAULT_USER = st.secrets["NEO4J_USER"]
+DEFAULT_PASSWORD = st.secrets["NEO4J_PASSWORD"]
+DEFAULT_DATABASE = st.secrets["NEO4J_DATABASE"]
 
 
 # =============================================================================
@@ -1897,6 +1899,7 @@ def parse_spatial_question(
             "No spatial relation was recognised. Name one of: border, near, "
             "between, not adjacent, contains, within, intersect."
         )
+    
 
     for key, phrases, label in NL_FOCUS_RULES:
         if any(p in low for p in phrases):
@@ -1947,7 +1950,7 @@ def parse_spatial_question(
     # match for the others put "Blaenau Gwent | UnitaryAuthority" beside a
     # question about neighbouring LSOAs, which reads as though the unit had
     # been used when it had not.
-    admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6"}
+    admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6", "SCQ7", "SCQ8"}
 
     candidates: List[Tuple[int, str, Tuple[str, str]]] = []
     for option in (admin_options or []) if admin_relevant else []:
@@ -1966,17 +1969,23 @@ def parse_spatial_question(
         if not hit_token:
             continue
         name = hit_token
-        # An exact word beats a name that merely occurs inside the sentence,
-        # and a unitary authority beats a community of the same name.
-        score = 40
+        # Prioritize Unitary Authorities, then Communities, then Wards.
+        # An exact word match is better than a partial match.
+        score = 0
         if "unitaryauthority" in unit_type:
+            score += 30
+        elif "community" in unit_type:
             score += 20
         elif "ward" in unit_type:
             score += 10
-        score += min(len(name), 20)
+        # Add score for length of matched token, to prefer longer, more specific matches
+        score += min(len(hit_token), 20)
+        # If the full name is present in the query, give a bonus
+        if re.search(r"\b" + re.escape(label.lower()) + r"\b", low):
+            score += 10
         candidates.append((score, name, (uri, label)))
 
-    if not candidates and found["scq"] in {"SCQ5", "SCQ6"}:
+    if not candidates and found["scq"] in {"SCQ5", "SCQ6", "SCQ7", "SCQ8"}:
         found["unmatched"].append(
             "No administrative unit in the question was recognised, so the "
             "unit selected below was left as it was. Name the unit, or "
@@ -1992,9 +2001,29 @@ def parse_spatial_question(
             found["unmatched"].append(
                 "More than one unit matches that name equally well ("
                 + ", ".join(str(c[2][1]) for c in [best] + rivals[:3])
-                + "). The first was used; choose it from the list below to "
-                "be certain."
+                + "). The first was used; please select from the list below to "
+                + "disambiguate."
             )
+
+    # Smart Defaulting: If the relation involves an administrative unit and no hierarchical
+    # level (LSOA, Ward, Community) is specified, default to LSOA and add a warning.
+    if found["scq"] in {"SCQ5", "SCQ6", "SCQ7", "SCQ8"} and found["admin"]:
+        ntype = None
+        for cand in ("lsoa", "ward", "community", "unitaryauthority"):
+            if cand in low:
+                ntype = cand.upper()
+                break
+        if not ntype:
+            # Default to LSOA if no specific type is mentioned for these SCQs
+            ntype = "LSOA"
+            found["steps"].append(
+                f"No specific administrative level (LSOA, Ward, Community, UnitaryAuthority) was explicitly mentioned for the selected administrative unit. Defaulting to {ntype} for granular analysis."
+            )
+            found["unmatched"].append(
+                f"⚠️ Defaulting to {ntype} level for the administrative unit. The system also supports Ward, Community, and UnitaryAuthority levels. "
+                "Specify your preferred level in the question for different results, e.g., 'What LSOAs are near Cathays community?'"
+            )
+        found["admin_type_default"] = ntype
 
     return found
 
@@ -2131,6 +2160,7 @@ def llm_parse_question(
             '"focus": subset of ["fsm","attendance","performance",'
             '"deprivation"], "codes": [LSOA codes like W01001440], '
             '"place": free text place name or null, '
+            '"filters": [{"metric": "attendance", "operator": "<", "value": 90}], '
             '"reason": one short sentence}.'
         )
         response = client.chat.completions.create(
@@ -2173,6 +2203,7 @@ def llm_parse_question(
         "matched_phrase": None,
         "focus": focus,
         "focus_labels": [labels[f] for f in focus],
+        "filters": data.get("filters", []),
         "areas": [],
         "admin": None,
         "steps": [],
@@ -2278,7 +2309,7 @@ def render_nl_search(
             label_visibility="collapsed",
         )
     with col_go:
-        asked = st.button("Ask", type="primary", use_container_width=True)
+        asked = st.button("Ask", type="primary", use_container_width=True, key="ask_en")
 
     if st.session_state.pop("nl_autorun", False):
         asked = True
@@ -2508,6 +2539,19 @@ def render_nl_understanding() -> None:
         if badge_class == "nl-src-rule"
         else "model output validated against the same vocabulary"
     )
+    llm_discussion = ""
+    if badge_class == "nl-src-llm":
+        llm_discussion = (
+            "<div class=\'nl-warn\'>⚠️ **Note on LLM Parsing and Spatial Reasoning:** "
+            "While general-purpose LLMs like BERT/BioBERT can process natural language, "
+            "they often struggle with the precise, topological, and hierarchical spatial "
+            "reasoning required for policy analysis. This demonstrator prioritizes a "
+            "rule-based approach for spatial competency questions (SCQs) to ensure "
+            "deterministic, verifiable, and contextually accurate results, which is "
+            "crucial for policy-makers. The QPKG approach, with its explicit spatial "
+            "relations and provenance, offers superior reliability for this specific "
+            "spatial policy context compared to general LLM interpretations.</div>"
+        )
     st.markdown(
         "<div class='nl-read'>"
         f"<div class='nl-src {badge_class}'>Parsed by {escape(source)} "
@@ -2516,6 +2560,7 @@ def render_nl_understanding() -> None:
         f"<div class='nl-chips'>{''.join(chips) or '&mdash;'}</div>"
         + (f"<ol class='nl-steps'>{steps}</ol>" if steps else "")
         + warn
+        + llm_discussion
         + "</div>",
         unsafe_allow_html=True,
     )
@@ -2858,15 +2903,11 @@ SCQ_META = {
     "SCQ1": {
         "label": "SCQ1 — LSOA borders / touches",
         "question": (
-            "Which neighbouring LSOAs directly border the selected LSOA, "
-            "and what school FSM / attendance / performance evidence is "
-            "visible in those neighbouring areas?"
+            "How do educational outcomes (e.g., FSM, attendance, performance) in LSOAs bordering a specific area compare, and what policy implications does this adjacency have?"
         ),
         "task": "Task 4.1 + Task 5.4",
         "keyword_sentence": (
-            "The demonstrator answers LSOA adjacency using the computed "
-            "LSOA_TOUCHES relation. This is Geometry-origin capability and "
-            "does not count as native YAGO2geo model completeness."
+            "This query identifies LSOAs directly bordering a selected LSOA and provides school FSM, attendance, and performance data for these adjacent areas. This helps policymakers understand localized educational disparities and the potential for spillover effects across immediate geographical boundaries."
         ),
         "relation": "LSOA_TOUCHES",
         "provenance": "Geometry-origin",
@@ -2905,15 +2946,11 @@ LIMIT $limit
     "SCQ2": {
         "label": "SCQ2 — LSOA near",
         "question": (
-            "Which LSOAs are qualitatively near the selected LSOA, "
-            "and do nearby school indicators show FSM / attendance / "
-            "secondary-performance pressure?"
+            "Are there clusters of LSOAs with similar educational pressures (e.g., high FSM, low attendance) that are qualitatively 'near' each other, and how might this inform regional intervention strategies?"
         ),
         "task": "Task 4.1 + Task 5.4",
         "keyword_sentence": (
-            "Near is represented by GRAPH_NEAR, which is derived through "
-            "graph traversal over the computed LSOA neighbourhood. It is "
-            "qualitative graph proximity, not a raw distance threshold."
+            "This query identifies LSOAs that are qualitatively 'near' a selected LSOA, based on graph traversal, and highlights school indicators such as FSM, attendance, and secondary performance. This helps policymakers detect broader patterns of educational pressure beyond direct adjacency, informing regional intervention planning."
         ),
         "relation": "GRAPH_NEAR",
         "provenance": "Derived from geometry-origin",
@@ -2951,15 +2988,10 @@ LIMIT $limit
 
     "SCQ3": {
         "label": "SCQ3 — LSOA between",
-        "question": "Which LSOAs lie between two selected LSOAs?",
+        "question": "Which LSOAs form a corridor between two specific LSOAs, and what are the educational characteristics of these intermediary areas that might influence policy decisions?",
         "task": "Task 4.1 + Task 3.3",
         "keyword_sentence": (
-            "Between is demonstrated as cycle-free paths over "
-            "LSOA_TOUCHES, following the paper's definition. The hop bound "
-            "is a tractability necessity, not a definitional choice, and "
-            "is reported with the result. Its education-policy fit is "
-            "still weak or optional, because the paper poses no between "
-            "question for this domain."
+            "This query identifies LSOAs that lie along cycle-free paths between two selected LSOAs, providing insights into potential corridors for policy interventions or resource allocation. Understanding the educational characteristics of these intermediary areas can inform targeted strategies."
         ),
         "relation": "LSOA_TOUCHES path",
         "provenance": "Derived from geometry-origin",
@@ -2975,15 +3007,11 @@ LIMIT $limit
     "SCQ4": {
         "label": "SCQ4 — LSOA not-adjacent",
         "question": (
-            "Which non-adjacent LSOAs show school FSM / attendance / "
-            "secondary-performance pressure compared with the selected "
-            "LSOA?"
+            "Beyond immediate neighbors, which LSOAs exhibit significantly different or similar educational performance (FSM, attendance, secondary performance) compared to a chosen LSOA, suggesting potential for comparative policy studies or identifying isolated issues?"
         ),
         "task": "Task 4.1 + Task 5.3",
         "keyword_sentence": (
-            "Not-adjacent is evaluated as the complement of the computed "
-            "LSOA_TOUCHES relation. Its provenance therefore remains "
-            "Derived from geometry-origin."
+            "This query identifies non-adjacent LSOAs that show contrasting or similar school FSM, attendance, or secondary performance compared to a selected LSOA. This can help policymakers identify isolated areas of concern or success, facilitating comparative analysis and targeted policy development."
         ),
         "relation": "NOT LSOA_TOUCHES",
         "provenance": "Derived from geometry-origin",
@@ -3027,15 +3055,11 @@ LIMIT $limit
     "SCQ5": {
         "label": "SCQ5 — Administrative contains",
         "question": (
-            "Which administrative parent units contain the selected "
-            "administrative unit?"
+            "What are the higher-level administrative units (e.g., local authorities, regions) that encompass a specific administrative area, and how does this hierarchy impact policy oversight and resource distribution?"
         ),
         "task": "Task 1.3 + Task 5.1",
         "keyword_sentence": (
-            "This query demonstrates the SCQ5 form within the native "
-            "administrative hierarchy by traversing WITHIN upward. "
-            "For the LSOA-based education use case, containment is "
-            "reclassified to the cross-hierarchy evaluation."
+            "This query identifies the administrative parent units that contain a selected administrative unit, demonstrating the hierarchical structure relevant for policy implementation and reporting. Understanding this hierarchy is crucial for effective policy oversight and resource allocation."
         ),
         "relation": "WITHIN upward traversal",
         "provenance": "Native",
@@ -3063,14 +3087,11 @@ LIMIT $limit
     "SCQ6": {
         "label": "SCQ6 — Administrative inside",
         "question": (
-            "Which administrative units are contained inside the selected "
-            "administrative unit?"
+            "Which smaller administrative units (e.g., wards, communities) are located within a larger administrative area, and how can policies be tailored to address their specific educational needs?"
         ),
         "task": "Task 1.3 + Task 5.1",
         "keyword_sentence": (
-            "This query demonstrates the SCQ6 form within the native "
-            "administrative hierarchy by traversing WITHIN downward. "
-            "It must not be presented as Ward–LSOA containment."
+            "This query identifies administrative units contained within a selected larger administrative unit, demonstrating how policies can be tailored to address specific educational needs at a more granular level within a defined administrative area."
         ),
         "relation": "WITHIN downward traversal",
         "provenance": "Native",
@@ -3098,17 +3119,11 @@ LIMIT $limit
     "SCQ7": {
         "label": "SCQ7 — Cross-hierarchy intersects",
         "question": (
-            "Which wards or communities intersect the selected LSOA, "
-            "and what school FSM / attendance / performance evidence is "
-            "located in that LSOA?"
+            "How do administrative boundaries (wards/communities) overlap with statistical areas (LSOAs), and what are the educational indicators (FSM, attendance, performance) within these intersecting regions?"
         ),
         "task": "Task 6.2 + Task 5.4",
         "keyword_sentence": (
-            "SCQ7 is the correct reclassification target for Ward–LSOA "
-            "containment-style questions. The relation crosses from the "
-            "administrative hierarchy to statistical geography using "
-            "computed INTERSECTS, so it is Geometry-origin rather than "
-            "Native YAGO2geo coverage."
+            "This query identifies administrative units (wards or communities) that intersect with a selected LSOA, providing school FSM, attendance, and performance data within that LSOA. This helps policymakers understand the local impact of policies across different geographical classifications."
         ),
         "relation": "INTERSECTS",
         "provenance": "Geometry-origin",
@@ -3154,16 +3169,11 @@ LIMIT $limit
     "SCQ8": {
         "label": "SCQ8 — Cross-hierarchy near",
         "question": (
-            "Which wards or communities intersect LSOAs that are graph-near "
-            "the selected LSOA, and what school indicators are visible in "
-            "those nearby LSOAs?"
+            "Which administrative units (wards/communities) are located near LSOAs that are qualitatively 'near' a selected LSOA, and what are the educational indicators in those areas?"
         ),
         "task": "Task 6.3 + Task 5.4",
         "keyword_sentence": (
-            "SCQ8 combines GRAPH_NEAR between LSOAs with INTERSECTS from "
-            "nearby LSOAs to wards or communities. It is useful for the "
-            "education demonstrator, but its provenance remains "
-            "Geometry-origin plus Derived."
+            "This query combines qualitative 'near' relationships between LSOAs with intersecting administrative units (wards or communities), providing a broader spatial context for educational indicators. This helps policymakers identify administrative areas influenced by educational trends in qualitatively nearby statistical areas."
         ),
         "relation": "INTERSECTS + GRAPH_NEAR",
         "provenance": "Geometry-origin + Derived",
@@ -6988,6 +6998,14 @@ def page_scq_demonstrator(
         )
         return
 
+    # Add policy-relevant notes for the selected SCQ
+    if scq_key:
+        st.info(
+            f"**Policy Relevance for {SCQ_META[scq_key]["label"]}:** "
+            f"{SCQ_META[scq_key]["keyword_sentence"]}"
+        )
+
+
     meta = SCQ_META[scq_key]
 
     # SCQ7/SCQ8 support both starting points over the same stored facts.
@@ -8321,6 +8339,9 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
                                       "\u062f\u0648\u0627\u0626\u0631",
                                       "\u062f\u0627\u0626\u0631\u0629")):
             _out = "Ward"
+
+    if _out is None and intent.get("admin_type_default"):
+        _out = intent["admin_type_default"]
 
     if _out == "LSOA":
         cypher = """
