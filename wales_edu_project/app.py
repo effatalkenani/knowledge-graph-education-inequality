@@ -1704,7 +1704,7 @@ _NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
 # and then routed to a form that cannot hold it is worse than one refused.
 _EDU_FILTER_RULES = [
     ("Low attendance", (
-        r"attendance\s*(?:is\s*)?(?:below|under|less than|<=?)\s*\d+",
+        r"attendance\s*(?:is\s*)?(?:be?llow|below|under|less than|<=?)\s*\d+",
         r"low attendance", r"poor attendance", r"persistent absence",
         r"حضور[\u0600-\u06ff\s]*(?:اقل|أقل|تحت|دون)[^0-9]{0,10}\d+",
         r"(?:ضعف|انخفاض)\s*(?:ال)?حضور",
@@ -2373,11 +2373,17 @@ def render_nl_search(
         st.session_state[f"scq_ran_{scq}"] = True
 
     st.session_state["nl_controls_set"] = changed
-    if changed:
-        # The sentence set something, so the panel must be visible to show
-        # what it set; leaving it closed would hide the provenance of the
-        # answer from the reader who asked for it.
+    _resolved = bool(parsed.get("areas")) or bool(parsed.get("admin"))
+    if changed and _resolved:
+        # The sentence set something real, so the panel must be visible to
+        # show what it set; leaving it closed would hide the provenance of
+        # the answer from the reader who asked for it.
         st.session_state["scq_manual_open"] = True
+    elif changed:
+        # A form was matched but no place in the sentence could be resolved.
+        # Opening the panel here would demand a value the reader never gave
+        # and make a naming problem look like a broken question.
+        st.session_state["nl_unresolved"] = True
     if changed:
         st.rerun()
 
@@ -2671,6 +2677,28 @@ def types_with_intersects(cfg):
         RETURN DISTINCT a.type AS value, a.type AS label
         """)
     }
+
+
+def nl_admin_options(cfg):
+    """Every named administrative unit the question box should recognise.
+
+    The box previously resolved names against `admin_options(cfg,
+    "admin_parent")`, which returns only units that HAVE a child. A Community
+    such as Cathays has none, so it was never recognised, `admin` came back
+    empty, and every school question fell through to an LSOA-anchored form
+    that then asked for an LSOA the sentence never named. This list is the
+    three types that can anchor a question, whether or not they are parents.
+    """
+    return safe_options(cfg, """
+    MATCH (a:AdminUnit)
+    WHERE a.type IN ['Ward', 'Community', 'UnitaryAuthority']
+      AND a.uri IS NOT NULL
+    RETURN DISTINCT
+        a.uri AS value,
+        coalesce(a.name, a.uri) + ' | ' + a.type AS label
+    ORDER BY label
+    LIMIT 25000
+    """)
 
 
 def lens_anchor_options(cfg, unit_type):
@@ -6776,7 +6804,7 @@ def page_scq_demonstrator(
     except Exception:
         nl_lsoas = []
     try:
-        nl_admin = admin_options(cfg, "admin_parent")
+        nl_admin = nl_admin_options(cfg)
     except Exception:
         nl_admin = []
     render_nl_search(nl_lsoas, nl_admin)
