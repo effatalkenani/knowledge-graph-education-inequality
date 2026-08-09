@@ -8147,6 +8147,11 @@ native YAGO2geo coverage.
         unsafe_allow_html=True,
     )
 
+
+    with st.expander(
+        "Independent completeness audit of YAGO2geo — summary and full report",
+        expanded=False,
+    ):
         st.markdown(
             "This audit is run **outside** the demonstrator by a separate "
             "read-only script. It does not ask whether a question can be "
