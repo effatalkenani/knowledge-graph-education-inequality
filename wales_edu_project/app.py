@@ -7991,18 +7991,157 @@ def page_evaluation() -> None:
         (
             "<div class='solutionbox'>"
             "<b>Implemented answer:</b> The education-use-case scorecard "
-            "is separated from the native administrative comparison. "
-            "For the LSOA-based education questions, YAGO2geo has no "
-            "native LSOA↔LSOA or AdminUnit↔LSOA coverage; SCQ5 and SCQ6 "
-            "are reclassified / n/a for the education use case, but they "
-            "are kept in the denominator: dropping a question would "
-            "flatter the score. One scorecard, one definition, all eight "
-            "SCQs. The demonstrator still runs the implemented forms "
-            "using geometry-origin and derived relations, while "
-            "<b>SpCom = 0/8 = 0.00</b> records the native education "
-            "baseline and <b>SpCom = 6/8 = 0.75</b> records the same "
-            "forms over the native administrative hierarchy. That "
-            "contrast is the finding."
+            "is separated from the administrative-hierarchy comparison. "
+            "For the LSOA-based education questions, YAGO2geo provides no "
+            "native LSOA↔LSOA or AdminUnit↔LSOA relations. SCQ5 and SCQ6 "
+            "are not applicable to the education use case, but they remain "
+            "in the fixed eight-question benchmark to maintain a consistent "
+            "denominator. Native education <b>CQCov = 0/8 = 0.00</b>. "
+            "After geometry-origin and graph-derived augmentation, the "
+            "demonstrator answers six of the eight questions, giving an "
+            "augmented education <b>CQCov = 6/8 = 0.75</b>. The native or "
+            "derivable administrative hierarchy also covers six of the "
+            "eight questions, giving an administrative "
+            "<b>CQCov = 6/8 = 0.75</b>. The difference between native "
+            "education coverage and augmented demonstrator coverage "
+            "identifies the cross-hierarchy limitation and the contribution "
+            "of geometric augmentation."
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+    # Four coverage cards
+    st.markdown(
+        """
+<style>
+.eval-cov-grid {
+display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+gap:.7rem; margin:.4rem 0 .2rem 0;
+}
+@media (max-width:1150px){
+.eval-cov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+@media (max-width:640px){
+.eval-cov-grid{grid-template-columns:1fr;}
+}
+.eval-cov-card {
+position:relative; background:#ffffff; border:1px solid #e5e7eb;
+border-radius:12px; padding:1rem .9rem .85rem .9rem; overflow:hidden;
+box-shadow:0 3px 10px rgba(15,23,42,.035);
+}
+.eval-cov-card::before {
+content:""; position:absolute; top:0; left:0; right:0; height:4px;
+background:linear-gradient(90deg,#9e1b32,#b8283f);
+}
+.eval-cov-label {
+font-size:.78rem; line-height:1.32; font-weight:700; color:#475569;
+margin:.15rem 0 .5rem 0; min-height:3.1em;
+}
+.eval-cov-value {
+font-size:1.65rem; font-weight:800; color:#9e1b32; line-height:1.05;
+letter-spacing:-.01em;
+}
+.eval-cov-note {
+font-size:.86rem; line-height:1.55; color:#3f4a5a;
+background:#fdf2f4; border:1px solid #f3d3da;
+border-left:4px solid #9e1b32; border-radius:10px;
+padding:.7rem .85rem; margin:.6rem 0 .2rem 0;
+}
+@media (prefers-color-scheme: dark) {
+.eval-cov-card {
+background:#181b21; border-color:#2f3540; box-shadow:none;
+}
+.eval-cov-label {color:#b3bdca;}
+.eval-cov-value {color:#f2879c;}
+.eval-cov-note {
+color:#d3dae4; background:#241a1e; border-color:#4a2b33;
+border-left-color:#f2879c;
+}
+}
+</style>
+
+<div class="eval-cov-grid">
+
+<div class="eval-cov-card"
+title="All eight SCQs remain in the fixed benchmark. No education question is answered using native YAGO2geo relations.">
+<div class="eval-cov-label">
+Education — native question coverage (CQCov)
+</div>
+<div class="eval-cov-value">0 / 8</div>
+</div>
+
+<div class="eval-cov-card">
+<div class="eval-cov-label">
+Education — augmented question coverage (CQCov)
+</div>
+<div class="eval-cov-value">6 / 8</div>
+</div>
+
+<div class="eval-cov-card"
+title="Six of the eight SCQs are covered by native or derivable relations in the administrative hierarchy.">
+<div class="eval-cov-label">
+Administrative — native or derivable question coverage (CQCov)
+</div>
+<div class="eval-cov-value">6 / 8</div>
+</div>
+
+<div class="eval-cov-card">
+<div class="eval-cov-label">Native LSOA answers</div>
+<div class="eval-cov-value">0</div>
+</div>
+
+</div>
+
+<div class="eval-cov-note">
+The demonstrator answers six of the eight questions for the education use
+case using geometry-origin and graph-derived relations. SCQ5 and SCQ6 are
+not applicable to this use case but remain in the fixed eight-question
+benchmark. Augmented demonstrator coverage is reported separately from
+native YAGO2geo coverage.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # Competency-question coverage definition
+    st.latex(
+        r"CQCov(O)=\frac{N_{\mathrm{covered\ SCQs}}}"
+        r"{N_{\mathrm{SCQs}}}"
+    )
+
+    education_col, administrative_col = st.columns(2)
+
+    with education_col:
+        st.caption("Education use case")
+
+        st.latex(
+            r"CQCov_{\mathrm{native}}(O)"
+            r"=\frac{N_{\mathrm{covered\ SCQs}}}{N_{\mathrm{SCQs}}}"
+            r"=\frac{0}{8}=0.00"
+        )
+
+        st.latex(
+            r"CQCov_{\mathrm{augmented}}(O)"
+            r"=\frac{N_{\mathrm{covered\ SCQs}}}{N_{\mathrm{SCQs}}}"
+            r"=\frac{6}{8}=0.75"
+        )
+
+    with administrative_col:
+        st.caption("Administrative hierarchy")
+
+        st.latex(
+            r"CQCov_{\mathrm{administrative}}(O)"
+            r"=\frac{N_{\mathrm{covered\ SCQs}}}{N_{\mathrm{SCQs}}}"
+            r"=\frac{6}{8}=0.75"
+        )
+
+    st.markdown(
+        (
+            "<div class='warningbox'>"
+            "<b>Core rule:</b> Geometry-origin relations stored in Neo4j "
+            "improve the demonstrator's question coverage, but they do not "
+            "increase native YAGO2geo coverage."
             "</div>"
         ),
         unsafe_allow_html=True,
