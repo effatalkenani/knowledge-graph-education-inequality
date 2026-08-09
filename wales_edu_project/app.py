@@ -8081,12 +8081,12 @@ border-left-color:#f2879c;}
     with eq1:
         st.caption("Education use case")
         st.latex(
-            r"SpCom(O)=\frac{SR_s}{Size_{R_s}(\Omega)}=\frac{0}{8}=0.00"
+            r"CQCov(O)=\frac{SR_s}{Size_{R_s}(\Omega)}=\frac{0}{8}=0.00"
         )
     with eq2:
         st.caption("Administrative hierarchy")
         st.latex(
-            r"SpCom(O)=\frac{SR_s}{Size_{R_s}(\Omega)}=\frac{6}{8}=0.75"
+            r"CQCov(O)=\frac{SR_s}{Size_{R_s}(\Omega)}=\frac{6}{8}=0.75"
         )
 
     st.markdown(
