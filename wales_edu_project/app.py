@@ -8110,32 +8110,26 @@ native YAGO2geo coverage.
         r"{N_{\mathrm{SCQs}}}"
     )
 
-    education_col, administrative_col = st.columns(2)
+    native_col, augmented_col, administrative_col = st.columns(3)
 
-    with education_col:
-        st.caption("Education use case")
-
-        st.latex(
-            r"CQCov_{\mathrm{native}}(O)"
-            r"=\frac{N_{\mathrm{covered\ SCQs}}}{N_{\mathrm{SCQs}}}"
-            r"=\frac{0}{8}=0.00"
+    with native_col:
+        st.metric(
+            "Native education CQCov",
+            "0 / 8 = 0.00",
         )
 
-        st.latex(
-            r"CQCov_{\mathrm{augmented}}(O)"
-            r"=\frac{N_{\mathrm{covered\ SCQs}}}{N_{\mathrm{SCQs}}}"
-            r"=\frac{6}{8}=0.75"
+    with augmented_col:
+        st.metric(
+            "Augmented education CQCov",
+            "6 / 8 = 0.75",
         )
 
     with administrative_col:
-        st.caption("Administrative hierarchy")
-
-        st.latex(
-            r"CQCov_{\mathrm{administrative}}(O)"
-            r"=\frac{N_{\mathrm{covered\ SCQs}}}{N_{\mathrm{SCQs}}}"
-            r"=\frac{6}{8}=0.75"
+        st.metric(
+            "Administrative CQCov",
+            "6 / 8 = 0.75",
         )
-
+        
     st.markdown(
         (
             "<div class='warningbox'>"
