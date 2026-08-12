@@ -4598,15 +4598,22 @@ def _point_in_ring(longitude: float, latitude: float,
 def _point_in_admin_wkts(longitude: Any, latitude: Any,
                          admin_wkts: List[str]) -> bool:
     """True when a school point is inside at least one target admin unit."""
+    rings = [
+        ring
+        for wkt_text in admin_wkts
+        for ring in _wkt_rings(wkt_text)
+    ]
+    return _point_in_admin_rings(longitude, latitude, rings)
+
+
+def _point_in_admin_rings(longitude: Any, latitude: Any,
+                          admin_rings: List[List[List[float]]]) -> bool:
+    """Containment against administrative rings parsed only once per query."""
     try:
         lon, lat = float(longitude), float(latitude)
     except (TypeError, ValueError):
         return False
-    return any(
-        _point_in_ring(lon, lat, ring)
-        for wkt_text in admin_wkts
-        for ring in _wkt_rings(wkt_text)
-    )
+    return any(_point_in_ring(lon, lat, ring) for ring in admin_rings)
 
 
 @st.cache_data(show_spinner=False, ttl=1800)
@@ -11053,28 +11060,37 @@ ORDER BY cluster_size DESC, cluster_id
             )
         target_wkts = [w for w in target_wkts if w]
         if target_wkts:
-            df = df[
-                df.apply(
-                    lambda row: _point_in_admin_wkts(
-                        row.get("longitude"), row.get("latitude"), target_wkts
+            # Parsing and BNG-to-WGS84 conversion is the expensive part.
+            # Do it once per target scope, never once per school row.
+            target_admin_rings = [
+                ring
+                for target_wkt in target_wkts
+                for ring in _wkt_rings(target_wkt)
+            ]
+            if target_admin_rings:
+                df = df[
+                    df.apply(
+                        lambda row: _point_in_admin_rings(
+                            row.get("longitude"), row.get("latitude"),
+                            target_admin_rings,
+                        ),
+                        axis=1,
+                    )
+                ].copy()
+                summary_df = pd.DataFrame([{
+                    "total_schools": int(len(df)),
+                    "near_transport_schools": int(
+                        df.get("near_transport", pd.Series(dtype=bool))
+                        .fillna(False).astype(bool).sum()
                     ),
-                    axis=1,
-                )
-            ].copy()
-            summary_df = pd.DataFrame([{
-                "total_schools": int(len(df)),
-                "near_transport_schools": int(
-                    df.get("near_transport", pd.Series(dtype=bool))
-                    .fillna(False).astype(bool).sum()
-                ),
-                "avg_fsm_pct": pd.to_numeric(
-                    df.get("fsm_pct", pd.Series(dtype=float)), errors="coerce"
-                ).mean(),
-                "avg_attendance_pct": pd.to_numeric(
-                    df.get("attendance_pct", pd.Series(dtype=float)),
-                    errors="coerce",
-                ).mean(),
-            }])
+                    "avg_fsm_pct": pd.to_numeric(
+                        df.get("fsm_pct", pd.Series(dtype=float)), errors="coerce"
+                    ).mean(),
+                    "avg_attendance_pct": pd.to_numeric(
+                        df.get("attendance_pct", pd.Series(dtype=float)),
+                        errors="coerce",
+                    ).mean(),
+                }])
 
     if admin_scope:
         anchor = admin_scope["anchor"]
@@ -11417,3 +11433,86 @@ ORDER BY cluster_size DESC, cluster_id
                 "instead. The boundary load ran on the other database — run "
                 "the LSOA geometry step of load_to_neo4j.py against this one."
             )
+        else:
+            st.info(
+                f"{wkt_count:,} LSOAs carry boundary geometry, but none of "
+                "the current cluster members returned a polygon. Showing "
+                "school pins instead."
+            )
+    if cluster_only:
+        st.caption(
+            "Cluster regions are shaded by deprivation level. Hover a region "
+            "for its counts and averages, then click it to see the schools "
+            "by name. School pins return in Standard search."
+        )
+    clicked_region = render_school_map(
+        map_df, selected_school, polygon_df, cluster_only, admin_polygon_df
+    )
+    if clicked_region:
+        render_lsoa_school_panel(cfg, clicked_region)
+
+    if search_mode == "Cluster search" and not cluster_df.empty:
+        with st.expander(
+            f"Cluster results — {len(cluster_df):,} clusters, "
+            f"{len(cluster_codes):,} LSOAs",
+            expanded=False,
+        ):
+            st.caption(
+                "An adjacency cluster is a connected group of LSOAs that "
+                "all meet the threshold and are joined by computed "
+                "LSOA_TOUCHES edges. "
+                + (
+                    "Clusters are exact connected components — the whole "
+                    "component is explored, with no depth limit. "
+                    if cluster_exact
+                    else f"APOC was unavailable, so a "
+                    f"{int(cluster_depth)}-step bound was used. "
+                )
+                + "It is not the statistical cluster "
+                "used by Sandu et al., which comes from a Moran's I "
+                "spatial-weights matrix and stays outside the completeness "
+                "scoring."
+            )
+            display_df(
+                cluster_df.assign(
+                    members=cluster_df["members"].apply(
+                        lambda codes: ", ".join(list(codes)[:8])
+                        + (" ..." if len(codes) > 8 else "")
+                    )
+                )
+            )
+            if SHOW_QUERIES:
+                st.code(cluster_cypher, language="cypher")
+                st.json(cluster_params)
+
+    if SHOW_QUERIES:
+        with st.expander("Map Cypher"):
+            st.code(cypher, language="cypher")
+            st.json(params)
+
+
+def main() -> None:
+    cfg = sidebar_config()
+    apply_dashboard_theme(bool(cfg.get("dark_theme")))
+    page = cfg.pop("page")
+    # Each page is drawn inside its own keyed container. Without this the
+    # three pages share element slots, so a widget from the previous page
+    # can survive the switch and paint over the new one -- which is what put
+    # the Evaluation page's SpCom equation underneath the map search box.
+    try:
+        body = st.container(key=f"page_{page.replace(' ', '_').lower()}")
+    except TypeError:
+        # Older Streamlit builds take no key; the container still isolates
+        # the subtree, only without the stable identity.
+        body = st.container()
+    with body:
+        if page == "SCQ Demonstrator":
+            page_scq_demonstrator(cfg)
+        elif page == "Evaluation":
+            page_evaluation()
+        elif page == "Map":
+            page_map(cfg)
+
+
+if __name__ == "__main__":
+    main()
