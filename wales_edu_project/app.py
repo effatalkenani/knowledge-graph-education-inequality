@@ -26,7 +26,6 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from neo4j import GraphDatabase
-from pathlib import Path
 
 # =============================================================================
 # CONFIGURATION
@@ -37,13 +36,11 @@ from pathlib import Path
 # Flip to True during development when the query text is needed on screen.
 SHOW_QUERIES = False
 
-
-APP_DIR = Path(__file__).resolve().parent
-
 st.set_page_config(
-    page_title="Wales Education KG",
-    page_icon=str(APP_DIR / "wales_education_kg.png"),
+    page_title="Wales Education KG — Task-Aligned Demonstrator",
+    page_icon="🏴󠁧󠁢󠁷󠁬󠁳󠁿",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -9526,6 +9523,64 @@ def resolve_map_admin_scope(
     }
     return result, []
 
+
+def resolve_map_admin_scopes(
+    cfg: Dict[str, str], scopes: List[Dict[str, str]], operator: str = "AND"
+) -> Tuple[Dict[str, Any] | None, List[str]]:
+    """Resolve and combine one or more fixed administrative graph scopes."""
+    clean_scopes = [s for s in scopes if isinstance(s, dict)]
+    if not clean_scopes:
+        return None, []
+    resolved_components: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    for scope in clean_scopes:
+        resolved, component_warnings = resolve_map_admin_scope(cfg, scope)
+        warnings.extend(component_warnings)
+        if resolved is None:
+            return None, warnings
+        resolved_components.append(resolved)
+
+    if len(resolved_components) == 1:
+        return resolved_components[0], warnings
+
+    logical_operator = operator if operator in {"AND", "OR"} else "AND"
+    code_sets = [set(c.get("lsoa_codes", [])) for c in resolved_components]
+    combined_codes = (
+        set.intersection(*code_sets)
+        if logical_operator == "AND"
+        else set.union(*code_sets)
+    )
+    unit_frames = [
+        c.get("units") for c in resolved_components
+        if isinstance(c.get("units"), pd.DataFrame)
+    ]
+    return {
+        "compound": True,
+        "components": resolved_components,
+        "operator": logical_operator,
+        "relation": "compound",
+        "lsoa_codes": sorted(combined_codes),
+        "units": (
+            pd.concat(unit_frames, ignore_index=True).drop_duplicates()
+            if unit_frames else pd.DataFrame()
+        ),
+        "disjointness_applied": False,
+    }, warnings
+
+
+def _admin_component_target_wkts(component: Dict[str, Any]) -> List[str]:
+    """Administrative geometries whose school points define one scope."""
+    if component.get("relation") == "direct":
+        value = str(component.get("anchor", {}).get("wkt") or "")
+        return [value] if value else []
+    units = component.get("units", pd.DataFrame())
+    if not isinstance(units, pd.DataFrame) or units.empty:
+        return []
+    return (
+        units.get("unit_wkt", pd.Series(dtype=str))
+        .dropna().astype(str).drop_duplicates().tolist()
+    )
+
 _MAP_RANGE = re.compile(
     r"(fsm|free school meal|attendance|capped\s*9|capped9|performance|"
     r"budget|pupils?)[^0-9]{0,24}(between\s*)?(\d+(?:\.\d+)?)"
@@ -9747,6 +9802,9 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"anchor_type": "Community" | "Ward" | "UnitaryAuthority"\n'
             '"relation": "direct" | "touches" | "graph_near"\n'
             '"target_type": "Community" | "Ward" | "UnitaryAuthority"\n'
+            '"admin_scopes": [{"anchor_name": place, "anchor_type": type, '
+            '"relation": relation, "target_type": type}]\n'
+            '"admin_operator": "AND" | "OR"\n'
             '"transport": "near" | "far"\n'
             '"ranges": [{"field": f, "min": n, "max": n}]\n'
             '"comparisons": [{"field": f, "op": ">=" or "<=", "value": n}]\n'
@@ -9762,7 +9820,12 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             'application always crosses through AdminUnit INTERSECTS LSOA '
             'and School LOCATED_IN LSOA. For explicit administrative wording, '
             'near means graph_near (exactly two TOUCHES steps), while touch '
-            'or touching means touches (one step).'
+            'or touching means touches (one step). For one administrative '
+            'condition, return both the legacy four fields and a one-item '
+            'admin_scopes list. For compound administrative wording, return '
+            'every condition in admin_scopes and preserve the explicit '
+            'logical connector in admin_operator. AND/OR are Boolean '
+            'connectors; INTERSECTS is a graph relation and never a connector.'
         )
         response = client.chat.completions.create(
             model=_nl_llm_model(),
@@ -9793,7 +9856,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         "text": text, "conditions": [], "params": {},
         "chips": [], "unmatched": [],
         "parser": f"LLM ({_nl_llm_model()})",
-        "admin_scope": None,
+        "admin_scope": None, "admin_scopes": [], "admin_operator": "AND",
     }
 
     anchor_type = str(data.get("anchor_type") or "")
@@ -9815,12 +9878,69 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     ):
         relation = "touches"
     target_type = str(data.get("target_type") or anchor_type)
-    if anchor_type in {"Community", "Ward", "UnitaryAuthority"}:
+    valid_admin_types = {"Community", "Ward", "UnitaryAuthority"}
+    valid_relations = {"direct", "touches", "graph_near"}
+    for raw_scope in (data.get("admin_scopes") or []):
+        if not isinstance(raw_scope, dict):
+            continue
+        scope_anchor_type = str(raw_scope.get("anchor_type") or "")
+        scope_relation = str(raw_scope.get("relation") or "direct")
+        scope_target_type = str(
+            raw_scope.get("target_type") or scope_anchor_type
+        )
+        scope_anchor_name = str(raw_scope.get("anchor_name") or "").strip()
+        if (
+            scope_anchor_name
+            and scope_anchor_type in valid_admin_types
+            and scope_relation in valid_relations
+        ):
+            out["admin_scopes"].append({
+                "anchor_name": scope_anchor_name,
+                "anchor_type": scope_anchor_type,
+                "relation": scope_relation,
+                "target_type": (
+                    scope_target_type
+                    if scope_target_type in valid_admin_types
+                    else scope_anchor_type
+                ),
+            })
+
+    if anchor_type in valid_admin_types:
         out["admin_scope"] = {
             "anchor_name": str(data.get("anchor_name") or "").strip(),
             "anchor_type": anchor_type, "relation": relation,
             "target_type": target_type,
         }
+        if not out["admin_scopes"]:
+            out["admin_scopes"] = [dict(out["admin_scope"])]
+        elif len(out["admin_scopes"]) == 1:
+            # The explicit local NEAR/TOUCH correction above is authoritative
+            # for a single scope even if the model mislabeled that list item.
+            out["admin_scopes"][0]["relation"] = relation
+
+    admin_operator = str(data.get("admin_operator") or "").upper()
+    if admin_operator not in {"AND", "OR"}:
+        admin_operator = "OR" if re.search(r"\bor\b", low_text) else "AND"
+    out["admin_operator"] = admin_operator
+
+    # Recover the common same-anchor form even if the model returned only one
+    # relation. This is deterministic and does not invent a place or type.
+    if out["admin_scope"] and len(out["admin_scopes"]) < 2:
+        compound_relations: List[str] = []
+        if re.search(r"\b(?:in|inside|within)\b", low_text):
+            compound_relations.append("direct")
+        if re.search(r"\b(?:touch|touches|touching|adjacent)\b", low_text):
+            compound_relations.append("touches")
+        if re.search(r"\b(?:graph[- ]?near|near)\b", low_text) and not re.search(
+            r"\b(?:near|close to)\s+transport\b", low_text
+        ):
+            compound_relations.append("graph_near")
+        compound_relations = list(dict.fromkeys(compound_relations))
+        if len(compound_relations) > 1:
+            base_scope = out["admin_scope"]
+            out["admin_scopes"] = [
+                {**base_scope, "relation": rel} for rel in compound_relations
+            ]
 
     dep = str(data.get("deprivation") or "").lower()
     if dep in {"high", "medium", "low"}:
@@ -9847,7 +9967,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     # schema did not, so a question naming a place parsed to nothing and the
     # map fell back to all 1,444 schools. Bound as a parameter like the rest.
     authority = str(data.get("authority") or "").strip()
-    if out["admin_scope"]:
+    if out["admin_scopes"]:
         authority = ""
     if authority:
         out["conditions"].append(
@@ -9908,7 +10028,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         out["chips"].append(f"{item.get('field')} {op} {value:g}")
         used_names += 1
 
-    if not out["conditions"] and not out.get("admin_scope"):
+    if not out["conditions"] and not out.get("admin_scopes"):
         out["unmatched"].append(
             "The model returned nothing that maps onto a school property."
         )
@@ -10012,15 +10132,30 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # exact unit and executes one of three fixed parameterised graph paths.
     parsed["resolved_admin_scope"] = None
     parsed["admin_scope_failed"] = False
-    if parsed.get("admin_scope"):
+    requested_scopes = parsed.get("admin_scopes") or (
+        [parsed["admin_scope"]] if parsed.get("admin_scope") else []
+    )
+    if requested_scopes:
         try:
-            resolved, scope_warnings = resolve_map_admin_scope(
-                cfg, parsed.get("admin_scope")
+            resolved, scope_warnings = resolve_map_admin_scopes(
+                cfg,
+                requested_scopes,
+                str(parsed.get("admin_operator") or "AND").upper(),
             )
             parsed["resolved_admin_scope"] = resolved
             parsed["admin_scope_failed"] = resolved is None
             parsed["unmatched"].extend(scope_warnings)
-            if resolved:
+            if resolved and resolved.get("compound"):
+                parsed["chips"].append(
+                    f"administrative operator = {resolved['operator']}"
+                )
+                for component in resolved["components"]:
+                    a = component["anchor"]
+                    parsed["chips"].append(
+                        f"{component['relation']} scope = "
+                        f"{a.get('name')} ({a.get('unit_type')})"
+                    )
+            elif resolved:
                 a = resolved["anchor"]
                 parsed["chips"].extend([
                     f"anchor = {a.get('name')}",
@@ -11066,51 +11201,103 @@ ORDER BY cluster_size DESC, cluster_id
     # This prevents a school in the outside part of a crossing LSOA from being
     # reported as inside the administrative result.
     if admin_scope and not df.empty:
-        if admin_scope["relation"] == "direct":
-            target_wkts = [str(admin_scope["anchor"].get("wkt") or "")]
-        else:
-            scope_units = admin_scope.get("units", pd.DataFrame())
-            target_wkts = (
-                scope_units.get("unit_wkt", pd.Series(dtype=str))
-                .dropna().astype(str).drop_duplicates().tolist()
-                if isinstance(scope_units, pd.DataFrame) and not scope_units.empty
-                else []
-            )
-        target_wkts = [w for w in target_wkts if w]
-        if target_wkts:
-            # Parsing and BNG-to-WGS84 conversion is the expensive part.
-            # Do it once per target scope, never once per school row.
-            target_admin_rings = [
+        components = (
+            admin_scope.get("components", [])
+            if admin_scope.get("compound") else [admin_scope]
+        )
+        component_rings = [
+            [
                 ring
-                for target_wkt in target_wkts
+                for target_wkt in _admin_component_target_wkts(component)
                 for ring in _wkt_rings(target_wkt)
             ]
-            if target_admin_rings:
-                df = df[
-                    df.apply(
-                        lambda row: _point_in_admin_rings(
-                            row.get("longitude"), row.get("latitude"),
-                            target_admin_rings,
-                        ),
-                        axis=1,
-                    )
-                ].copy()
-                summary_df = pd.DataFrame([{
-                    "total_schools": int(len(df)),
-                    "near_transport_schools": int(
-                        df.get("near_transport", pd.Series(dtype=bool))
-                        .fillna(False).astype(bool).sum()
-                    ),
-                    "avg_fsm_pct": pd.to_numeric(
-                        df.get("fsm_pct", pd.Series(dtype=float)), errors="coerce"
-                    ).mean(),
-                    "avg_attendance_pct": pd.to_numeric(
-                        df.get("attendance_pct", pd.Series(dtype=float)),
-                        errors="coerce",
-                    ).mean(),
-                }])
+            for component in components
+        ]
+        if component_rings and all(component_rings):
+            spatial_operator = admin_scope.get("operator", "AND")
 
-    if admin_scope:
+            def row_matches_admin(row: pd.Series) -> bool:
+                matches = [
+                    _point_in_admin_rings(
+                        row.get("longitude"), row.get("latitude"), rings
+                    )
+                    for rings in component_rings
+                ]
+                return any(matches) if spatial_operator == "OR" else all(matches)
+
+            df = df[df.apply(row_matches_admin, axis=1)].copy()
+            summary_df = pd.DataFrame([{
+                "total_schools": int(len(df)),
+                "near_transport_schools": int(
+                    df.get("near_transport", pd.Series(dtype=bool))
+                    .fillna(False).astype(bool).sum()
+                ),
+                "avg_fsm_pct": pd.to_numeric(
+                    df.get("fsm_pct", pd.Series(dtype=float)), errors="coerce"
+                ).mean(),
+                "avg_attendance_pct": pd.to_numeric(
+                    df.get("attendance_pct", pd.Series(dtype=float)),
+                    errors="coerce",
+                ).mean(),
+            }])
+
+    if admin_scope and admin_scope.get("compound"):
+        operator = admin_scope.get("operator", "AND")
+        component_lines: List[str] = []
+        all_target_names: List[str] = []
+        for component in admin_scope.get("components", []):
+            component_anchor = component["anchor"]
+            component_relation = component["relation"]
+            component_target_type = escape(str(component["target_type"]))
+            if component_relation == "direct":
+                route = "→ INTERSECTS → LSOA ← LOCATED_IN ← School"
+            elif component_relation == "touches":
+                route = (
+                    f"→ TOUCHES → neighbouring {component_target_type} "
+                    "→ INTERSECTS → LSOA ← LOCATED_IN ← School"
+                )
+            else:
+                route = (
+                    f"→ TOUCHES → intermediate {component_target_type} "
+                    f"→ TOUCHES → graph-near {component_target_type} "
+                    "→ INTERSECTS → LSOA ← LOCATED_IN ← School"
+                )
+            component_lines.append(
+                f"**{escape(component_relation)}:** "
+                f"{escape(str(component_anchor.get('name')))} "
+                f"({escape(str(component_anchor.get('unit_type')))}) {route} "
+                "→ POINT_WITHIN → target administrative geometry"
+            )
+            component_units = component.get("units", pd.DataFrame())
+            if isinstance(component_units, pd.DataFrame) and not component_units.empty:
+                all_target_names.extend(
+                    component_units.get("unit_name", pd.Series(dtype=str))
+                    .dropna().astype(str).drop_duplicates().tolist()
+                )
+        st.markdown(
+            f"{provenance_badge('Compound query')} "
+            f"{provenance_badge('Geometry-on-demand')} "
+            f"**Administrative scopes combined with {escape(operator)}:**<br>"
+            + f"<br><b>{escape(operator)}</b><br>".join(component_lines),
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"Boolean {operator} combines school membership in the resolved "
+            "administrative scopes. INTERSECTS remains the LSOA bridge in "
+            "each component; it is not the Boolean operator."
+        )
+        st.caption(
+            f"{len(admin_scope.get('components', []))} administrative scopes; "
+            f"{len(admin_scope.get('lsoa_codes', [])):,} candidate LSOAs after "
+            f"the {operator} set operation."
+        )
+        if all_target_names:
+            names = list(dict.fromkeys(all_target_names))
+            st.caption(
+                "Resolved target units: " + ", ".join(names[:10])
+                + (f" … and {len(names) - 10} more" if len(names) > 10 else "")
+            )
+    elif admin_scope:
         anchor = admin_scope["anchor"]
         relation = admin_scope["relation"]
         target_type = escape(str(admin_scope["target_type"]))
@@ -11287,24 +11474,35 @@ ORDER BY cluster_size DESC, cluster_id
     polygon_df = None
     admin_polygon_df = None
     if admin_scope:
-        admin_rows = [{
-            "uri": admin_scope["anchor"].get("uri"),
-            "name": admin_scope["anchor"].get("name"),
-            "unit_type": admin_scope["anchor"].get("unit_type"),
-            "wkt": admin_scope["anchor"].get("wkt"),
-            "role": "anchor",
-        }]
-        units = admin_scope.get("units")
-        if isinstance(units, pd.DataFrame) and not units.empty:
-            for _, unit in units.drop_duplicates(subset=["unit_uri"]).iterrows():
-                if str(unit.get("unit_uri")) == str(admin_scope["anchor"].get("uri")):
-                    continue
-                admin_rows.append({
-                    "uri": unit.get("unit_uri"), "name": unit.get("unit_name"),
-                    "unit_type": unit.get("unit_type"), "wkt": unit.get("unit_wkt"),
-                    "role": "result",
-                })
-        admin_polygon_df = pd.DataFrame(admin_rows)
+        admin_rows: List[Dict[str, Any]] = []
+        map_components = (
+            admin_scope.get("components", [])
+            if admin_scope.get("compound") else [admin_scope]
+        )
+        for component in map_components:
+            component_anchor = component["anchor"]
+            admin_rows.append({
+                "uri": component_anchor.get("uri"),
+                "name": component_anchor.get("name"),
+                "unit_type": component_anchor.get("unit_type"),
+                "wkt": component_anchor.get("wkt"),
+                "role": "anchor",
+            })
+            units = component.get("units")
+            if isinstance(units, pd.DataFrame) and not units.empty:
+                for _, unit in units.drop_duplicates(subset=["unit_uri"]).iterrows():
+                    if str(unit.get("unit_uri")) == str(component_anchor.get("uri")):
+                        continue
+                    admin_rows.append({
+                        "uri": unit.get("unit_uri"),
+                        "name": unit.get("unit_name"),
+                        "unit_type": unit.get("unit_type"),
+                        "wkt": unit.get("unit_wkt"),
+                        "role": "result",
+                    })
+        admin_polygon_df = pd.DataFrame(admin_rows).drop_duplicates(
+            subset=["uri", "role"]
+        )
     if search_mode == "Standard search" and "lsoa_code" in map_df.columns:
         # The pins say where the schools are; the boundaries say what kind of
         # place each sits in. Drawn underneath and left unpickable, so the
