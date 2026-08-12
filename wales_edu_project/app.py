@@ -4576,6 +4576,39 @@ def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
     return rings
 
 
+def _point_in_ring(longitude: float, latitude: float,
+                   ring: List[List[float]]) -> bool:
+    """Ray-casting containment for one WGS84 polygon ring."""
+    inside = False
+    if len(ring) < 3:
+        return False
+    j = len(ring) - 1
+    for i in range(len(ring)):
+        xi, yi = ring[i]
+        xj, yj = ring[j]
+        crosses = ((yi > latitude) != (yj > latitude))
+        if crosses:
+            boundary_x = (xj - xi) * (latitude - yi) / (yj - yi) + xi
+            if longitude < boundary_x:
+                inside = not inside
+        j = i
+    return inside
+
+
+def _point_in_admin_wkts(longitude: Any, latitude: Any,
+                         admin_wkts: List[str]) -> bool:
+    """True when a school point is inside at least one target admin unit."""
+    try:
+        lon, lat = float(longitude), float(latitude)
+    except (TypeError, ValueError):
+        return False
+    return any(
+        _point_in_ring(lon, lat, ring)
+        for wkt_text in admin_wkts
+        for ring in _wkt_rings(wkt_text)
+    )
+
+
 @st.cache_data(show_spinner=False, ttl=1800)
 def cluster_polygons(
     cfg_key: Tuple[str, str, str, str], codes: Tuple[str, ...]
@@ -11001,6 +11034,48 @@ ORDER BY cluster_size DESC, cluster_id
         st.error(f"Map query failed: {e}")
         return
 
+    # INTERSECTS supplies the required AdminUnit-to-LSOA bridge and therefore
+    # the candidate schools. The natural-language words in/inside, TOUCHES
+    # and graph-near refer to administrative units, however, so retain only
+    # school points contained by the selected target administrative geometry.
+    # This prevents a school in the outside part of a crossing LSOA from being
+    # reported as inside the administrative result.
+    if admin_scope and not df.empty:
+        if admin_scope["relation"] == "direct":
+            target_wkts = [str(admin_scope["anchor"].get("wkt") or "")]
+        else:
+            scope_units = admin_scope.get("units", pd.DataFrame())
+            target_wkts = (
+                scope_units.get("unit_wkt", pd.Series(dtype=str))
+                .dropna().astype(str).drop_duplicates().tolist()
+                if isinstance(scope_units, pd.DataFrame) and not scope_units.empty
+                else []
+            )
+        target_wkts = [w for w in target_wkts if w]
+        if target_wkts:
+            df = df[
+                df.apply(
+                    lambda row: _point_in_admin_wkts(
+                        row.get("longitude"), row.get("latitude"), target_wkts
+                    ),
+                    axis=1,
+                )
+            ].copy()
+            summary_df = pd.DataFrame([{
+                "total_schools": int(len(df)),
+                "near_transport_schools": int(
+                    df.get("near_transport", pd.Series(dtype=bool))
+                    .fillna(False).astype(bool).sum()
+                ),
+                "avg_fsm_pct": pd.to_numeric(
+                    df.get("fsm_pct", pd.Series(dtype=float)), errors="coerce"
+                ).mean(),
+                "avg_attendance_pct": pd.to_numeric(
+                    df.get("attendance_pct", pd.Series(dtype=float)),
+                    errors="coerce",
+                ).mean(),
+            }])
+
     if admin_scope:
         anchor = admin_scope["anchor"]
         relation = admin_scope["relation"]
@@ -11027,6 +11102,8 @@ ORDER BY cluster_size DESC, cluster_id
                 f"graph-near {target_type} → INTERSECTS → LSOA "
                 "← LOCATED_IN ← School"
             )
+        provenance += " " + provenance_badge("Geometry-on-demand")
+        relation_label += " → POINT_WITHIN → target administrative geometry"
         if any("DISTANCE_NEAR" in c for c in nl_map.get("conditions", [])):
             relation_label += " → DISTANCE_NEAR → TransportStop"
 
@@ -11054,9 +11131,15 @@ ORDER BY cluster_size DESC, cluster_id
             f"{provenance} "
             f"**Cross-geography path:** {escape(str(anchor.get('name')))} "
             f"({escape(str(anchor.get('unit_type')))}) {relation_label}. "
-            "Schools are reported in intersecting LSOAs; this is not a "
+            "INTERSECTS supplies the LSOA bridge; school points are then "
+            "filtered to the target administrative geometry. This is not a "
             "claim that the administrative and statistical boundaries nest.",
             unsafe_allow_html=True,
+        )
+        st.caption(
+            "Final spatial filter: school point must fall inside the selected "
+            "target administrative unit. Schools in only the outside portion "
+            "of an intersecting LSOA are excluded."
         )
         st.caption(scope_counts)
         if admin_scope.get("disjointness_applied"):
@@ -11334,86 +11417,3 @@ ORDER BY cluster_size DESC, cluster_id
                 "instead. The boundary load ran on the other database — run "
                 "the LSOA geometry step of load_to_neo4j.py against this one."
             )
-        else:
-            st.info(
-                f"{wkt_count:,} LSOAs carry boundary geometry, but none of "
-                "the current cluster members returned a polygon. Showing "
-                "school pins instead."
-            )
-    if cluster_only:
-        st.caption(
-            "Cluster regions are shaded by deprivation level. Hover a region "
-            "for its counts and averages, then click it to see the schools "
-            "by name. School pins return in Standard search."
-        )
-    clicked_region = render_school_map(
-        map_df, selected_school, polygon_df, cluster_only, admin_polygon_df
-    )
-    if clicked_region:
-        render_lsoa_school_panel(cfg, clicked_region)
-
-    if search_mode == "Cluster search" and not cluster_df.empty:
-        with st.expander(
-            f"Cluster results — {len(cluster_df):,} clusters, "
-            f"{len(cluster_codes):,} LSOAs",
-            expanded=False,
-        ):
-            st.caption(
-                "An adjacency cluster is a connected group of LSOAs that "
-                "all meet the threshold and are joined by computed "
-                "LSOA_TOUCHES edges. "
-                + (
-                    "Clusters are exact connected components — the whole "
-                    "component is explored, with no depth limit. "
-                    if cluster_exact
-                    else f"APOC was unavailable, so a "
-                    f"{int(cluster_depth)}-step bound was used. "
-                )
-                + "It is not the statistical cluster "
-                "used by Sandu et al., which comes from a Moran's I "
-                "spatial-weights matrix and stays outside the completeness "
-                "scoring."
-            )
-            display_df(
-                cluster_df.assign(
-                    members=cluster_df["members"].apply(
-                        lambda codes: ", ".join(list(codes)[:8])
-                        + (" ..." if len(codes) > 8 else "")
-                    )
-                )
-            )
-            if SHOW_QUERIES:
-                st.code(cluster_cypher, language="cypher")
-                st.json(cluster_params)
-
-    if SHOW_QUERIES:
-        with st.expander("Map Cypher"):
-            st.code(cypher, language="cypher")
-            st.json(params)
-
-
-def main() -> None:
-    cfg = sidebar_config()
-    apply_dashboard_theme(bool(cfg.get("dark_theme")))
-    page = cfg.pop("page")
-    # Each page is drawn inside its own keyed container. Without this the
-    # three pages share element slots, so a widget from the previous page
-    # can survive the switch and paint over the new one -- which is what put
-    # the Evaluation page's SpCom equation underneath the map search box.
-    try:
-        body = st.container(key=f"page_{page.replace(' ', '_').lower()}")
-    except TypeError:
-        # Older Streamlit builds take no key; the container still isolates
-        # the subtree, only without the stable identity.
-        body = st.container()
-    with body:
-        if page == "SCQ Demonstrator":
-            page_scq_demonstrator(cfg)
-        elif page == "Evaluation":
-            page_evaluation()
-        elif page == "Map":
-            page_map(cfg)
-
-
-if __name__ == "__main__":
-    main()
