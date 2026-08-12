@@ -5267,13 +5267,15 @@ def render_school_map(
                     "role": role,
                     "line": [124, 58, 237, 245] if role == "anchor"
                             else [14, 116, 144, 220],
+                    "fill": [124, 58, 237, 42] if role == "anchor"
+                            else [14, 116, 144, 24],
                 })
         if admin_rows:
             admin_layer = pdk.Layer(
                 "PolygonLayer", id="administrative-scope",
                 data=admin_rows, get_polygon="polygon",
-                get_fill_color=[0, 0, 0, 0], get_line_color="line",
-                line_width_min_pixels=3, stroked=True, filled=False,
+                get_fill_color="fill", get_line_color="line",
+                line_width_min_pixels=4, stroked=True, filled=True,
                 pickable=False,
             )
     if polygon_df is not None and not polygon_df.empty:
@@ -5415,6 +5417,22 @@ def render_school_map(
         picked_region = deck_chart_with_click(deck, key="cluster_map")
     else:
         st.pydeck_chart(deck, use_container_width=True)
+
+    if admin_polygon_df is not None and not admin_polygon_df.empty:
+        has_results = (admin_polygon_df.get("role") == "result").any()
+        st.markdown(
+            "<div class='map-note'><b>Administrative-scope legend:</b> "
+            "<span style='color:#7c3aed;font-size:18px;'>&#9632;</span> "
+            "selected source unit"
+            + (
+                " &nbsp; <span style='color:#0e7490;font-size:18px;'>"
+                "&#9632;</span> related target units"
+                if has_results else ""
+            )
+            + " &nbsp;&middot;&nbsp; red / orange / green polygons are "
+              "intersecting LSOAs, and pins are matching schools.</div>",
+            unsafe_allow_html=True,
+        )
 
     if polygons_only:
         st.markdown(
@@ -9400,7 +9418,22 @@ def resolve_map_admin_scope(
     LIMIT 3
     """, {"anchor_type": unit_type, "anchor_name": name})
     if anchors.empty:
-        return None, [f"No exact {unit_type} named {name} was found in the Welsh graph."]
+        alternatives = run_cypher(cfg, """
+        MATCH (a:AdminUnit)
+        WHERE toLower(coalesce(a.name, '')) = toLower($anchor_name)
+          AND a.type IN ['Community', 'Ward', 'UnitaryAuthority']
+          AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+        RETURN DISTINCT a.type AS unit_type ORDER BY unit_type
+        """, {"anchor_name": name})
+        found = alternatives.get("unit_type", pd.Series(dtype=str)).dropna().astype(str).tolist()
+        suffix = (
+            " It exists as " + " / ".join(found) + "; the requested type "
+            "was not changed automatically."
+            if found else ""
+        )
+        return None, [
+            f"No exact {unit_type} named {name} was found in the Welsh graph.{suffix}"
+        ]
     if len(anchors) != 1:
         return None, [f"{name} is ambiguous for type {unit_type}; use a more specific name."]
     anchor_uri = str(anchors.iloc[0]["uri"])
@@ -9902,12 +9935,14 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # The model/rules identify only a constrained intent. Neo4j resolves the
     # exact unit and executes one of three fixed parameterised graph paths.
     parsed["resolved_admin_scope"] = None
+    parsed["admin_scope_failed"] = False
     if parsed.get("admin_scope"):
         try:
             resolved, scope_warnings = resolve_map_admin_scope(
                 cfg, parsed.get("admin_scope")
             )
             parsed["resolved_admin_scope"] = resolved
+            parsed["admin_scope_failed"] = resolved is None
             parsed["unmatched"].extend(scope_warnings)
             if resolved:
                 a = resolved["anchor"]
@@ -9918,6 +9953,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
                     f"target type = {resolved['target_type']}",
                 ])
         except Exception as exc:
+            parsed["admin_scope_failed"] = True
             parsed["unmatched"].append(f"Administrative path unavailable: {exc}")
 
     # School conditions have no effect in cluster search, which pools LSOAs
@@ -10440,6 +10476,17 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     nl_map = render_map_nl(cfg)
 
+    # A named administrative scope is part of the meaning of the question.
+    # Falling back to every Welsh school after resolution fails would return
+    # a confident-looking answer to a different question.
+    if nl_map.get("admin_scope_failed"):
+        st.info(
+            "The map was not run because the requested administrative unit "
+            "could not be resolved exactly. Change the name or type shown "
+            "above and search again."
+        )
+        return
+
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
     # Sentence conditions sit alongside the sidebar filters rather than
@@ -10938,20 +10985,69 @@ ORDER BY cluster_size DESC, cluster_id
 
     if admin_scope:
         anchor = admin_scope["anchor"]
-        relation_label = {
-            "direct": "INTERSECTS",
-            "touches": "TOUCHES → INTERSECTS",
-            "graph_near": "TOUCHES × 2 → INTERSECTS",
-        }[admin_scope["relation"]]
+        relation = admin_scope["relation"]
+        target_type = escape(str(admin_scope["target_type"]))
+        if relation == "direct":
+            provenance = provenance_badge("Geometry-origin")
+            relation_label = "→ INTERSECTS → LSOA ← LOCATED_IN ← School"
+        elif relation == "touches":
+            provenance = (
+                provenance_badge("Native") + " "
+                + provenance_badge("Geometry-origin")
+            )
+            relation_label = (
+                f"→ TOUCHES → neighbouring {target_type} "
+                "→ INTERSECTS → LSOA ← LOCATED_IN ← School"
+            )
+        else:
+            provenance = (
+                provenance_badge("Graph-derived") + " "
+                + provenance_badge("Geometry-origin")
+            )
+            relation_label = (
+                f"→ TOUCHES → intermediate {target_type} → TOUCHES → "
+                f"graph-near {target_type} → INTERSECTS → LSOA "
+                "← LOCATED_IN ← School"
+            )
+        if any("DISTANCE_NEAR" in c for c in nl_map.get("conditions", [])):
+            relation_label += " → DISTANCE_NEAR → TransportStop"
+
+        units = admin_scope.get("units", pd.DataFrame())
+        unique_units = (
+            units[["unit_uri", "unit_name", "unit_type"]]
+            .drop_duplicates("unit_uri")
+            if isinstance(units, pd.DataFrame) and not units.empty
+            else pd.DataFrame(columns=["unit_uri", "unit_name", "unit_type"])
+        )
+        unit_names = unique_units["unit_name"].dropna().astype(str).tolist()
+        unit_count_label = (
+            "1 selected administrative unit"
+            if relation == "direct"
+            else (
+                f"{len(unique_units):,} target administrative unit"
+                f"{'s' if len(unique_units) != 1 else ''}"
+            )
+        )
+        scope_counts = (
+            f"{unit_count_label}; "
+            f"{len(admin_scope['lsoa_codes']):,} intersecting LSOAs."
+        )
         st.markdown(
-            f"{provenance_badge('Graph-derived')} "
+            f"{provenance} "
             f"**Administrative path:** {escape(str(anchor.get('name')))} "
-            f"({escape(str(anchor.get('unit_type')))}) → {relation_label} → "
-            f"{escape(str(admin_scope['target_type']))} → LSOA → School. "
+            f"({escape(str(anchor.get('unit_type')))}) {relation_label}. "
             "Schools are reported in intersecting LSOAs; this is not a "
             "claim that the administrative and statistical boundaries nest.",
             unsafe_allow_html=True,
         )
+        st.caption(scope_counts)
+        if unit_names:
+            shown = ", ".join(unit_names[:8])
+            st.caption(
+                "Target unit" + ("s" if len(unit_names) != 1 else "")
+                + ": " + shown
+                + (f" … and {len(unit_names) - 8} more" if len(unit_names) > 8 else "")
+            )
 
     summary = (
         summary_df.iloc[0].to_dict()
