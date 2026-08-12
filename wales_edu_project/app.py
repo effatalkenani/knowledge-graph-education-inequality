@@ -5059,6 +5059,7 @@ def render_school_map(
     selected_school: Tuple[str, str],
     polygon_df: pd.DataFrame | None = None,
     polygons_only: bool = False,
+    admin_polygon_df: pd.DataFrame | None = None,
 ) -> str | None:
     """Render the Wales school map with pydeck (deck.gl).
 
@@ -5250,6 +5251,31 @@ def render_school_map(
     }
 
     layers = []
+    # Administrative boundaries are a second, deliberately unfilled layer.
+    # They explain the graph path without replacing the LSOA deprivation
+    # polygons underneath or obscuring the school pins above them.
+    admin_layer = None
+    if admin_polygon_df is not None and not admin_polygon_df.empty:
+        admin_rows = []
+        for _, arow in admin_polygon_df.iterrows():
+            role = str(arow.get("role") or "result")
+            for ring in _wkt_rings(arow.get("wkt")):
+                admin_rows.append({
+                    "polygon": ring,
+                    "name": arow.get("name") or arow.get("uri"),
+                    "unit_type": arow.get("unit_type") or "AdminUnit",
+                    "role": role,
+                    "line": [124, 58, 237, 245] if role == "anchor"
+                            else [14, 116, 144, 220],
+                })
+        if admin_rows:
+            admin_layer = pdk.Layer(
+                "PolygonLayer", id="administrative-scope",
+                data=admin_rows, get_polygon="polygon",
+                get_fill_color=[0, 0, 0, 0], get_line_color="line",
+                line_width_min_pixels=3, stroked=True, filled=False,
+                pickable=False,
+            )
     if polygon_df is not None and not polygon_df.empty:
         DEP_FILL = {
             "high_deprivation": [225, 29, 72],
@@ -5311,6 +5337,10 @@ def render_school_map(
                     highlight_color=[124, 58, 237, 190],
                 )
             )
+    # Put the administrative outline above the filled LSOA layer and below
+    # the pins, otherwise the LSOA fill can hide the explanation boundary.
+    if admin_layer is not None:
+        layers.append(admin_layer)
     if not polygons_only:
         layers.append(pin_layer)
 
@@ -9309,6 +9339,105 @@ MAP_NL_RULES: List[Tuple[str, List[str]]] = [
                        "without a transport stop"]),
 ]
 
+_ADMIN_TYPE_WORDS = {
+    "community": "Community", "cymuned": "Community",
+    "ward": "Ward", "electoral ward": "Ward",
+    "unitary authority": "UnitaryAuthority", "county": "UnitaryAuthority",
+    "local authority": "UnitaryAuthority",
+}
+
+
+def _map_admin_hint(text: str) -> Dict[str, str] | None:
+    """Read only explicit administrative wording in the offline parser."""
+    low = (text or "").lower()
+    unit_type = next((v for k, v in _ADMIN_TYPE_WORDS.items() if k in low), None)
+    if not unit_type:
+        return None
+    relation = "direct"
+    if any(x in low for x in ("graph near", "graph-near", "two hops", "2 hops")):
+        relation = "graph_near"
+    elif any(x in low for x in ("touching", "touches", "adjacent", "neighbouring", "neighboring")):
+        relation = "touches"
+    # Accept the common natural forms "in/near X community/ward". Resolution
+    # against Neo4j below is authoritative; this is merely a candidate name.
+    words = "|".join(re.escape(k) for k, v in _ADMIN_TYPE_WORDS.items() if v == unit_type)
+    match = re.search(
+        rf"(?:in|inside|within|near|around|touching)\s+(.+?)\s+(?:{words})(?:\b|$)",
+        text, re.IGNORECASE,
+    )
+    if not match:
+        return {"anchor_name": "", "anchor_type": unit_type,
+                "relation": relation, "target_type": unit_type}
+    name = re.sub(r"^(?:the)\s+", "", match.group(1).strip(), flags=re.I)
+    return {"anchor_name": name, "anchor_type": unit_type,
+            "relation": relation, "target_type": unit_type}
+
+
+def resolve_map_admin_scope(
+    cfg: Dict[str, str], scope: Dict[str, str] | None
+) -> Tuple[Dict[str, Any] | None, List[str]]:
+    """Resolve one admin anchor and materialise its fixed, safe graph path."""
+    if not scope:
+        return None, []
+    name = str(scope.get("anchor_name") or "").strip()
+    unit_type = str(scope.get("anchor_type") or "")
+    relation = str(scope.get("relation") or "direct")
+    target_type = str(scope.get("target_type") or unit_type)
+    if not name or unit_type not in {"Community", "Ward", "UnitaryAuthority"}:
+        return None, ["Name the administrative unit as well as its type."]
+    if target_type not in {"Community", "Ward", "UnitaryAuthority"}:
+        target_type = unit_type
+    if relation not in {"direct", "touches", "graph_near"}:
+        relation = "direct"
+
+    anchors = run_cypher(cfg, """
+    MATCH (a:AdminUnit)
+    WHERE a.type = $anchor_type
+      AND toLower(coalesce(a.name, '')) = toLower($anchor_name)
+      AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+    RETURN a.uri AS uri, a.name AS name, a.type AS unit_type, a.wkt AS wkt
+    ORDER BY a.uri
+    LIMIT 3
+    """, {"anchor_type": unit_type, "anchor_name": name})
+    if anchors.empty:
+        return None, [f"No exact {unit_type} named {name} was found in the Welsh graph."]
+    if len(anchors) != 1:
+        return None, [f"{name} is ambiguous for type {unit_type}; use a more specific name."]
+    anchor_uri = str(anchors.iloc[0]["uri"])
+
+    if relation == "direct":
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(l:LSOA)
+        RETURN DISTINCT l.code AS lsoa_code, a.uri AS unit_uri,
+          a.name AS unit_name, a.type AS unit_type, a.wkt AS unit_wkt
+        """
+    elif relation == "touches":
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})-[:TOUCHES]-(u:AdminUnit)
+        WHERE u.type = $target_type
+        MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
+          u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
+        """
+    else:
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})-[:TOUCHES]-(m:AdminUnit)-[:TOUCHES]-(u:AdminUnit)
+        WHERE m.type = $target_type AND u.type = $target_type
+          AND u <> a AND NOT (a)-[:TOUCHES]-(u)
+        MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
+          u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
+        """
+    rows = run_cypher(cfg, path, {"anchor_uri": anchor_uri,
+                                  "target_type": target_type})
+    result = {
+        "anchor": anchors.iloc[0].to_dict(), "relation": relation,
+        "target_type": target_type,
+        "lsoa_codes": sorted(set(rows.get("lsoa_code", pd.Series(dtype=str)).dropna().astype(str))),
+        "units": rows,
+    }
+    return result, []
+
 _MAP_RANGE = re.compile(
     r"(fsm|free school meal|attendance|capped\s*9|capped9|performance|"
     r"budget|pupils?)[^0-9]{0,24}(between\s*)?(\d+(?:\.\d+)?)"
@@ -9345,6 +9474,7 @@ def parse_map_question(text: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "text": raw, "conditions": [], "params": {},
         "chips": [], "unmatched": [], "parser": "rule-based",
+        "admin_scope": _map_admin_hint(raw),
     }
     if not raw:
         return out
@@ -9418,7 +9548,7 @@ def parse_map_question(text: str) -> Dict[str, Any]:
         out["chips"].append(f"{match.group(1)} {op} {match.group(3)}")
         used += 1
 
-    if not out["conditions"]:
+    if not out["conditions"] and not out.get("admin_scope"):
         out["unmatched"].append(
             "Nothing was recognised. Try naming a deprivation level, a "
             "phase, a language medium, transport access, or a metric range "
@@ -9525,12 +9655,21 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"phases": subset of ["primary","secondary","special"]\n'
             '"medium": "welsh" | "english"\n'
             '"authority": local authority or town name, e.g. "Cardiff"\n'
+            '"anchor_name": exact administrative place name\n'
+            '"anchor_type": "Community" | "Ward" | "UnitaryAuthority"\n'
+            '"relation": "direct" | "touches" | "graph_near"\n'
+            '"target_type": "Community" | "Ward" | "UnitaryAuthority"\n'
             '"transport": "near" | "far"\n'
             '"ranges": [{"field": f, "min": n, "max": n}]\n'
             '"comparisons": [{"field": f, "op": ">=" or "<=", "value": n}]\n'
             'where f is one of "fsm", "attendance", "capped9", "budget", '
             '"pupils". Use nothing outside these values. Questions may be '
-            'in any language; translate place names to their English form.'
+            'in any language; translate place names to their English form. '
+            'Use authority only for an ordinary local-authority filter. If '
+            'the user explicitly says community, ward, county or unitary '
+            'authority, use the four administrative fields instead. direct '
+            'means its intersecting LSOAs; touches means adjacent units; '
+            'graph_near means units exactly two TOUCHES steps away.'
         )
         response = client.chat.completions.create(
             model=_nl_llm_model(),
@@ -9561,7 +9700,18 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         "text": text, "conditions": [], "params": {},
         "chips": [], "unmatched": [],
         "parser": f"LLM ({_nl_llm_model()})",
+        "admin_scope": None,
     }
+
+    anchor_type = str(data.get("anchor_type") or "")
+    relation = str(data.get("relation") or "direct")
+    target_type = str(data.get("target_type") or anchor_type)
+    if anchor_type in {"Community", "Ward", "UnitaryAuthority"}:
+        out["admin_scope"] = {
+            "anchor_name": str(data.get("anchor_name") or "").strip(),
+            "anchor_type": anchor_type, "relation": relation,
+            "target_type": target_type,
+        }
 
     dep = str(data.get("deprivation") or "").lower()
     if dep in {"high", "medium", "low"}:
@@ -9588,6 +9738,8 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     # schema did not, so a question naming a place parsed to nothing and the
     # map fell back to all 1,444 schools. Bound as a parameter like the rest.
     authority = str(data.get("authority") or "").strip()
+    if out["admin_scope"]:
+        authority = ""
     if authority:
         out["conditions"].append(
             "toLower(coalesce(s.local_authority_name, s.local_authority, "
@@ -9647,7 +9799,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         out["chips"].append(f"{item.get('field')} {op} {value:g}")
         used_names += 1
 
-    if not out["conditions"]:
+    if not out["conditions"] and not out.get("admin_scope"):
         out["unmatched"].append(
             "The model returned nothing that maps onto a school property."
         )
@@ -9747,6 +9899,27 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     else:
         parsed = parse_map_question(question)
 
+    # The model/rules identify only a constrained intent. Neo4j resolves the
+    # exact unit and executes one of three fixed parameterised graph paths.
+    parsed["resolved_admin_scope"] = None
+    if parsed.get("admin_scope"):
+        try:
+            resolved, scope_warnings = resolve_map_admin_scope(
+                cfg, parsed.get("admin_scope")
+            )
+            parsed["resolved_admin_scope"] = resolved
+            parsed["unmatched"].extend(scope_warnings)
+            if resolved:
+                a = resolved["anchor"]
+                parsed["chips"].extend([
+                    f"anchor = {a.get('name')}",
+                    f"anchor type = {a.get('unit_type')}",
+                    f"relation = {resolved['relation']}",
+                    f"target type = {resolved['target_type']}",
+                ])
+        except Exception as exc:
+            parsed["unmatched"].append(f"Administrative path unavailable: {exc}")
+
     # School conditions have no effect in cluster search, which pools LSOAs
     # rather than schools, so a question that names any of them switches the
     # mode instead of returning a map that quietly ignored it.
@@ -9756,7 +9929,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # the radio is created.
     last_applied = st.session_state.get("map_nl_applied")
     if (
-        parsed["conditions"]
+        (parsed["conditions"] or parsed.get("resolved_admin_scope"))
         and question != last_applied
         and st.session_state.get("map_search_mode") == "Cluster search"
     ):
@@ -9769,7 +9942,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     st.session_state["map_nl_applied"] = question
 
     if (
-        parsed["conditions"]
+        (parsed["conditions"] or parsed.get("resolved_admin_scope"))
         and st.session_state.get("map_search_mode") == "Cluster search"
     ):
         st.markdown(
@@ -10274,6 +10447,10 @@ def page_map(cfg: Dict[str, str]) -> None:
     # exactly what each contributed.
     conditions.extend(nl_map["conditions"])
     params.update(nl_map["params"])
+    admin_scope = nl_map.get("resolved_admin_scope")
+    if admin_scope:
+        conditions.append("l.code IN $nl_admin_lsoa_codes")
+        params["nl_admin_lsoa_codes"] = admin_scope["lsoa_codes"]
     if selected_school[0] != "All" and search_mode == "Standard search":
         conditions.append("s.code = $school_code")
         params["school_code"] = selected_school[0]
@@ -10759,6 +10936,23 @@ ORDER BY cluster_size DESC, cluster_id
         st.error(f"Map query failed: {e}")
         return
 
+    if admin_scope:
+        anchor = admin_scope["anchor"]
+        relation_label = {
+            "direct": "INTERSECTS",
+            "touches": "TOUCHES → INTERSECTS",
+            "graph_near": "TOUCHES × 2 → INTERSECTS",
+        }[admin_scope["relation"]]
+        st.markdown(
+            f"{provenance_badge('Graph-derived')} "
+            f"**Administrative path:** {escape(str(anchor.get('name')))} "
+            f"({escape(str(anchor.get('unit_type')))}) → {relation_label} → "
+            f"{escape(str(admin_scope['target_type']))} → LSOA → School. "
+            "Schools are reported in intersecting LSOAs; this is not a "
+            "claim that the administrative and statistical boundaries nest.",
+            unsafe_allow_html=True,
+        )
+
     summary = (
         summary_df.iloc[0].to_dict()
         if not summary_df.empty
@@ -10847,6 +11041,26 @@ ORDER BY cluster_size DESC, cluster_id
         return
 
     polygon_df = None
+    admin_polygon_df = None
+    if admin_scope:
+        admin_rows = [{
+            "uri": admin_scope["anchor"].get("uri"),
+            "name": admin_scope["anchor"].get("name"),
+            "unit_type": admin_scope["anchor"].get("unit_type"),
+            "wkt": admin_scope["anchor"].get("wkt"),
+            "role": "anchor",
+        }]
+        units = admin_scope.get("units")
+        if isinstance(units, pd.DataFrame) and not units.empty:
+            for _, unit in units.drop_duplicates(subset=["unit_uri"]).iterrows():
+                if str(unit.get("unit_uri")) == str(admin_scope["anchor"].get("uri")):
+                    continue
+                admin_rows.append({
+                    "uri": unit.get("unit_uri"), "name": unit.get("unit_name"),
+                    "unit_type": unit.get("unit_type"), "wkt": unit.get("unit_wkt"),
+                    "role": "result",
+                })
+        admin_polygon_df = pd.DataFrame(admin_rows)
     if search_mode == "Standard search" and "lsoa_code" in map_df.columns:
         # The pins say where the schools are; the boundaries say what kind of
         # place each sits in. Drawn underneath and left unpickable, so the
@@ -11007,7 +11221,7 @@ ORDER BY cluster_size DESC, cluster_id
             "by name. School pins return in Standard search."
         )
     clicked_region = render_school_map(
-        map_df, selected_school, polygon_df, cluster_only
+        map_df, selected_school, polygon_df, cluster_only, admin_polygon_df
     )
     if clicked_region:
         render_lsoa_school_panel(cfg, clicked_region)
