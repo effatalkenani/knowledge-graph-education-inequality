@@ -9394,7 +9394,14 @@ def _map_admin_hint(text: str) -> Dict[str, str] | None:
 def resolve_map_admin_scope(
     cfg: Dict[str, str], scope: Dict[str, str] | None
 ) -> Tuple[Dict[str, Any] | None, List[str]]:
-    """Resolve one admin anchor and materialise its fixed, safe graph path."""
+    """Resolve one admin anchor into mutually exclusive LSOA bridge scopes.
+
+    Direct keeps the anchor's intersecting LSOAs. TOUCHES removes those
+    direct LSOAs. GRAPH_NEAR is an exact two-step administrative traversal
+    and removes both the direct and one-step LSOA scopes. INTERSECTS remains
+    the cross-geography bridge in every case; it is not interpreted as
+    administrative containment.
+    """
     if not scope:
         return None, []
     name = str(scope.get("anchor_name") or "").strip()
@@ -9709,7 +9716,11 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             'the user explicitly says community, ward, county or unitary '
             'authority, use the four administrative fields instead. direct '
             'means its intersecting LSOAs; touches means adjacent units; '
-            'graph_near means units exactly two TOUCHES steps away.'
+            'graph_near means units exactly two TOUCHES steps away. Schools '
+            'are never directly assigned to an administrative unit: the '
+            'application always crosses through AdminUnit INTERSECTS LSOA '
+            'and School LOCATED_IN LSOA. The query engine, not this parser, '
+            'makes the direct, touches and graph_near LSOA scopes disjoint.'
         )
         response = client.chat.completions.create(
             model=_nl_llm_model(),
@@ -11041,7 +11052,7 @@ ORDER BY cluster_size DESC, cluster_id
         )
         st.markdown(
             f"{provenance} "
-            f"**Administrative path:** {escape(str(anchor.get('name')))} "
+            f"**Cross-geography path:** {escape(str(anchor.get('name')))} "
             f"({escape(str(anchor.get('unit_type')))}) {relation_label}. "
             "Schools are reported in intersecting LSOAs; this is not a "
             "claim that the administrative and statistical boundaries nest.",
