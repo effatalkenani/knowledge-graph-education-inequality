@@ -26,6 +26,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from neo4j import GraphDatabase
+from pathlib import Path
 
 # =============================================================================
 # CONFIGURATION
@@ -36,11 +37,13 @@ from neo4j import GraphDatabase
 # Flip to True during development when the query text is needed on screen.
 SHOW_QUERIES = False
 
+
+APP_DIR = Path(__file__).resolve().parent
+
 st.set_page_config(
-    page_title="Wales Education KG — Task-Aligned Demonstrator",
-    page_icon="🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+    page_title="Wales Education KG",
+    page_icon=str(APP_DIR / "wales_education_kg.png"),
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 st.markdown(
