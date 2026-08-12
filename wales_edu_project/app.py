@@ -9449,6 +9449,7 @@ def resolve_map_admin_scope(
         MATCH (a:AdminUnit {uri:$anchor_uri})-[:TOUCHES]-(u:AdminUnit)
         WHERE u.type = $target_type
         MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        WHERE NOT (a)-[:INTERSECTS]->(l)
         RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
           u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
         """
@@ -9458,6 +9459,11 @@ def resolve_map_admin_scope(
         WHERE m.type = $target_type AND u.type = $target_type
           AND u <> a AND NOT (a)-[:TOUCHES]-(u)
         MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        WHERE NOT (a)-[:INTERSECTS]->(l)
+          AND NOT EXISTS {
+            MATCH (a)-[:TOUCHES]-(direct:AdminUnit)-[:INTERSECTS]->(l)
+            WHERE direct.type = $target_type
+          }
         RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
           u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
         """
@@ -9466,6 +9472,7 @@ def resolve_map_admin_scope(
     result = {
         "anchor": anchors.iloc[0].to_dict(), "relation": relation,
         "target_type": target_type,
+        "disjointness_applied": relation in {"touches", "graph_near"},
         "lsoa_codes": sorted(set(rows.get("lsoa_code", pd.Series(dtype=str)).dropna().astype(str))),
         "units": rows,
     }
@@ -11041,6 +11048,18 @@ ORDER BY cluster_size DESC, cluster_id
             unsafe_allow_html=True,
         )
         st.caption(scope_counts)
+        if admin_scope.get("disjointness_applied"):
+            exclusion_text = (
+                "LSOAs that also intersect the selected source unit were "
+                "excluded at query time to keep the direct and touching "
+                "scopes disjoint."
+                if relation == "touches"
+                else
+                "LSOAs that also belong to the direct or one-step touching "
+                "scope were excluded at query time, so graph-near reports "
+                "only the two-step scope."
+            )
+            st.caption("Disjointness rule: " + exclusion_text)
         if unit_names:
             shown = ", ".join(unit_names[:8])
             st.caption(
