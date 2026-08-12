@@ -9412,7 +9412,12 @@ def _map_admin_hint(text: str) -> Dict[str, str] | None:
     if not unit_type:
         return None
     relation = "direct"
-    if any(x in low for x in ("graph near", "graph-near", "two hops", "2 hops")):
+    if (
+        any(x in low for x in ("graph near", "graph-near", "two hops", "2 hops"))
+        or re.search(
+            r"\b(?:wards?|communities|unitary authorities)\s+near\b", low
+        )
+    ):
         relation = "graph_near"
     elif any(x in low for x in ("touching", "touches", "adjacent", "neighbouring", "neighboring")):
         relation = "touches"
@@ -9434,13 +9439,12 @@ def _map_admin_hint(text: str) -> Dict[str, str] | None:
 def resolve_map_admin_scope(
     cfg: Dict[str, str], scope: Dict[str, str] | None
 ) -> Tuple[Dict[str, Any] | None, List[str]]:
-    """Resolve one admin anchor into mutually exclusive LSOA bridge scopes.
+    """Resolve one admin anchor and its target units through the LSOA bridge.
 
-    Direct keeps the anchor's intersecting LSOAs. TOUCHES removes those
-    direct LSOAs. GRAPH_NEAR is an exact two-step administrative traversal
-    and removes both the direct and one-step LSOA scopes. INTERSECTS remains
-    the cross-geography bridge in every case; it is not interpreted as
-    administrative containment.
+    TOUCHES selects adjacent administrative units. GRAPH_NEAR selects units
+    at exactly two TOUCHES steps and excludes the anchor and its direct
+    neighbours. All LSOAs intersecting the selected target units remain
+    candidates; school-point containment performs the final disambiguation.
     """
     if not scope:
         return None, []
@@ -9496,7 +9500,6 @@ def resolve_map_admin_scope(
         MATCH (a:AdminUnit {uri:$anchor_uri})-[:TOUCHES]-(u:AdminUnit)
         WHERE u.type = $target_type
         MATCH (u)-[:INTERSECTS]->(l:LSOA)
-        WHERE NOT (a)-[:INTERSECTS]->(l)
         RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
           u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
         """
@@ -9506,11 +9509,6 @@ def resolve_map_admin_scope(
         WHERE m.type = $target_type AND u.type = $target_type
           AND u <> a AND NOT (a)-[:TOUCHES]-(u)
         MATCH (u)-[:INTERSECTS]->(l:LSOA)
-        WHERE NOT (a)-[:INTERSECTS]->(l)
-          AND NOT EXISTS {
-            MATCH (a)-[:TOUCHES]-(direct:AdminUnit)-[:INTERSECTS]->(l)
-            WHERE direct.type = $target_type
-          }
         RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
           u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
         """
@@ -9519,7 +9517,7 @@ def resolve_map_admin_scope(
     result = {
         "anchor": anchors.iloc[0].to_dict(), "relation": relation,
         "target_type": target_type,
-        "disjointness_applied": relation in {"touches", "graph_near"},
+        "disjointness_applied": False,
         "lsoa_codes": sorted(set(rows.get("lsoa_code", pd.Series(dtype=str)).dropna().astype(str))),
         "units": rows,
     }
@@ -9759,8 +9757,9 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             'graph_near means units exactly two TOUCHES steps away. Schools '
             'are never directly assigned to an administrative unit: the '
             'application always crosses through AdminUnit INTERSECTS LSOA '
-            'and School LOCATED_IN LSOA. The query engine, not this parser, '
-            'makes the direct, touches and graph_near LSOA scopes disjoint.'
+            'and School LOCATED_IN LSOA. For explicit administrative wording, '
+            'near means graph_near (exactly two TOUCHES steps), while touch '
+            'or touching means touches (one step).'
         )
         response = client.chat.completions.create(
             model=_nl_llm_model(),
@@ -9796,6 +9795,22 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
 
     anchor_type = str(data.get("anchor_type") or "")
     relation = str(data.get("relation") or "direct")
+    # Administrative relation words are authoritative. This local correction
+    # prevents the model from collapsing explicit NEAR into TOUCHES. Transport
+    # proximity is excluded because it is a separate DISTANCE_NEAR condition.
+    low_text = (text or "").lower()
+    if re.search(
+        r"\b(?:wards?|communities|unitary authorities)\s+"
+        r"(?:exactly\s+)?(?:graph[- ]?)?near\b",
+        low_text,
+    ):
+        relation = "graph_near"
+    elif re.search(
+        r"\b(?:wards?|communities|unitary authorities)\s+"
+        r"(?:touch|touches|touching|adjacent)\b",
+        low_text,
+    ):
+        relation = "touches"
     target_type = str(data.get("target_type") or anchor_type)
     if anchor_type in {"Community", "Ward", "UnitaryAuthority"}:
         out["admin_scope"] = {
@@ -11158,18 +11173,19 @@ ORDER BY cluster_size DESC, cluster_id
             "of an intersecting LSOA are excluded."
         )
         st.caption(scope_counts)
-        if admin_scope.get("disjointness_applied"):
-            exclusion_text = (
-                "LSOAs that also intersect the selected source unit were "
-                "excluded at query time to keep the direct and touching "
-                "scopes disjoint."
-                if relation == "touches"
-                else
-                "LSOAs that also belong to the direct or one-step touching "
-                "scope were excluded at query time, so graph-near reports "
-                "only the two-step scope."
+        if relation == "touches":
+            st.caption(
+                "Administrative scope: one TOUCHES step. Shared LSOAs remain "
+                "bridge candidates; final membership is decided by the "
+                "school point inside the touching target unit."
             )
-            st.caption("Disjointness rule: " + exclusion_text)
+        elif relation == "graph_near":
+            st.caption(
+                "Administrative scope: exactly two TOUCHES steps; the source "
+                "and its direct neighbours are excluded. Shared LSOAs remain "
+                "bridge candidates; final membership is decided by the "
+                "school point inside the graph-near target unit."
+            )
         if unit_names:
             shown = ", ".join(unit_names[:8])
             st.caption(
