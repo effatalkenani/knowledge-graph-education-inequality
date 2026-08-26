@@ -3435,15 +3435,17 @@ def sidebar_config() -> Dict[str, str]:
     #     education-inequality literature is an argument made in the
     #     dissertation text, not a screen to click through.
     # Both page functions remain in the code, uncalled.
-    pages = ["SCQ Demonstrator", "Evaluation", "Map"]
+    # The Evaluation page was used during development and dissertation
+    # analysis, but is not exposed in the delivered demonstrator.  Its page
+    # function remains below for reproducibility, while the SCQ mapping stays
+    # available through the SCQ Demonstrator.
+    pages = ["SCQ Demonstrator", "Map"]
     labels = {
         "SCQ Demonstrator": "SCQ Demonstrator",
-        "Evaluation": "Evaluation",
         "Map": "Map Explorer",
     }
     icons = {
         "SCQ Demonstrator": "SCQ Demonstrator",
-        "Evaluation": "Evaluation",
         "Map": "Map Explorer",
     }
     if "page" not in st.session_state or st.session_state.page not in pages:
@@ -11717,7 +11719,7 @@ def main() -> None:
     apply_dashboard_theme(bool(cfg.get("dark_theme")))
     page = cfg.pop("page")
     # Each page is drawn inside its own keyed container. Without this the
-    # three pages share element slots, so a widget from the previous page
+    # pages share element slots, so a widget from the previous page
     # can survive the switch and paint over the new one -- which is what put
     # the Evaluation page's SpCom equation underneath the map search box.
     try:
@@ -11729,8 +11731,6 @@ def main() -> None:
     with body:
         if page == "SCQ Demonstrator":
             page_scq_demonstrator(cfg)
-        elif page == "Evaluation":
-            page_evaluation()
         elif page == "Map":
             page_map(cfg)
 
