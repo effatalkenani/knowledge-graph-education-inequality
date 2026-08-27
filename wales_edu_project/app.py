@@ -26,8 +26,11 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from neo4j import GraphDatabase
-
+from dotenv import load_dotenv
 from pathlib import Path
+
+load_dotenv()
+
 
 # =============================================================================
 # CONFIGURATION
@@ -272,12 +275,35 @@ section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover
     unsafe_allow_html=True,
 )
 
-DEFAULT_URI = st.secrets.get("NEO4J_URI", "neo4j://127.0.0.1:7687")
-DEFAULT_USER = st.secrets.get("NEO4J_USER", "neo4j")
-DEFAULT_PASSWORD = st.secrets.get("NEO4J_PASSWORD", "QWEasd1QWE")
-DEFAULT_DATABASE = st.secrets.get("NEO4J_DATABASE", "wales-education-kg")
+def get_setting(name, default=None):
+    value = os.getenv(name)
 
+    if value:
+        return value
 
+    try:
+        value = st.secrets.get(name)
+    except Exception:
+        value = None
+
+    return value or default
+
+APP_MODE = os.getenv("APP_MODE", "CLOUD").upper()
+
+if APP_MODE == "LOCAL":
+    DEFAULT_URI = get_setting("LOCAL_NEO4J_URI")
+    DEFAULT_USER = get_setting("LOCAL_NEO4J_USER")
+    DEFAULT_PASSWORD = get_setting("LOCAL_NEO4J_PASSWORD")
+    DEFAULT_DATABASE = get_setting("LOCAL_NEO4J_DATABASE")
+
+elif APP_MODE == "CLOUD":
+    DEFAULT_URI = get_setting("NEO4J_URI")
+    DEFAULT_USER = get_setting("NEO4J_USER")
+    DEFAULT_PASSWORD = get_setting("NEO4J_PASSWORD")
+    DEFAULT_DATABASE = get_setting("NEO4J_DATABASE")
+
+else:
+    raise ValueError("APP_MODE must be either CLOUD or LOCAL")
 # =============================================================================
 # TASK REGISTER: this is shown in the app, not hidden in code.
 # =============================================================================
@@ -2092,7 +2118,8 @@ def parse_spatial_question(
 # the default: the rule table is deterministic, needs no key and runs offline,
 # which are the properties an instrument needs. The model is offered as a
 # comparison so the choice can be evidenced rather than asserted.
-NL_LLM_MODEL = "gpt-4o-mini"
+
+NL_LLM_MODEL = "gemini-3.6-flash"
 NL_LLM_CALL_CAP = 500         # per browser session; the prepaid credit and
                               # the project spend cap are the real ceiling,
                               # this only stops a runaway loop on one tab
@@ -2167,20 +2194,34 @@ def _nl_llm_model() -> str:
 
 
 def _nl_llm_error(exc: Exception) -> str:
-    """One readable line instead of the provider's raw payload.
-
-    The unedited exception carried the quota figures and the provider's
-    billing links straight onto a public page, which is not something a
-    marker should be reading over the shoulder of the demonstrator.
-    """
+    """Return a clear message when the model request fails."""
     text = str(exc)
-    if "429" in text or "RESOURCE_EXHAUSTED" in text or "quota" in text.lower():
-        return (
-            "The model parser has used its daily request allowance. The "
-            "rule-based engine answered instead."
-        )
-    return "The model parser could not be reached. The rule-based engine answered instead."
+    text_lower = text.lower()
 
+    if (
+        "503" in text
+        or "unavailable" in text_lower
+        or "high demand" in text_lower
+    ):
+        return (
+            "Gemini is temporarily unavailable because of high demand. "
+            "The rule-based parser was used instead."
+        )
+
+    if (
+        "429" in text
+        or "resource_exhausted" in text_lower
+        or "quota" in text_lower
+    ):
+        return (
+            "The Gemini request allowance has been reached. "
+            "The rule-based parser was used instead."
+        )
+
+    return (
+        "Gemini could not be reached. "
+        "The rule-based parser was used instead."
+    )
 
 def llm_parse_question(
     text: str,
