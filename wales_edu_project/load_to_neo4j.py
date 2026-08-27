@@ -14,21 +14,31 @@ from shapely.validation import make_valid
 import time 
 
 import geopandas as gpd
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # --- CONNECTION SETTINGS ---
-MODE = "CLOUD" 
+MODE = "CLOUD"  # Change to "LOCAL" when testing locally
 
 if MODE == "CLOUD":
-    URI = "neo4j+s://1e982852.databases.neo4j.io"
-    AUTH = ("1e982852", "4kbPrn_-FsWEKiZTsuCnu5xvotFjME8q6W0dLN7JD3k")
-    DATABASE = "1e982852"
+    URI = os.environ["NEO4J_URI"]
+    AUTH = (
+        os.environ["NEO4J_USER"],
+        os.environ["NEO4J_PASSWORD"],
+    )
+    DATABASE = os.environ["NEO4J_DATABASE"]
+
+elif MODE == "LOCAL":
+    URI = os.environ["LOCAL_NEO4J_URI"]
+    AUTH = (
+        os.environ["LOCAL_NEO4J_USER"],
+        os.environ["LOCAL_NEO4J_PASSWORD"],
+    )
+    DATABASE = os.environ["LOCAL_NEO4J_DATABASE"]
+
 else:
-    URI = "bolt://localhost:7687"
-    AUTH = ("neo4j", "QWEasd1QWE")
-    DATABASE = "wales-education-kg"  
-
-
+    raise ValueError("MODE must be either CLOUD or LOCAL")
 
 DATA_DIR = "./data"
 
