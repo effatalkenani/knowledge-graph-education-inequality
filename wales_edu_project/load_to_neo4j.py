@@ -82,7 +82,7 @@ RUN_UNLINKED_LSOA_DIAGNOSTICS = False
 
 
 TRANSPORT_NEAR_METRES = 800
-#تخدمنا سماحية متر واحد لمعالجة الفروق الطفيفة في 
+# Allow for minor boundary-precision differences between source geometries.
 TOUCH_TOLERANCE_METRES = 1
 
 WELSH_UA_OS_IDS = {
@@ -91,7 +91,7 @@ WELSH_UA_OS_IDS = {
     "25500", "25490", "25485", "25487", "25489", "25486",
     "25482", "25776", "44425", "25831"
 }
-#تحويل الاحداثيات
+# Transform WGS84 coordinates to British National Grid.
 WGS84_TO_BNG = Transformer.from_crs(
     "EPSG:4326", "EPSG:27700", always_xy=True
 ).transform
@@ -108,7 +108,7 @@ SF_TOUCHES = URIRef("http://www.opengis.net/ont/geosparql#sfTouches" )
 SF_WITHIN_ALT = URIRef("http://www.opengis.net/ont/geosparql#within" )
 SF_TOUCHES_ALT = URIRef("http://www.opengis.net/ont/geosparql#touches" )
 
-#انشاء الاتصال 
+# Create a Neo4j driver using the selected environment configuration.
 def driver():
     return GraphDatabase.driver(URI, auth=AUTH)
 
@@ -263,14 +263,7 @@ def parse_os_file(file_path):
             candidate = map_os_type(type_uri)
             if candidate:
                 os_type = candidate
-                # ADDITION: preserve the raw (pre-normalisation) type name
-                # exactly as it appears in the source ontology, e.g.
-                # "OS_COMMUNITY", "OS_CivilParishorCommunity",
-                # "OS_CCOMMUNITY". This does NOT change map_os_type's
-                # normalisation logic above — it only records what the
-                # raw type was before folding, so the normalisation
-                # hypothesis can be tested with certainty later instead
-                # of approximated from the WCWR tag in the URI.
+                # Preserve the original RDF type alongside its normalised form.
                 raw_type = local_name(type_uri)
                 break
 
@@ -287,12 +280,12 @@ def parse_os_file(file_path):
             "wkt": geom_wkt,
         })
 
-        # 1. البحث عن Within (بصيغة sfWithin أو within)
+        # Read sfWithin predicates, including the alternative local name.
         for p in [SF_WITHIN, URIRef("http://www.opengis.net/ont/geosparql#within" )]:
             for obj in g.objects(subject, p):
                 relations.append({"from": uri, "to": str(obj), "type": "WITHIN"})
         
-        # 2. البحث عن Touches (بصيغة sfTouches أو touches)
+        # Read sfTouches predicates, including the alternative local name.
         for p in [SF_TOUCHES, URIRef("http://www.opengis.net/ont/geosparql#touches" )]:
             for obj in g.objects(subject, p):
                 relations.append({"from": uri, "to": str(obj), "type": "TOUCHES"})
@@ -305,7 +298,7 @@ def enrich_admin_units():
     extended_rows, _ = parse_os_file(OS_EXTENDED_FILE)
     new_rows, _ = parse_os_file(OS_NEW_FILE)
 
-    # دمج العقد
+    # Merge node records from both Turtle source files.
     merged = {}
     for row in extended_rows + new_rows:
         uri = row["uri"]
@@ -315,7 +308,7 @@ def enrich_admin_units():
                 if value is not None: merged[uri][key] = value
     rows = list(merged.values())
 
-    # قراءة العلاقات من ملف OS_topological.nt
+    # Read official topological relationships from OS_topological.nt.
     print("Parsing OS_topological.nt for official relations...")
     all_rels = []
     g_topo = Graph()
@@ -335,7 +328,7 @@ def enrich_admin_units():
 
     d = driver()
     
-    # 1. رفع العقد أولاً
+    # Load nodes before creating their relationships.
     with d.session(database=DATABASE) as s:
         for row in rows:
             s.run("""
@@ -348,13 +341,13 @@ def enrich_admin_units():
                 n.wkt = coalesce($wkt, n.wkt)
             """, **row)
     
-    # 2. رفع العلاقات في دفعات مع نظام معالجة انقطاع الاتصال
+    # Load relationships in batches with retry handling.
     print("Loading official relations to Neo4j (with auto-retry)...")
     batch_size = 1000
     for i in range(0, len(all_rels), batch_size):
         batch = all_rels[i : i + batch_size]
         
-        # تحميل العلاقات الوذين والتاتش كما وردت من المصدر
+        # Preserve the source WITHIN and TOUCHES relationship types.
         retry_count = 0
         success = False
         while retry_count < 5 and not success:
@@ -364,15 +357,23 @@ def enrich_admin_units():
                     UNWIND $batch AS rel
                     MATCH (a:AdminUnit {uri: rel.from})
                     MATCH (b:AdminUnit {uri: rel.to})
-                    CALL apoc.merge.relationship(a, rel.type, {}, 
-                        {origin: "official_os_source", method: "native_ttl_import"}, b) 
-                    YIELD rel AS r RETURN count(*)
+                    FOREACH (_ IN CASE WHEN rel.type = "WITHIN" THEN [1] ELSE [] END |
+                        MERGE (a)-[r:WITHIN]->(b)
+                        SET r.origin = "official_os_source",
+                            r.method = "native_ttl_import"
+                    )
+                    FOREACH (_ IN CASE WHEN rel.type = "TOUCHES" THEN [1] ELSE [] END |
+                        MERGE (a)-[r:TOUCHES]->(b)
+                        SET r.origin = "official_os_source",
+                            r.method = "native_ttl_import"
+                    )
+                    RETURN count(*)
                     """, batch=batch)
                 success = True
             except Exception as e:
                 retry_count += 1
                 print(f"\nConnection lost at relation {i}, retrying ({retry_count}/5)... Error: {str(e)}")
-                time.sleep(5) # الانتظار قليلاً قبل المحاولة مرة أخرى
+                time.sleep(5)  # Brief delay before retrying.
         
         if not success:
             print(f"Failed to load batch starting at {i} after 5 attempts. Skipping...")
@@ -381,7 +382,7 @@ def enrich_admin_units():
             print(f"Progress: {min(i + batch_size, len(all_rels))}/{len(all_rels)} relations loaded...")
 
     d.close()
-    print("Success! Official relations are now fully loaded in the Cloud.")
+    print("Official relationships loaded")
 
 def load_lsoa():
     df = pd.read_excel(LSOA_FILE)
@@ -510,7 +511,6 @@ def load_fsm():
     print("Loading FSM rows:", len(df))
 
     # Remove thousands separators before numeric conversion.
-    # إزالة فواصل الآلاف قبل التحويل إلى أرقام.
     df["value_numeric"] = pd.to_numeric(
         df["Data values"]
         .astype(str)
@@ -520,7 +520,6 @@ def load_fsm():
     )
 
     # Separate pupil counts from official percentages.
-    # فصل أعداد التلاميذ عن النسب الرسمية.
     count_rows = df[
         df["Data description_reference"].astype(str).str.upper() == "NUM"
     ].copy()
@@ -941,7 +940,7 @@ def build_lsoa_touches():
     lsoas = get_lsoa_geoms()
     codes = [x["code"] for x in lsoas]
     polygons = [x["geometry"] for x in lsoas]
-    #لتقليل المقارنات
+    # Use a spatial index to reduce geometry comparisons.
     tree = STRtree(polygons)
     pairs = set()
 
@@ -989,7 +988,7 @@ def build_lsoa_graph_near():
     d = driver()
     with d.session(database=DATABASE) as s:
         s.run("MATCH (:LSOA)-[r:GRAPH_NEAR]->(:LSOA) DELETE r")
-        #لم تُحسب من المسافة. تم الاشتقاق من خطوتين عبر LSOA_TOUCHES
+        # Derive graph proximity from two LSOA_TOUCHES hops, not distance.
         s.run("""
         MATCH (a:LSOA)-[:LSOA_TOUCHES]-(mid:LSOA)-[:LSOA_TOUCHES]-(b:LSOA)
         WHERE a.code <> b.code
@@ -1071,7 +1070,7 @@ def repair_lsoa_wkt_from_geopackage():
                 """, rows=batch)
                 updated_total += result.single()["updated"]
             print(f"Progress: {min(i + batch_size, len(updates))}/{len(updates)} repaired...")
-            time.sleep(0.5) # وقت مستقطع بسيط لراحة السيرفر
+            time.sleep(0.5)  # Brief pause between update batches.
         except Exception as e:
             print(f"Error in batch {i}: {e}. Retrying next batch...")
             continue
@@ -1300,7 +1299,6 @@ def load_stop_lsoa_links():
 
                 # covers() includes points inside the polygon and points
                 # located exactly on its boundary.
-                #School/TransportStop → LOCATED_IN → LSOA
                 if polygon.covers(p):
                     s.run("""
                         MATCH (t:TransportStop {code:$stop_code})
@@ -1358,7 +1356,6 @@ def build_school_lsoa_links():
 
             found = False
 
-            # أولاً: ربط مباشر إذا كانت نقطة المدرسة داخل مضلع LSOA
             # First: direct point-in-polygon link
             for j in tree.query(p):
                 j = int(j)
@@ -1387,7 +1384,6 @@ def build_school_lsoa_links():
                     found = True
                     break
 
-            # ثانياً: إذا لم تقع داخل أي LSOA، نربطها بأقرب LSOA مع توثيق الجودة
             # Second: nearest LSOA fallback with quality metadata
             if not found:
                 nearest_index = int(tree.nearest(p))
@@ -1529,7 +1525,7 @@ def tag_existing_relation_origins():
 
 def verify():
     d = driver()
-#فتح جلسة على قاعدة البيانات 
+    # Open a session on the configured database.
     with d.session(database=DATABASE) as s:
         print("\nNode counts:")
         for r in s.run("""
