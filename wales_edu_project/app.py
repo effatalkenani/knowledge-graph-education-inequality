@@ -1,16 +1,8 @@
 """
-Education Inequality Analysis with a Geospatial Knowledge Graph
-Task-aligned Streamlit demonstrator for the Wales YAGO2geo + LSOA project.
-
-This app is deliberately structured around the supervisor task plan:
-Task 0  Evaluation instrument
-Task 1  YAGO2geo administrative hierarchy
-Task 2  LSOA and statistics integration
-Task 3  Policy questions mapped to SCQs
-Task 4  SCQ demonstrator
-Task 5  Evaluation / coverage scorecards
-Task 6  Cross-hierarchy seam
-Task 7  Dissertation writing (not implemented in the app)
+Project: Education Inequality Analysis with a Geospatial Knowledge Graph
+Student: Afaf Alhajjaji
+Student Number: 24106532
+Supervisor: Dr Alia Abdelmoty
 """
 
 import base64
@@ -32,14 +24,8 @@ from pathlib import Path
 load_dotenv()
 
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-# One switch for the whole app: when False, no Cypher query text, parameter
-# dump, or query expander renders anywhere in the UI. The queries still run
-# and still live in the code and the research log; this only controls display.
-# Flip to True during development when the query text is needed on screen.
-SHOW_QUERIES = False
+# Application configuration
+SHOW_QUERIES = True
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -304,9 +290,7 @@ elif APP_MODE == "CLOUD":
 
 else:
     raise ValueError("APP_MODE must be either CLOUD or LOCAL")
-# =============================================================================
-# TASK REGISTER: this is shown in the app, not hidden in code.
-# =============================================================================
+# Task and SCQ definitions
 TASKS = [
     {
         "id": "Task 0",
@@ -453,30 +437,7 @@ TASK_SOLUTIONS = {
     },
 }
 
-# =============================================================================
-# SCQ QUERY DEFINITIONS — supervisor-aligned implementation notes
-# =============================================================================
-# 1. SCQ1, SCQ2, SCQ4, SCQ7, and SCQ8 expose scraped school metrics
-#    (FSM, attendance, and secondary performance where available). This makes
-#    the demonstrator visibly education-policy oriented rather than purely
-#    topological.
-# 2. Secondary performance fields are intentionally nullable because the
-#    My Local School scrape provides capped/literacy/numeracy/science scores
-#    for secondary or middle schools, not for ordinary primary schools.
-# 3. SCQ3 implements the paper's cycle-free path definition of between over
-#    LSOA_TOUCHES. The paper sets no numeric bound; unbounded enumeration is
-#    intractable, so a hop bound is applied and reported as a tractability
-#    necessity rather than a definitional choice.
-# 4. SCQ5 and SCQ6 remain native administrative-hierarchy comparisons only.
-#    They are not counted as independent Education Use Case answers because
-#    Ward-LSOA containment-style questions were reclassified to SCQ7/SCQ8.
 
-# =============================================================================
-# BILINGUAL UI LABELS (English / Cymraeg)
-# =============================================================================
-# Coverage: sidebar controls, the SCQ7/SCQ8 direction toggle, and the labels
-# of the Cross-hierarchy and SCQ Demonstrator tabs. Extend by adding keys to
-# both dictionaries below; t() falls back to English for any missing key.
 UI_TEXT: Dict[str, Dict[str, str]] = {
     "English": {
         "language": "Language / Iaith",
@@ -645,7 +606,6 @@ def scq_question(scq_key: str, meta: Dict[str, Any]) -> str:
         return UI_TEXT["Cymraeg"].get(f"q_{scq_key}", meta["question"])
     return meta["question"]
 
-# Segmented-pill styling shared by the language switch and direction toggle.
 _SEGMENTED_CSS = """
 <style>
 div[data-testid="stRadio"] > div[role="radiogroup"]{
@@ -674,11 +634,7 @@ def inject_segmented_css() -> None:
     st.markdown(_SEGMENTED_CSS, unsafe_allow_html=True)
 
 def direction_toggle(widget_key: str) -> str:
-    """
-    Sleek two-option segmented control for SCQ7/SCQ8.
-    Returns "lsoa" (default) or "admin". Both directions read the same
-    stored INTERSECTS facts; only the fixed side of the pair changes.
-    """
+    """Sleek two-option segmented control for SCQ7/SCQ8."""
     inject_segmented_css()
     return st.radio(
         t("start_from"),
@@ -688,9 +644,6 @@ def direction_toggle(widget_key: str) -> str:
         key=widget_key,
     )
 
-# =============================================================================
-# CROSS-HIERARCHY REVERSED QUERIES (single source of truth for BOTH tabs)
-# =============================================================================
 SCQ7_REVERSE_CYPHER = """
 MATCH (admin:AdminUnit {uri:$admin})-[:INTERSECTS]->(l:LSOA)
 OPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)
@@ -746,8 +699,6 @@ ORDER BY avg_school_fsm_pct DESC, lsoa_code
 LIMIT $limit
 """
 
-# SCQ3: cycle-free paths over LSOA_TOUCHES, per the paper's definition. The
-# hop bound is a tractability necessity, not part of the definition.
 SCQ3_CYPHER_TEMPLATE = """
 // Between, per the IJGI 2024 definition (Section 3.4): a region lies between
 // two others when it sits on a path linking them, where the path contains no
@@ -781,12 +732,6 @@ RETURN
 ORDER BY hops
 """
 
-# The same definition over the administrative hierarchy. The only changes are
-# the node label, the key property and the relationship: TOUCHES between
-# AdminUnit nodes is asserted by YAGO2geo itself, so this variant answers the
-# identical question through a NATIVE relation, while the LSOA variant above
-# has to walk adjacency that was computed from geometry. Running one form over
-# both hierarchies is what makes the provenance contrast visible.
 SCQ3_ADMIN_CYPHER_TEMPLATE = """
 MATCH
     (a:AdminUnit {uri:$lsoa_a}),
@@ -811,9 +756,6 @@ ORDER BY hops
 """
 
 
-# SCQ8 official ANSWER (grouped per administrative unit) and its
-# pair-level EVIDENCE, in both directions. Single source of truth for
-# the Cross-hierarchy page AND the SCQ Demonstrator.
 SCQ8_ANSWER_CYPHER = """
 MATCH (x:LSOA {code:$lsoa})
     -[:GRAPH_NEAR]-(near_lsoa:LSOA)
@@ -914,29 +856,14 @@ ORDER BY avg_school_fsm_pct DESC, lsoa_code
 LIMIT $limit
 """
 
-# Supervisor's baseline table applied per question: the answering MODE and its
-# geometric cost, kept separate from the provenance triad. Provenance answers
-# "where did the relation come from"; mode answers "how was it computed and
-# what did it cost". Only Native counts toward model completeness.
 def hl(text: str) -> str:
-    """Mark the words in a quotation that carry the warrant.
-
-    Highlighting is a reading aid, not an edit: the quotation stays verbatim
-    and only its decisive terms are picked out, so a reader can see at a
-    glance which words justify the question.
-    """
+    """Mark the words in a quotation that carry the warrant."""
     return (
         "<mark style='background:rgba(234,88,12,.22);"
         "padding:0 3px;border-radius:3px;'>" + text + "</mark>"
     )
 
 
-# Literature grounding, quoted verbatim with page numbers, so each question
-# shows the published finding that makes it a real analyst question rather
-# than a template fitted to the instrument. Sandu et al. supply the WARRANT
-# for asking; their statistical method (Moran's I, hot-spot analysis, GWR)
-# is a different
-# notion of proximity and is deliberately NOT imported.
 SCQ_WARRANT = {
     "SCQ1": {
         "quote": (
@@ -1086,10 +1013,6 @@ SCQ_WARRANT = {
     },
 }
 
-# Three SCQ forms carry no warrant from the education-inequality
-# literature. They are recorded here with the reason left visible rather
-# than filled with a manufactured question, because an honest empty cell is
-# itself a finding about the fit between the instrument and the domain.
 SCQ_NO_WARRANT = {
     "SCQ3": {
         "status": "No natural question in this domain",
@@ -1145,19 +1068,6 @@ SANDU_REFERENCE = (
 )
 
 
-# =============================================================================
-# TASK 3 EVIDENCE — the warrant document, per question
-# =============================================================================
-# One entry per SCQ, holding exactly what the Task 3 document holds: the
-# instantiated question, the warrant rows with their verbatim quotations and
-# pages, the critical assessment, and the analyst questions the relation
-# supports. Kept as data rather than prose so the demonstrator and the
-# document cannot drift apart.
-#
-# Only two sources meet the scope set by the supervisor — Welsh and concerned
-# with educational attainment. Where a row reads NO WARRANT FOUND the source
-# was examined and nothing supporting was located; the cell stays empty rather
-# than being filled with an adjacent concept.
 
 SCQ_EVIDENCE: Dict[str, Dict[str, Any]] = {
     "SCQ1": {
@@ -1608,24 +1518,7 @@ TASK3_REFERENCES = [
 ]
 
 
-# =============================================================================
-# NATURAL-LANGUAGE QUERY ENGINE
-# =============================================================================
-# Rule-based rather than model-backed, and deliberately so. A spatial
-# competency question has an exact definition, and the scorecard measures that
-# definition; a parser that sometimes reads "near" as distance and sometimes
-# as two touches-steps would put noise inside the instrument. A rule table is
-# also deterministic, needs no API key, runs offline, and can be inspected by
-# a marker who has no credentials of ours.
-#
-# The engine reports what it matched, so the reader can see the reasoning
-# rather than trust it: which relation was recognised, on what evidence, and
-# what was left undecided.
 
-# Order matters. Negations and compound forms are tested before the simple
-# forms they contain: "not adjacent" before "adjacent", "near but not
-# intersecting" before "near", "intersect" before everything that mentions an
-# administrative unit.
 NL_RELATION_RULES: List[Tuple[str, List[str], str]] = [
     (
         "SCQ8",
@@ -1703,10 +1596,6 @@ NL_RELATION_RULES: List[Tuple[str, List[str], str]] = [
     ),
 ]
 
-# What the question is asking ABOUT, once the relation is known. These do not
-# change which query runs - every SCQ answer already carries all four
-# variables - but they tell the reader which column to look at, and they are
-# what the warrant document calls the CONTENT half of a question.
 NL_FOCUS_RULES: List[Tuple[str, List[str], str]] = [
     ("fsm", ["fsm", "free school meal", "prydau ysgol am ddim"],
      "School FSM %"),
@@ -1723,15 +1612,6 @@ NL_FOCUS_RULES: List[Tuple[str, List[str], str]] = [
 _NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
 
 
-# Which lens mode a phrase asks for. Order matters: the longest and most
-# specific phrases are tested first, so "not near" never matches "near".
-# Education thresholds are read SEPARATELY from the spatial form. A sentence
-# can carry both ("schools near Cathays with attendance below 90"), and the
-# two halves are answered by different machinery: the eight SCQ forms hold no
-# filter control at all, while the lens keys do. Reading them apart means a
-# threshold is never silently dropped and never silently invented.
-# Both languages are matched, because an Arabic sentence that is understood
-# and then routed to a form that cannot hold it is worse than one refused.
 _EDU_FILTER_RULES = [
     ("Low attendance", (
         r"attendance\s*(?:is\s*)?(?:be?llow|below|under|less than|<=?)\s*\d+",
@@ -1753,9 +1633,6 @@ _EDU_FILTER_RULES = [
 ]
 
 
-# Negation reverses a question's meaning, and matching only the positive
-# phrase inside it would return the exact opposite of what was asked. Any
-# sentence carrying one of these is refused rather than half-understood.
 _NEGATION_WORDS = (
     "not near", "not adjacent", "not touching", "not bordering",
     "non-adjacent", "not neighbour", "not neighbor", "far from",
@@ -1771,11 +1648,7 @@ def has_negation(text):
 
 
 def parse_threshold_value(text):
-    """The number the sentence actually names, if it names one.
-
-    Without this the app recognised "attendance below 85" and then applied
-    its own default of 90 \u2014 an answer to a question nobody asked.
-    """
+    """The number the sentence actually names, if it names one."""
     m = re.search(
         r"(?:below|under|less than|above|over|greater than|<=?|>=?|"
         r"\u0627\u0642\u0644|\u0623\u0642\u0644|\u062a\u062d\u062a|"
@@ -1792,9 +1665,6 @@ def parse_threshold_value(text):
     return v if 0 < v <= 100 else None
 
 
-# School phase is a THIRD condition, independent of the spatial relation and
-# of the education threshold. It used to be dropped in silence: a question
-# asking for secondary schools got every phase back and said nothing.
 _PHASE_WORDS = {
     "Secondary": ("secondary", "\u062b\u0627\u0646\u0648"),
     "Primary": ("primary", "\u0627\u0628\u062a\u062f\u0627\u0626"),
@@ -1821,7 +1691,6 @@ def parse_education_filter(text):
     return None
 
 
-# The eight spatial forms take no education filter; only the lens keys do.
 _FILTERABLE_FORMS = ("LENS", "SCHOOL_LENS")
 
 
@@ -1837,17 +1706,9 @@ _LENS_MODE_PHRASES = [
 ]
 
 
-# School markers in both languages. Testing only the English word sent
-# every Arabic question to an LSOA-anchored form that could not hold it.
 _SCHOOL_WORDS = ("school", "مدرسة", "مدارس", "المدارس", "المدرسة")
 
 
-# The kind-word a reader writes beside a place name ("Cathays community")
-# names the type of THAT place. Without reading it, the ranking below fell
-# back to a blanket preference for Ward, so a question about a Community was
-# answered for the Ward of the same name -- correct figures for a place the
-# reader never asked about. The same word must therefore not be reused as the
-# type of the NEIGHBOUR, which is the second half of the same defect.
 _UNIT_TYPE_WORDS = [
     ("UnitaryAuthority", ("unitary authority", "unitary authorities",
                           "county borough", "\u0633\u0644\u0637\u0629",
@@ -1861,11 +1722,7 @@ _UNIT_TYPE_WORDS = [
 
 
 def _name_tokens(raw_name: str) -> List[str]:
-    """Each half of a bilingual name, so "Caerdydd - Cardiff" matches either.
-
-    Module level rather than nested, because the lens reads the same tokens
-    when deciding which kind-word belongs to the anchor.
-    """
+    """Each half of a bilingual name, so "Caerdydd - Cardiff" matches either."""
     pieces = re.split(r"[-/\u2013,]", raw_name)
     return [
         p.strip().lower()
@@ -1884,11 +1741,7 @@ def _beside_patterns(name: str, word: str) -> Tuple[str, str]:
 
 
 def type_word_beside(low: str, name: str) -> str | None:
-    """The unit type named immediately beside `name`, or None.
-
-    Nothing is inferred from a kind-word elsewhere in the sentence, because
-    that one usually describes what is being asked FOR.
-    """
+    """The unit type named immediately beside `name`, or None."""
     for utype, words in _UNIT_TYPE_WORDS:
         for word in words:
             if any(re.search(pat, low) for pat in _beside_patterns(name, word)):
@@ -1897,12 +1750,7 @@ def type_word_beside(low: str, name: str) -> str | None:
 
 
 def strip_anchor_type_words(low: str, tokens: List[str]) -> str:
-    """Remove only the kind-word attached to the anchor's own name.
-
-    Banning the whole type instead would lose the second, genuine mention:
-    "which communities touch Cathays community" names Community twice, once
-    for the anchor and once for what is being asked for.
-    """
+    """Remove only the kind-word attached to the anchor's own name."""
     out = low
     for tok in tokens:
         for _utype, words in _UNIT_TYPE_WORDS:
@@ -1913,14 +1761,7 @@ def strip_anchor_type_words(low: str, tokens: List[str]) -> str:
 
 
 def parse_lens_intent(text, admin_pair, require_school=True):
-    """Route a school question anchored on an administrative unit.
-
-    Returns a dict of pending lens settings, or None. It fires only when the
-    sentence asks about SCHOOLS and names an administrative unit, because
-    those are exactly the questions the eight spatial forms cannot hold: they
-    are anchored on LSOAs and carry no filter. Nothing here guesses a unit or
-    a relation that the sentence did not contain.
-    """
+    """Route a school question anchored on an administrative unit."""
     low = (text or "").lower()
     if not admin_pair:
         return None
@@ -1939,10 +1780,6 @@ def parse_lens_intent(text, admin_pair, require_school=True):
     if mode is None:
         mode = "direct"
 
-    # Any kind-word standing beside the anchor's own name describes the
-    # anchor. Reading it as the neighbour type was what turned "schools near
-    # Cathays community" into anchor=Ward with neighbour=Community, a pair no
-    # row can satisfy.
     rest = strip_anchor_type_words(low, _name_tokens(parts[0]))
 
     ntype = None
@@ -1953,10 +1790,6 @@ def parse_lens_intent(text, admin_pair, require_school=True):
             ntype = utype
             break
 
-    # Near is defined in the paper inside ONE division: disjoint regions
-    # joined by a path of two touches edges between regions of the same kind.
-    # A neighbour type different from the anchor's cannot be satisfied, so it
-    # is dropped here and reported, rather than silently returning nothing.
     dropped = None
     if mode == "near" and ntype and ntype != atype:
         dropped, ntype = ntype, None
@@ -1975,12 +1808,7 @@ def parse_spatial_question(
     lsoa_options: List[Tuple[str, str]] | None = None,
     admin_options: List[Tuple[str, str]] | None = None,
 ) -> Dict[str, Any]:
-    """Read one question and return what could be identified in it.
-
-    Nothing is guessed. A field the sentence does not determine is returned
-    empty, and the caller leaves the corresponding control untouched rather
-    than filling it with a default that the reader did not ask for.
-    """
+    """Read one question and return what could be identified in it."""
     raw = (text or "").strip()
     low = raw.lower()
     found: Dict[str, Any] = {
@@ -2024,7 +1852,6 @@ def parse_spatial_question(
             "Reading focus: " + ", ".join(found["focus_labels"]) + "."
         )
 
-    # An explicit LSOA code always wins over a name match.
     codes = [c.upper() for c in _NL_CODE.findall(raw)]
     for option in lsoa_options or []:
         code, label = option[0], str(option[1])
@@ -2043,19 +1870,6 @@ def parse_spatial_question(
             "Area: " + "; ".join(a[1] for a in found["areas"]) + "."
         )
 
-    # Taking the first name that appears anywhere in the sentence was wrong:
-    # "Cardiff" matched a community in an English district before it reached
-    # the unitary authority, so the question ran against a unit the reader
-    # never named. Candidates are now ranked, and a tie is reported rather
-    # than resolved silently.
-    # Welsh units carry bilingual names such as "Caerdydd - Cardiff", so
-    # requiring the whole name to appear in the sentence never matched: a
-    # reader writes "Cardiff", not both halves. Each half is tested on its
-    # own, as a whole word.
-    # Only the two containment forms use an administrative unit. Reporting a
-    # match for the others put "Blaenau Gwent | UnitaryAuthority" beside a
-    # question about neighbouring LSOAs, which reads as though the unit had
-    # been used when it had not.
     admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6"}
 
     candidates: List[Tuple[int, str, Tuple[str, str]]] = []
@@ -2075,10 +1889,6 @@ def parse_spatial_question(
         if not hit_token:
             continue
         name = hit_token
-        # A kind-word written beside the name settles the type outright; the
-        # blanket preference below applies only when the reader gave none.
-        # Cardiff has a Ward, a Community and a Unitary Authority of the same
-        # name, so guessing here silently answers a different question.
         score = 40
         beside = type_word_beside(low, name)
         if beside:
@@ -2113,16 +1923,10 @@ def parse_spatial_question(
     return found
 
 
-# The project description registered in PATS names "potential LLM integration
-# for query understanding", so a model path belongs in the system. It is not
-# the default: the rule table is deterministic, needs no key and runs offline,
-# which are the properties an instrument needs. The model is offered as a
-# comparison so the choice can be evidenced rather than asserted.
 
+# Natural-language query engine
 NL_LLM_MODEL = "gemini-3.6-flash"
-NL_LLM_CALL_CAP = 500         # per browser session; the prepaid credit and
-                              # the project spend cap are the real ceiling,
-                              # this only stops a runaway loop on one tab
+NL_LLM_CALL_CAP = 500
 
 
 def nl_llm_available() -> bool:
@@ -2146,13 +1950,7 @@ def _nl_llm_key() -> str | None:
 
 
 def _nl_json(payload: str) -> Dict[str, Any]:
-    """Read the JSON object out of a model reply.
-
-    Replies arrive wrapped in fences, prefaced with a sentence, or cut short
-    when the model spends its budget before finishing. Taking the outermost
-    braces recovers the usable cases; the rest raise and fall back to the
-    rule table.
-    """
+    """Read the JSON object out of a model reply."""
     text = (payload or "").replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(text)
@@ -2168,12 +1966,7 @@ def _nl_json(payload: str) -> Dict[str, Any]:
 
 
 def _nl_llm_base_url() -> str | None:
-    """Any OpenAI-compatible endpoint, so the provider is a setting.
-
-    Several providers, including Google's Gemini, expose an OpenAI-compatible
-    URL. Leaving this configurable means the parser can be pointed at a free
-    tier without touching the code.
-    """
+    """Any OpenAI-compatible endpoint, so the provider is a setting."""
     try:
         url = st.secrets.get("OPENAI_BASE_URL")
         if url:
@@ -2228,13 +2021,7 @@ def llm_parse_question(
     lsoa_options: List[Tuple[str, str]] | None = None,
     admin_options: List[Tuple[str, str]] | None = None,
 ) -> Dict[str, Any]:
-    """Ask a model for the same structure the rule table produces.
-
-    The model is constrained to the eight forms and asked for JSON only, and
-    its answer is validated against the same vocabulary; anything outside it
-    is discarded rather than trusted. On any failure the rule table answers,
-    so the interface never depends on the network.
-    """
+    """Ask a model for the same structure the rule table produces."""
     used = st.session_state.get("nl_llm_calls", 0)
     if used >= NL_LLM_CALL_CAP:
         fallback = parse_spatial_question(text, lsoa_options, admin_options)
@@ -2313,10 +2100,6 @@ def llm_parse_question(
     if not scq:
         result["unmatched"].append("The model returned no recognised form.")
 
-    # Names and codes are resolved locally, and by the same ranked matcher
-    # the rule table uses. The model only says which form the question takes;
-    # letting it also choose the unit put "Ashchurch with Walton Cardiff
-    # Ward" in place of Cardiff, because that name contains the word.
     resolver_text = " ".join(
         [text, str(data.get("place") or "")]
         + [str(c) for c in (data.get("codes") or [])]
@@ -2353,12 +2136,7 @@ def render_nl_search(
     lsoa_options: List[Tuple[str, str]] | None,
     admin_options: List[Tuple[str, str]] | None,
 ) -> None:
-    """A question box that drives the controls below it.
-
-    The box sets the selectors rather than running its own query, so the
-    answer a reader sees is always produced by the same code path as the
-    manual route. Nothing is hidden behind the sentence.
-    """
+    """A question box that drives the controls below it."""
     st.markdown(
         "<div class='nl-wrap' style='margin-top:2.6rem;"
         "margin-bottom:1.1rem;border-radius:14px'>"
@@ -2369,25 +2147,7 @@ def render_nl_search(
         unsafe_allow_html=True,
     )
 
-    # The examples come before the box on purpose. Streamlit refuses to write
-    # to a widget's state after that widget has been created in the same run,
-    # so a button that fills the box has to be drawn first.
-    # The suggestions come from the same library the warrant document holds,
-    # grouped by the relation they exercise. Grouping matters: it shows that
-    # each relation answers a family of questions rather than one, which is
-    # the point the eight-form framework is making.
-    # Examples must be drawn before the input: Streamlit refuses to write to
-    # a widget's state after that widget exists in the same run. Each one
-    # exercises a different relation and a different provenance, so clicking
-    # through them walks the reader across the boundary the project is about.
-    # Examples must be drawn before the input: Streamlit refuses to write to
-    # a widget's state after that widget exists in the same run. They are
-    # collapsed by default so the box stays the first thing a reader meets.
-    # The second group is the honest half: questions the box cannot parse,
-    # named rather than hidden, with the control that can answer them.
 
-    # One short line instead of a suggestion list: it says what the box
-    # reads and what it refuses, which is the part a reader needs.
     st.caption(
         "The box reads the relation and the place in a sentence, and a "
         "numeric threshold where one is given. A negated sentence is "
@@ -2412,11 +2172,6 @@ def render_nl_search(
     if st.session_state.pop("nl_autorun", False):
         asked = True
 
-    # Both options are always visible, whether or not a key is configured.
-    # Hiding the model option would leave a reader unable to see that the
-    # system has two parsers and that one of them was chosen; showing it
-    # disabled, with the reason stated, makes the choice part of the
-    # interface rather than something buried in the write-up.
     llm_ready = nl_llm_available()
     mode = st.radio(
         "Parser",
@@ -2461,8 +2216,6 @@ def render_nl_search(
 
     st.session_state.nl_last = parsed
 
-    # Setting the widget state before the widget is drawn is what makes the
-    # sentence move the controls; the query itself is left to the normal path.
     changed = []
     if parsed["scq"]:
         st.session_state["scq_select"] = parsed["scq"]
@@ -2470,7 +2223,6 @@ def render_nl_search(
     scq = parsed["scq"]
     if scq and parsed["areas"]:
         if scq == "SCQ3" and len(parsed["areas"]) >= 2:
-            # SCQ3 names its two endpoint widgets in lower case.
             st.session_state["scq3_lsoa_a"] = parsed["areas"][0]
             st.session_state["scq3_lsoa_b"] = parsed["areas"][1]
             changed.append("both endpoints")
@@ -2481,20 +2233,12 @@ def render_nl_search(
         st.session_state[f"{scq}_admin"] = parsed["admin"]
         changed.append(parsed["admin"][1])
 
-    # A cross-hierarchy question that names an administrative unit and no
-    # LSOA has to start from the administrative side. Without this the form
-    # opens on its LSOA direction and then asks for an LSOA the sentence
-    # never mentioned, which reads as a failure even though the answer was
-    # available from the other direction over the same stored facts.
     if scq in ("SCQ7", "SCQ8"):
         if parsed["admin"] and not parsed["areas"]:
             st.session_state[f"{scq}_direction"] = "admin"
             changed.append("started from the administrative unit")
         elif parsed["areas"]:
             st.session_state[f"{scq}_direction"] = "lsoa"
-    # A threshold in the sentence is carried to the controls that can hold
-    # one, and reported plainly when the chosen form cannot. Dropping it in
-    # silence would let a reader believe a filter had been applied.
     edu = parse_education_filter(parsed.get("text", ""))
     if edu:
         st.session_state["LENS_filter"] = edu
@@ -2507,14 +2251,6 @@ def render_nl_search(
                 f"filter \u2014 it is ready in Education lens and From a school"
             )
 
-    # A school question anchored on an administrative unit belongs to the
-    # lens, not to one of the eight forms: the eight are LSOA-anchored and
-    # hold no filter, so answering there would answer a different question.
-    # The settings are parked rather than written, because the option lists
-    # they must match are only known once the branch queries the graph.
-    # The question's own answer is parked here, complete and independent of
-    # the manual panel. It carries everything the query needs, so the answer
-    # can be produced without a single widget being created.
     if has_negation(parsed.get("text", "")):
         st.session_state["nl_answer"] = {"kind": None}
         st.session_state["nl_negated"] = True
@@ -2528,12 +2264,6 @@ def render_nl_search(
 
     _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
 
-    # A question that names an administrative unit and no LSOA cannot be
-    # answered by an LSOA-anchored form: SCQ1, SCQ2 and SCQ4 all require a
-    # statistical anchor and there is no administrative variant of them.
-    # The lens holds the same relations over the administrative graph, so
-    # the question goes there instead of dying in a form that cannot take
-    # it. Whether the answer is units or schools is decided by the sentence.
     _want_units = False
     if (
         not _lens
@@ -2541,11 +2271,6 @@ def render_nl_search(
         and not parsed.get("areas")
         and scq in (None, "SCQ1", "SCQ2", "SCQ3", "SCQ4")
     ):
-        # A question that names a unit and no LSOA cannot be answered by an
-        # LSOA-anchored form, and a question that names a unit but matches no
-        # form at all used to produce nothing whatever. Both go to the lens,
-        # read by the same rules as a school question so that the anchor type
-        # and the neighbour type are separated identically.
         _lens = parse_lens_intent(
             parsed.get("text", ""), parsed.get("admin"), require_school=False
         )
@@ -2595,9 +2320,6 @@ def render_nl_search(
     st.session_state["nl_controls_set"] = changed
     _resolved = bool(parsed.get("areas")) or bool(parsed.get("admin"))
     if changed and not _resolved:
-        # A form was matched but no place in the sentence could be resolved.
-        # Opening the panel here would demand a value the reader never gave
-        # and make a naming problem look like a broken question.
         st.session_state["nl_unresolved"] = True
     if changed:
         st.rerun()
@@ -2631,8 +2353,6 @@ def render_nl_understanding() -> None:
     warn = "".join(
         f"<div class='nl-warn'>{escape(u)}</div>" for u in parsed["unmatched"]
     )
-    # Which engine read the sentence is part of the answer, not a detail: a
-    # reader should never have to guess whether a model was involved.
     source = str(parsed.get("parser") or "rule-based")
     badge_class = "nl-src-llm" if source.startswith("LLM") else "nl-src-rule"
     detail = (
@@ -2654,11 +2374,7 @@ def render_nl_understanding() -> None:
 
 
 def render_scq_evidence(scq_key: str) -> None:
-    """Show the Task 3 warrant for one question, then the questions it answers.
-
-    Colours come from theme variables rather than fixed hex values, so the
-    block reads correctly in both the light and the dark skin.
-    """
+    """Show the Task 3 warrant for one question, then the questions it answers."""
     ev = SCQ_EVIDENCE.get(scq_key)
     if not ev:
         return
@@ -2749,22 +2465,6 @@ MODE_NOTE = {
 }
 
 
-# ---------------------------------------------------------------------------
-# EDUCATION LENS — schools reached through any relation the graph already has
-#
-# Not a ninth SCQ form. Each variant composes relations with DIFFERENT
-# provenances in one answer, which is the thing the integration made possible:
-#
-#   anchor --INTERSECTS--> LSOA <--LOCATED_IN-- School     (Geometry-origin)
-#   anchor --TOUCHES-->    unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
-#   anchor <--WITHIN--     unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
-#   anchor --WITHIN-->     unit --INTERSECTS--> LSOA ...   (Native, then Geometry-origin)
-#
-# A direct INTERSECTS count confirmed all three anchor types carry the
-# relation: Community 8,423, UnitaryAuthority 2,407, Ward 2,344. The
-# neighbour type is a free parameter, so Community->Ward, Ward->Community and
-# every other pair the data actually holds can be asked for.
-# ---------------------------------------------------------------------------
 _LENS_TAIL = """
 MATCH (l)<-[:LOCATED_IN]-(s:School)
 WHERE ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)
@@ -2841,10 +2541,6 @@ LENS_MODES = {
 }
 
 
-# School-anchored lens. This travels the COMPUTED side of the graph:
-# LSOA_TOUCHES is geometry-origin, GRAPH_NEAR is derived from it. "Which
-# schools are near my school" is answered through statistical geography,
-# not administrative geography, and the provenance line says so.
 SCHOOL_LENS_CYPHER = {
     "same": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(l:LSOA)\n" + '\nMATCH (l)<-[:LOCATED_IN]-(s:School)\nWHERE s <> me\n  AND ($fsm_min IS NULL OR s.fsm_pct >= $fsm_min)\n  AND ($att_max IS NULL OR s.attendance_pct <= $att_max)\n  AND ($dep IS NULL OR l.deprivation = $dep)\n  AND ($phase IS NULL OR s.phase_group = $phase)\nRETURN DISTINCT\n    coalesce(s.school_name, s.name, s.code) AS school,\n    s.phase_group                           AS phase,\n    l.code                                  AS lsoa_code,\n    coalesce(l.name, l.LSOA_Name, l.code)   AS lsoa_name,\n    l.deprivation                           AS deprivation,\n    l.wimd_decile                           AS wimd_decile,\n    s.fsm_pct                               AS fsm_pct,\n    s.attendance_pct                        AS attendance_pct,\n    s.capped9_score                         AS capped9_score\nORDER BY fsm_pct DESC\nLIMIT $limit\n'),
     "touch": ("MATCH (me:School {code:$school})-[:LOCATED_IN]->(home:LSOA)\n"
@@ -2879,13 +2575,7 @@ def school_lens_options(cfg):
 
 
 def types_with_intersects(cfg):
-    """Administrative types that can reach an LSOA, and therefore schools.
-
-    A verified count returned Community 8,423, UnitaryAuthority 2,407,
-    Ward 2,344 and nothing else. Types outside this set can still be asked
-    about as units; they simply cannot carry a school answer, and saying so
-    is part of the result rather than a failure of the interface.
-    """
+    """Administrative types that can reach an LSOA, and therefore schools."""
     return {
         str(v) for v, _ in safe_options(cfg, """
         MATCH (a:AdminUnit)-[:INTERSECTS]->(:LSOA)
@@ -2895,21 +2585,7 @@ def types_with_intersects(cfg):
 
 
 def nl_admin_options(cfg):
-    """Every named administrative unit the question box should recognise.
-
-    Scoped to units that intersect an LSOA. Every LSOA in this graph is
-    Welsh, so this is the Welsh administrative geography and nothing else.
-    Without the scope the list carried the whole of Great Britain, and a
-    question about Cathays resolved to a ward in Devon because a naive
-    substring match had 19,000 more chances to be wrong.
-
-    The box previously resolved names against `admin_options(cfg,
-    "admin_parent")`, which returns only units that HAVE a child. A Community
-    such as Cathays has none, so it was never recognised, `admin` came back
-    empty, and every school question fell through to an LSOA-anchored form
-    that then asked for an LSOA the sentence never named. This list is the
-    three types that can anchor a question, whether or not they are parents.
-    """
+    """Every named administrative unit the question box should recognise."""
     return safe_options(cfg, """
     MATCH (a:AdminUnit)
     WHERE a.type IN ['Ward', 'Community', 'UnitaryAuthority']
@@ -2951,11 +2627,6 @@ def lens_unit_types(cfg):
     ]
 
 
-# Units-as-answer variants. The same relation heads as the school lens, but
-# returning the administrative units themselves. "Which communities are near
-# Cathays" is a question ABOUT communities: answering it with schools would
-# answer a different question. Near follows the IJGI 2024 definition exactly:
-# disjoint, with a path of two touches edges.
 LENS_UNIT_CYPHER = {
     'touches': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
@@ -3364,11 +3035,6 @@ LIMIT $limit
     },
 }
 
-# Policy mapping table shown on the Policy Questions page.
-# The wording is deliberately conservative:
-# - school metrics strengthen the education use case;
-# - SCQ3 remains weak/optional unless clusters are formally defined;
-# - SCQ5/SCQ6 are retained as administrative comparisons, not education rows.
 POLICY_LIBRARY = [
     ["SCQ1", "Which LSOAs with visible school pressure border the selected LSOA?", "Use LSOA_TOUCHES and show school FSM, attendance, and secondary performance indicators for neighbouring LSOAs.", "Task 3.2 + Task 4.1", "LSOA_TOUCHES + School metrics", "Geometry-origin"],
     ["SCQ2", "Which graph-near LSOAs show school pressure?", "Use GRAPH_NEAR as qualitative proximity and summarise school FSM, attendance, and secondary performance indicators.", "Task 3.2 + Task 4.1", "GRAPH_NEAR + School metrics", "Derived from geometry-origin"],
@@ -3382,9 +3048,6 @@ POLICY_LIBRARY = [
     ["School query", "Which schools in high deprivation are far from public transport?", "Use absence of DISTANCE_NEAR after School–LSOA deprivation filtering.", "Task 2.5", "DISTANCE_NEAR absence", "Geometry-origin"],
 ]
 
-# Native model completeness table.
-# This table evaluates what the original YAGO2geo-style administrative model
-# can represent natively or by traversal over native administrative relations.
 MODEL_COMPLETENESS = pd.DataFrame([
     ["Ward", "Ward", "Touches, near/far/between", "TOUCHES native; near/far/between by traversal", "Complete (model)"],
     ["Community", "Community", "Touches, near/far/between", "TOUCHES native; rest by traversal", "Complete (model)"],
@@ -3394,10 +3057,6 @@ MODEL_COMPLETENESS = pd.DataFrame([
     ["Community", "LSOA", "Intersect, near", "None native in YAGO2geo", "Missing — report"],
 ], columns=["Domain", "Range", "Relations needed", "Native or derivable from native", "Status"])
 
-# Education Use Case scorecard.
-# "No" here does not mean the app cannot answer the question; it means the
-# original native model does not contain the required LSOA or cross-hierarchy
-# relation. Geometry-origin and derived answers are reported separately.
 SCQ_SCORECARD = pd.DataFrame([
     ["SCQ1", "LSOA borders LSOA", "No", "Geometry: computed LSOA_TOUCHES", "No"],
     ["SCQ2", "LSOA near a cluster", "No", "Traversal over computed LSOA_TOUCHES / GRAPH_NEAR", "No"],
@@ -3409,9 +3068,6 @@ SCQ_SCORECARD = pd.DataFrame([
     ["SCQ8", "Ward/Community near LSOA", "No", "Geometry-origin + traversal", "No"],
 ], columns=["SCQ", "Education-use-case question", "Native model answer?", "How the demonstrator answers", "Counts toward model completeness"])
 
-# Demonstrator coverage table.
-# This records what the Streamlit/Neo4j artifact can execute after the project
-# has added computed LSOA, INTERSECTS, GRAPH_NEAR, and school metric evidence.
 DEMO_COVERAGE = pd.DataFrame([
     ["SCQ1", "Yes", "LSOA_TOUCHES", "Geometry-origin"],
     ["SCQ2", "Yes", "GRAPH_NEAR", "Derived from geometry-origin"],
@@ -3424,11 +3080,7 @@ DEMO_COVERAGE = pd.DataFrame([
 ], columns=["SCQ", "Demonstrator answer?", "Relation/query", "Provenance"])
 
 
-# =============================================================================
-# NEO4J HELPERS
-# =============================================================================
 def sidebar_config() -> Dict[str, str]:
-    # Connection is fixed in the code to keep the evaluator-facing UI clean.
     cfg = {
         "uri": DEFAULT_URI,
         "user": DEFAULT_USER,
@@ -3454,9 +3106,6 @@ def sidebar_config() -> Dict[str, str]:
     st.session_state.dark_theme = cfg["dark_theme"]
 
     try:
-        # Connection is only surfaced when it FAILS. A healthy connection is
-        # the expected state and needs no permanent badge; an unhealthy one
-        # explains why pages look empty.
         _ = scalar(cfg, "RETURN 1", default=1)
     except Exception:
         st.sidebar.markdown("""
@@ -3465,21 +3114,6 @@ def sidebar_config() -> Dict[str, str]:
         </div>
         """, unsafe_allow_html=True)
 
-    # "Task Overview" and "Visual Story" were development-time learning aids
-    # and are intentionally removed from the submission navigation. Their
-    # page functions remain below, uncalled: to restore one for a supervision
-    # demo, add its name back to this list.
-    # Two pages were removed from the delivered site on purpose:
-    #   Cross-hierarchy — merged into the demonstrator, where its seam
-    #     diagram and counts now sit directly under SCQ7 and SCQ8.
-    #   Policy Questions — the derivation of the eight questions from the
-    #     education-inequality literature is an argument made in the
-    #     dissertation text, not a screen to click through.
-    # Both page functions remain in the code, uncalled.
-    # The Evaluation page was used during development and dissertation
-    # analysis, but is not exposed in the delivered demonstrator.  Its page
-    # function remains below for reproducibility, while the SCQ mapping stays
-    # available through the SCQ Demonstrator.
     pages = ["SCQ Demonstrator", "Map"]
     labels = {
         "SCQ Demonstrator": "SCQ Demonstrator",
@@ -3498,7 +3132,6 @@ def sidebar_config() -> Dict[str, str]:
     for p in pages:
         active = st.session_state.page == p
         label = icons[p]
-        # one click only: the callback updates session state before the rerun
         st.sidebar.button(label, key=f"nav_{p}", type="primary" if active else "secondary", use_container_width=True, on_click=_set_page, args=(p,))
     st.sidebar.divider()
 
@@ -3517,9 +3150,6 @@ def sidebar_config() -> Dict[str, str]:
 def apply_dashboard_theme(dark_theme: bool) -> None:
     """Apply a compact infographic-inspired light/dark skin."""
     if dark_theme:
-        # A calm dark slate rather than saturated blue: long reading sessions
-        # need low chroma. Accents are desaturated to sit on it without
-        # vibrating, which is what made red text on blue hard to read.
         app_bg = "linear-gradient(180deg,#141821 0%,#191d28 50%,#12161e 100%)"
         sidebar_bg = "linear-gradient(180deg,#1a1f2b 0%,#141821 100%)"
         panel_bg = "rgba(255,255,255,.055)"
@@ -3543,7 +3173,6 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         option_hover = "rgba(255,255,255,.09)"
         option_hover_text = "#f5d0b0"
         accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
-        # The search frame and its magnifier: white on the dark skin.
         search_ink = "#ffffff"
         search_icon = "%23ffffff"
         ev_bg = "rgba(255,255,255,.045)"
@@ -3556,7 +3185,6 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         ev_partial_bg = "rgba(240,168,104,.14)"
         ev_none_bg = "rgba(154,164,181,.14)"
     else:
-        # Cardiff University red, used as a soft warm tint rather than grey.
         app_bg = "#ffffff"
         sidebar_bg = "#ffffff"
         panel_bg = "#ffffff"
@@ -3580,8 +3208,6 @@ def apply_dashboard_theme(dark_theme: bool) -> None:
         option_hover = "#fdeef1"
         option_hover_text = "#8a1e2b"
         accent_grad = "linear-gradient(135deg,#D73648,#b8283f)"
-        # Cardiff red, sampled from the crest, so the box reads as a search
-        # field at a glance rather than as one more input.
         search_ink = "#D73648"
         search_icon = "%23D73648"
         ev_bg = "#ffffff"
@@ -4085,14 +3711,6 @@ mark {{ color:inherit; }}
         unsafe_allow_html=True,
     )
 
-# PERFORMANCE NOTE
-# The previous version opened a brand-new Neo4j driver for every single query
-# and closed it again in a finally block. Each page render fires several
-# queries, so the app paid a full connection handshake many times per click,
-# which is the main reason the interface felt sluggish. The driver is designed
-# to be created once and reused, so it is cached as a Streamlit resource and
-# the per-query close is removed. Sessions are still opened and closed per
-# query, which is the correct unit of work.
 @st.cache_resource(show_spinner=False)
 def _cached_driver(uri: str, user: str, password: str):
     return GraphDatabase.driver(uri, auth=(user, password))
@@ -4102,6 +3720,7 @@ def get_driver(cfg: Dict[str, str]):
     return _cached_driver(cfg["uri"], cfg["user"], cfg["password"])
 
 
+# Neo4j access
 def run_cypher(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None) -> pd.DataFrame:
     params = params or {}
     driver = get_driver(cfg)
@@ -4120,13 +3739,7 @@ def scalar(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = Non
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_options(uri: str, user: str, password: str, database: str,
                     cypher: str) -> List[Tuple[str, str]]:
-    """Dropdown contents cached for an hour.
-
-    Streamlit re-executes the whole script on every widget interaction, so an
-    uncached DISTINCT scan over every School node ran again on each keystroke
-    and on every Clear. The option lists change only when the graph is
-    reloaded, so an hour-long cache is safe and removes those round trips.
-    """
+    """Dropdown contents cached for an hour."""
     cfg = {"uri": uri, "user": user, "password": password, "database": database}
     df = run_cypher(cfg, cypher)
     if df.empty:
@@ -4165,12 +3778,7 @@ def lsoa_options(
     cfg: Dict[str, str],
     option_type: str,
 ) -> List[Tuple[str, str]]:
-    """
-    Return LSOAs that can genuinely answer the selected SCQ.
-
-    Each option is returned as:
-        (LSOA code, "LSOA code | LSOA name")
-    """
+    """Return LSOAs that can genuinely answer the selected SCQ."""
 
     if option_type == "lsoa_touch":
         query = """
@@ -4260,9 +3868,7 @@ def admin_options(
     cfg: Dict[str, str],
     mode: str,
 ) -> List[Tuple[str, str]]:
-    """
-    Return administrative units that can answer SCQ5 or SCQ6.
-    """
+    """Return administrative units that can answer SCQ5 or SCQ6."""
 
     if mode == "admin_intersects":
         query = """
@@ -4307,10 +3913,6 @@ def admin_options(
     LIMIT 20000
     """
 
-    # The former cap of 500 silently truncated an alphabetically sorted list
-    # of roughly 19,000 units, so anything past the early letters could not
-    # be selected at all. The selectbox is type-to-search, so the full list
-    # is usable.
     return safe_options(cfg, query)
 
 def choose_lsoa_pair(cfg: Dict[str, str]) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
@@ -4335,18 +3937,10 @@ def scq3_pair_options(cfg: Dict[str, str]) -> List[Tuple[Tuple[str, str], str]]:
     return [((str(r["a_code"]), str(r["b_code"])), f"{r['a_label']}  →  {r['b_label']}") for _, r in df.iterrows()]
 
 
-# =============================================================================
-# UI COMPONENTS
-# =============================================================================
 @st.cache_data(show_spinner=False)
 @st.cache_data(show_spinner=False)
 def _image_data_uri(filename: str) -> str:
-    """An image beside app.py as an inline data URI.
-
-    Read from disk and embedded rather than linked, so the header renders
-    identically offline and on a marker's machine with no network. A missing
-    file returns an empty string and the header simply omits the image.
-    """
+    """An image beside app.py as an inline data URI."""
     import base64
 
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
@@ -4368,9 +3962,6 @@ def hero() -> None:
         f"<img class='hero-logo' src='{logo}' "
         "alt='Cardiff University' />" if logo else ""
     )
-    # Drop wales_education_kg.png beside app.py and it appears on the right of
-    # the header. If the file is absent the header keeps its old single-column
-    # shape, so a missing image never breaks the page.
     wales_uri = _image_data_uri("wales_education_kg.png")
     wales = (
         f"<img class='hero-wales' src='{wales_uri}' alt='Wales' />"
@@ -4401,8 +3992,7 @@ def hero() -> None:
 
 
 def task_badge(task: str, keyword_sentence: str, status: str = "") -> None:
-    """Page header. The status argument is accepted but no longer shown:
-    progress labels belong in the research log, not on a delivered site."""
+    """Page header. The status argument is accepted but no longer shown:"""
     st.markdown(
         f"""
 <div class="task-card">
@@ -4441,8 +4031,6 @@ def render_task_card(t: Dict[str, Any]) -> None:
     )
 
 
-# Card colour key, shared by every map card: each label keeps its own accent
-# colour and its value inherits the same colour, so cards stay scannable.
 C_HEAD = "#0b2a5b"
 C_MUTED = "#64748b"
 C_DEP = "#ff4f79"
@@ -4457,12 +4045,7 @@ C_TRAN = "#db2777"
 
 
 def _school_card_fields(summary: Dict[str, Any]) -> Dict[str, str]:
-    """Hover-card strings for one LSOA's schools, fixed in number.
-
-    The card never lists school names: it would grow with the number of
-    schools and cover the region it describes. Names live in the panel
-    opened by clicking the region.
-    """
+    """Hover-card strings for one LSOA's schools, fixed in number."""
     if not summary:
         return {
             "schools_n": "0",
@@ -4516,11 +4099,6 @@ def _school_tooltip_block() -> str:
     )
 
 
-# LSOA boundaries are stored in the graph as WKT in British National Grid
-# (EPSG:27700) because load_to_neo4j.py reprojects everything to BNG before
-# doing point-in-polygon. deck.gl needs lon/lat, so grid metres are converted
-# here. Self-contained on purpose: no pyproj dependency in the deployed app.
-# Accuracy is a few metres without OSTN15, which is far finer than an LSOA.
 def bng_to_wgs84(east, north):
     a, b = 6377563.396, 6356256.909
     F0 = 0.9996012717
@@ -4554,7 +4132,6 @@ def bng_to_wgs84(east, north):
     dE = east - E0; dE2=dE*dE
     latA = lat - VII*dE2 + VIII*dE2*dE2 - IX*dE2*dE2*dE2
     lonA = lon0 + X*dE - XI*dE*dE2 + XII*dE*dE2*dE2 - XIIA*dE*dE2*dE2*dE2
-    # Helmert OSGB36 -> WGS84
     H = 0.0
     sinP, cosP = math.sin(latA), math.cos(latA)
     sinL, cosL = math.sin(lonA), math.cos(lonA)
@@ -4578,12 +4155,7 @@ def bng_to_wgs84(east, north):
 
 
 def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
-    """Turn a POLYGON / MULTIPOLYGON WKT string into deck.gl ring lists.
-
-    Written without shapely so the deployed app needs no extra dependency.
-    Only exterior rings are kept: holes are rare in LSOA boundaries and
-    deck.gl renders the outline faithfully enough for a choropleth.
-    """
+    """Turn a POLYGON / MULTIPOLYGON WKT string into deck.gl ring lists."""
     if not wkt_text:
         return []
     text = str(wkt_text).strip().upper()
@@ -4609,8 +4181,6 @@ def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
                             x, y = float(bits[0]), float(bits[1])
                         except ValueError:
                             continue
-                        # Grid metres are always far outside lon/lat range,
-                        # so magnitude is a safe discriminator.
                         if abs(x) > 180.0 or abs(y) > 90.0:
                             x, y = bng_to_wgs84(x, y)
                         pts.append([x, y])
@@ -4688,13 +4258,6 @@ def cluster_polygons(
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Per-LSOA school detail
-# ---------------------------------------------------------------------------
-# The hover card stays a fixed size and reports only counts and means, because
-# it must not grow with the number of schools. School identities live in a
-# panel below the map, opened by selecting a region. Wales-wide the maximum is
-# five schools in one LSOA, so the panel never needs paging.
 @st.cache_data(show_spinner=False, ttl=600)
 def schools_in_lsoas(
     cfg_key: Tuple[str, str, str, str], codes: Tuple[str, ...]
@@ -4745,12 +4308,7 @@ def _detail_metric(label: str, value: str, colour: str, note: str = "") -> str:
 def render_lsoa_school_panel(
     cfg: Dict[str, str], lsoa_code: str
 ) -> None:
-    """Open one LSOA: its own figures, then a card per school inside it.
-
-    Deliberately below the map rather than inside the hover card. A card that
-    grew with the number of schools would cover the region it describes; a
-    panel can be as tall as it needs to be.
-    """
+    """Open one LSOA: its own figures, then a card per school inside it."""
     if not lsoa_code:
         return
     try:
@@ -4809,8 +4367,6 @@ def render_lsoa_school_panel(
     cap_mean, cap_n = mean_of("capped9_score")
     total = len(rows)
 
-    # A mean over one school is not a mean, and 73% of Welsh LSOAs hold
-    # exactly one school, so the number behind every figure is stated.
     def basis(n: int) -> str:
         if n == 0:
             return "no value recorded"
@@ -4892,13 +4448,7 @@ def render_lsoa_school_panel(
 
 
 def deck_chart_with_click(deck: Any, key: str) -> Dict[str, Any] | None:
-    """Render a deck and return the object the reader clicked, if any.
-
-    Selection events on pydeck charts arrived in a later Streamlit release
-    than the one this app was first written against, so the call is guarded:
-    on an older runtime the chart still renders and the click simply does
-    nothing, with one line on screen saying why.
-    """
+    """Render a deck and return the object the reader clicked, if any."""
     try:
         event = st.pydeck_chart(
             deck,
@@ -4928,12 +4478,7 @@ def deck_chart_with_click(deck: Any, key: str) -> Dict[str, Any] | None:
 def lsoa_school_summary(
     cfg_key: Tuple[str, str, str, str], codes: Tuple[str, ...]
 ) -> pd.DataFrame:
-    """School count and metric means per LSOA, with the basis of each mean.
-
-    The count of schools carrying a value is returned alongside the mean
-    because 802 of the 1,094 Welsh LSOAs that hold a school hold exactly
-    one: a "mean" there is a single value, and the card says so.
-    """
+    """School count and metric means per LSOA, with the basis of each mean."""
     cfg = {
         "uri": cfg_key[0], "user": cfg_key[1],
         "password": cfg_key[2], "database": cfg_key[3],
@@ -5049,24 +4594,6 @@ def school_outline_points(df: pd.DataFrame, bins: int = 34) -> List[Dict[str, fl
     return outline
 
 
-# ---------------------------------------------------------------------------
-# Map pins
-# ---------------------------------------------------------------------------
-# REJECTED ALTERNATIVE — icon atlas
-# The obvious optimisation is a single sprite sheet passed as the layer's
-# iconAtlas prop, with one short key per row. It was implemented and had to be
-# reverted: Streamlit passes layer props through a deck.gl expression parser,
-# which tries to evaluate the atlas string and fails on the data URI with
-# "Unexpected ':' at character 4" (the colon in "data:image/..."). Row DATA is
-# not passed through that parser, so the icon object must travel per row.
-# The four SVGs are therefore minified and built once at import time; the
-# repeated strings compress well over the websocket, and the real cause of the
-# earlier sluggishness was the per-query Neo4j driver, fixed separately above.
-#
-# Pin design: a filled teardrop with a darker outline of the same hue, and a
-# hollow white centre carrying the same darker ring, so the marker reads as a
-# real location pin. mask=False is required: a mask would flatten the outline
-# and fill the hollow centre.
 def _pin_icon(fill: str, stroke: str) -> Dict[str, Any]:
     svg = (
         "<svg xmlns='http://www.w3.org/2000/svg' width='60' height='80' "
@@ -5094,8 +4621,6 @@ PIN_ICONS = {
     "unknown": _pin_icon("#94a3b8", "#475569"),
 }
 
-# Traffic-light icons for the all-bands cluster view: red = worst band on the
-# clustered variable, green = best, grey = the LSOA has no value to band on.
 BAND_PIN_ICONS = {
     "band_red": _pin_icon("#e11d48", "#881337"),
     "band_mid": _pin_icon("#ff8a00", "#a34f00"),
@@ -5104,11 +4629,6 @@ BAND_PIN_ICONS = {
 }
 
 
-# The deck.gl tooltip is absolutely positioned inside the chart wrapper, so a
-# pin near the bottom edge would have its card clipped. Two things are needed:
-# the wrapper must be allowed to overflow, AND the chart's element container
-# must sit above the elements that follow it (legend, Map Cypher expander),
-# otherwise the escaped card renders behind them.
 PYDECK_TOOLTIP_CSS = """
 <style>
 div[data-testid="stElementContainer"]:has(div[data-testid="stDeckGlJsonChart"]) {
@@ -5148,26 +4668,7 @@ def render_school_map(
     polygons_only: bool = False,
     admin_polygon_df: pd.DataFrame | None = None,
 ) -> str | None:
-    """Render the Wales school map with pydeck (deck.gl).
-
-    Why pydeck and not Folium: pydeck ships inside Streamlit itself, so no
-    third-party JavaScript is fetched from an external CDN at render time.
-    Folium and streamlit-folium both failed silently on this machine, which
-    is the signature of a locked-down network blocking the map assets.
-
-    Design notes:
-      * Schools are drawn as location pins (IconLayer), one pin image per
-        deprivation category, each with a darker outline and hollow centre.
-      * Pin images are base64 data URIs, so no icon CDN is required either.
-      * The deck canvas is cleared to a light colour instead of the deck.gl
-        default black, so the map reads as a light dashboard surface even
-        when background tiles are switched off.
-      * No outline polygon is drawn: the approximate hull around the points
-        looked like a false administrative boundary and was removed.
-      * The hover card is laid out in two compact columns and the chart
-        wrapper is allowed to overflow, so the card is never clipped by the
-        bottom edge of the map box.
-    """
+    """Render the Wales school map with pydeck (deck.gl)."""
     chart_df = map_df.copy()
     dep_labels = {
         "high_deprivation": "High",
@@ -5204,10 +4705,6 @@ def render_school_map(
     chart_df["budget_label"] = chart_df["budget_per_pupil_gbp"].apply(
         lambda v: "N/A" if pd.isna(v) else f"GBP {float(v):,.0f}"
     )
-    # Capped 9 is recorded for secondary schools only, so on roughly six in
-    # seven pins the performance block was four N/A boxes and a heading. That
-    # is what pushed the card past the height the map can show. The block is
-    # now built per row and left empty when there is nothing to report.
     _perf_cols = ["capped9_score", "literacy_score", "numeracy_score",
                   "science_score"]
     def _perf_summary(row) -> str:
@@ -5270,9 +4767,6 @@ def render_school_map(
         size_min_pixels=18 if focused else 13,
         size_max_pixels=74,
         pickable=True,
-        # alphaCutoff = -1 turns off alpha-based picking, so the whole pin
-        # rectangle is hoverable instead of only the opaque middle of the
-        # teardrop. Without this, the card only appeared near the centre.
         alpha_cutoff=-1,
     )
 
@@ -5338,9 +4832,6 @@ def render_school_map(
     }
 
     layers = []
-    # Administrative boundaries are a second, deliberately unfilled layer.
-    # They explain the graph path without replacing the LSOA deprivation
-    # polygons underneath or obscuring the school pins above them.
     admin_layer = None
     if admin_polygon_df is not None and not admin_polygon_df.empty:
         admin_rows = []
@@ -5383,8 +4874,6 @@ def render_school_map(
             dep_key = str(prow.get("deprivation") or "unknown")
             base = DEP_FILL.get(dep_key, DEP_FILL["unknown"])
             for ring in _wkt_rings(prow.get("wkt")):
-                # Deeper red for bigger clusters, in the manner of a
-                # choropleth: the shade encodes cluster size.
                 poly_rows.append(
                     {
                         "polygon": ring,
@@ -5426,8 +4915,6 @@ def render_school_map(
                     highlight_color=[124, 58, 237, 190],
                 )
             )
-    # Put the administrative outline above the filled LSOA layer and below
-    # the pins, otherwise the LSOA fill can hide the explanation boundary.
     if admin_layer is not None:
         layers.append(admin_layer)
     if not polygons_only:
@@ -5491,12 +4978,8 @@ def render_school_map(
     deck = pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
-        # No external basemap: tiles are fetched from a third-party service
-        # and are blocked on this network. The pins carry the information, and
-        # the light clearColor below keeps the canvas readable without them.
         map_style=None,
         tooltip=tooltip,
-        # Light canvas instead of the deck.gl default black background.
         parameters={"clearColor": [0.972, 0.980, 0.992, 1]},
     )
     picked_region = None
@@ -5584,9 +5067,6 @@ def render_school_map(
 
 
 
-# =============================================================================
-# EVALUATOR-READY VISUAL COMPONENTS — concise, task-serving, light UI
-# =============================================================================
 def visual_project_pipeline() -> None:
     st.markdown("""
 <div class="visual-card">
@@ -5827,9 +5307,6 @@ def page_visual_story() -> None:
     visual_knowledge_pyramid()
     visual_final_finding()
 
-# =============================================================================
-# PAGES
-# =============================================================================
 def page_task_overview(cfg: Dict[str, str]) -> None:
     hero()
     st.header("Project overview")
@@ -5920,8 +5397,7 @@ RETURN round(avg(spread),2) AS avg_spread,
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def national_spread(cfg_key: Tuple[str, str, str, str], measure: str) -> Dict[str, Any]:
-    """Wales-wide neighbour spread for one measure, so a single result can be
-    read against the national pattern instead of in isolation."""
+    """Wales-wide neighbour spread for one measure, so a single result can be"""
     cfg = {
         "uri": cfg_key[0], "user": cfg_key[1],
         "password": cfg_key[2], "database": cfg_key[3],
@@ -5937,13 +5413,7 @@ def render_result_reading(
     scq_key: str,
     cfg: Dict[str, str] | None = None,
 ) -> None:
-    """Read the returned rows against the Wales-wide pattern.
-
-    A single neighbourhood means little on its own, so each measure is shown
-    twice: the spread among the areas just returned, and the mean spread
-    across all 1,909 LSOAs. The comparison is what turns an example into
-    evidence.
-    """
+    """Read the returned rows against the Wales-wide pattern."""
     if result_df is None or result_df.empty:
         return
 
@@ -6050,14 +5520,7 @@ def lsoa_hop_distance(
     cfg_key: Tuple[str, str, str, str], code_a: str, code_b: str,
     kind: str = "LSOA",
 ) -> int | None:
-    """Shortest LSOA_TOUCHES distance between two LSOAs, or None if unlinked.
-
-    SCQ3 only means anything for a pair that is neither the same area nor
-    directly adjacent: two touching regions are joined by a single edge, so
-    nothing lies between them and every path the enumerator returns is a
-    detour. Knowing the distance also lets the hop bound be suggested rather
-    than guessed.
-    """
+    """Shortest LSOA_TOUCHES distance between two LSOAs, or None if unlinked."""
     if not code_a or not code_b or code_a == code_b:
         return 0
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
@@ -6083,23 +5546,14 @@ def render_answer_map(
     focus_admin: str | None = None,
     show_gap: bool = False,
 ) -> str | None:
-    """Draw the LSOAs in an SCQ answer as coloured regions.
-
-    Answer regions are shaded by deprivation level; the LSOA the question
-    was asked about is outlined so the spatial relation is visible. Nothing
-    is filtered here: the map shows exactly the rows the question returned.
-    """
+    """Draw the LSOAs in an SCQ answer as coloured regions."""
     if result_df is None or result_df.empty:
         return None
 
     code_pattern = re.compile(r"^W\d{8}$")
 
     def harvest(value: Any, sink: List[str]) -> None:
-        """Pull LSOA codes out of scalars, lists and maps alike.
-
-        SCQ3 returns a list of node maps per path rather than a plain code
-        column, so a recursive walk is needed to find the codes at all.
-        """
+        """Pull LSOA codes out of scalars, lists and maps alike."""
         if value is None:
             return
         if isinstance(value, str):
@@ -6127,9 +5581,6 @@ def render_answer_map(
     }
     codes.extend(focus_set)
 
-    # For a complement answer the meaning sits in what is MISSING, so the
-    # excluded neighbours are fetched too and drawn in outline only. Without
-    # them the gap reads as a rendering fault rather than as the answer.
     excluded: set[str] = set()
     if focus_set:
         try:
@@ -6149,9 +5600,6 @@ def render_answer_map(
     if not codes:
         return None
 
-    # The answer itself is never truncated — only the drawing is. A question
-    # like "not adjacent" returns nearly every LSOA in Wales, and rendering
-    # all of them would stall the browser without adding meaning.
     MAP_DRAW_CAP = 2000
     drawn_note = ""
     if len(codes) > MAP_DRAW_CAP:
@@ -6162,8 +5610,6 @@ def render_answer_map(
         )
         keep = [c for c in codes if c in focus_set]
         rest = [c for c in codes if c not in focus_set]
-        # Even stride, not the first N: taking the first N by code would
-        # show only one corner of Wales and misrepresent the answer.
         stride = max(1, len(rest) // max(1, MAP_DRAW_CAP - len(keep)))
         keep += rest[::stride][: MAP_DRAW_CAP - len(keep)]
         codes = keep
@@ -6178,8 +5624,6 @@ def render_answer_map(
     if polys.empty:
         return None
 
-    # School figures for every drawn region, so the hover card carries the
-    # education evidence and not only the deprivation label.
     school_by_code: Dict[str, Dict[str, Any]] = {}
     try:
         sdf = lsoa_school_summary(
@@ -6215,17 +5659,12 @@ def render_answer_map(
         is_focus = str(prow["code"]) in focus_set
         is_excluded = str(prow["code"]) in excluded
         if is_focus:
-            # Same colour family, clearly darker, so the selected LSOA is
-            # unmistakable without changing what its colour means.
             fill = [max(0, int(c * 0.55)) for c in base] + [245]
         elif is_excluded:
             fill = [255, 255, 255, 40]
         else:
             fill = base + [120]
         for ring in _wkt_rings(prow.get("wkt")):
-            # With hundreds of regions on screen the browser chokes on full
-            # boundary detail, so rings are decimated. Shape is preserved at
-            # national zoom; the underlying answer is untouched.
             if heavy and len(ring) > 60:
                 step = len(ring) // 60 + 1
                 ring = ring[::step] + [ring[-1]]
@@ -6284,10 +5723,6 @@ def render_answer_map(
         auto_highlight=True,
         highlight_color=[124, 58, 237, 190],
     )
-    # Framing rule: when the answer is large (a complement question colours
-    # nearly all of Wales) the useful view is the neighbourhood of the LSOA
-    # that was asked about, not the whole country — otherwise the gap that
-    # carries the meaning is invisible. Small answers are framed whole.
     if focus_lats and len(rows) > 60:
         centre_lat = (max(focus_lats) + min(focus_lats)) / 2
         centre_lon = (max(focus_lons) + min(focus_lons)) / 2
@@ -6333,10 +5768,6 @@ def render_answer_map(
         },
     }
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
-    # SCQ7 and SCQ8 fix the administrative side, so the anchor is a ward or
-    # community rather than an LSOA and never appeared on this map: the focus
-    # list only ever held LSOA codes. It is drawn on top, dark and outlined,
-    # so the unit the question was asked about is visible beside its answer.
     map_layers = [layer]
     if focus_admin:
         try:
@@ -6353,9 +5784,6 @@ def render_answer_map(
                     ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
                 anchor_rows.append({
                     "polygon": ring,
-                    # Outline only. A filled anchor sat on top of every LSOA
-                    # inside the unit and absorbed their clicks, so the unit
-                    # is now marked by its border alone.
                     "fill": [0, 0, 0, 0],
                     "line": [17, 24, 39, 255],
                     "width": 6,
@@ -6366,28 +5794,12 @@ def render_answer_map(
                     "role": "The unit you selected",
                     **_school_card_fields({}),
                 })
-        # SCQ8 excludes the LSOAs the unit touches directly, because near
-        # requires disjoint regions. Those excluded areas were simply absent
-        # from the picture, so the answer looked as though it began at the
-        # unit's edge. Drawing them hollow makes the gap visible, which is the
-        # whole difference between near and intersects.
-        # Only a near question leaves a gap. For SCQ7 the LSOAs the unit
-        # intersects ARE the answer, so outlining them as excluded was wrong
-        # and produced the hollow shapes over coloured regions.
         skipped: Tuple[str, ...] = ()
         try:
             skipped = () if not show_gap else admin_direct_lsoas(
                 (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
                 str(focus_admin),
             )
-            # Some GRAPH_NEAR pairs also touch, through triangles in the
-            # adjacency graph, so a code can be both a neighbour and a
-            # genuine answer. Anything the query returned stays in the
-            # answer and is never outlined as excluded.
-            # Only the answer column counts. Scanning every column also
-            # swept up via_base_lsoas, which lists the unit's OWN areas, so
-            # the excluded ring was being cancelled by the very codes it was
-            # meant to draw.
             answered = set()
             for col in ("lsoa_code", "code"):
                 if col in result_df.columns:
@@ -6451,8 +5863,6 @@ def render_answer_map(
                 line_width_min_pixels=2,
                 stroked=True,
                 filled=False,
-                # Not pickable: this is a boundary marker, and everything it
-                # encloses must stay clickable.
                 pickable=False,
             ))
 
@@ -6492,11 +5902,6 @@ def admin_direct_lsoas(
     """LSOA codes the unit intersects directly — the ones near excludes."""
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
-    # Two rings are left out of a near answer, not one. The unit's own LSOAs
-    # are excluded because near requires disjoint regions, and their direct
-    # neighbours are excluded because they touch rather than lie near. Drawing
-    # only the first ring left the answer looking as though it began at the
-    # unit's edge, which is what made near read like intersects.
     df = run_cypher(cfg, """
     MATCH (a:AdminUnit {uri:$uri})-[:INTERSECTS]->(own:LSOA)
     OPTIONAL MATCH (own)-[:LSOA_TOUCHES]-(ring:LSOA)
@@ -6513,12 +5918,7 @@ def admin_direct_lsoas(
 def admin_polygons_by_name(
     cfg_key: Tuple[str, str, str, str], names: Tuple[str, ...]
 ) -> pd.DataFrame:
-    """Boundary polygons for administrative units, looked up by name.
-
-    The SCQ7 answer returns unit names and types but no URI, so there was
-    nothing for the map to resolve. Names are not guaranteed unique across
-    Wales, so this is a fallback: every match is drawn.
-    """
+    """Boundary polygons for administrative units, looked up by name."""
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
     return run_cypher(cfg, """
@@ -6551,14 +5951,6 @@ def admin_polygons(
     )
 
 
-# Containment reads at a glance only if the container is lighter than the
-# thing it contains: the contained unit is drawn on top, so a dark container
-# would simply hide it. Hue carries the administrative level, lightness
-# carries the role in the answer.
-# One hue, three depths. Hue told you the level but said nothing about the
-# nesting, so where a Ward and a Community overlapped the two colours simply
-# competed. Depth carries the level instead: the smaller the unit, the darker
-# it sits, and an overlap reads as one shape shading into another.
 ADMIN_FILL = {
     "UnitaryAuthority": [148, 163, 214],
     "Ward": [79, 98, 168],
@@ -6577,11 +5969,7 @@ ADMIN_DEPTH = {
 def admin_unit_school_counts(
     cfg_key: Tuple[str, str, str, str], uris: Tuple[str, ...]
 ) -> Dict[str, Dict[str, int]]:
-    """How many schools sit inside each drawn unit, in a single round trip.
-
-    One query for the whole map rather than one per polygon, because the
-    containment map can draw hundreds of units at once.
-    """
+    """How many schools sit inside each drawn unit, in a single round trip."""
     if not uris:
         return {}
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
@@ -6606,13 +5994,7 @@ def admin_unit_school_counts(
 def unit_school_detail(
     cfg_key: Tuple[str, str, str, str], uri: str
 ) -> pd.DataFrame:
-    """Every school inside an administrative unit, one row each.
-
-    The path is AdminUnit -[:INTERSECTS]-> LSOA <-[:LOCATED_IN]- School.
-    Neither hop is native YAGO2geo: INTERSECTS is Geometry-origin and
-    LOCATED_IN is Derived from the schools CSV. The card says so, because
-    this page is where provenance is being measured.
-    """
+    """Every school inside an administrative unit, one row each."""
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
     return run_cypher(cfg, """
@@ -6705,20 +6087,9 @@ def render_admin_answer_map(
     focus_lsoa: str | None,
     key: str = "admin_answer_map",
 ) -> Dict[str, Any] | None:
-    """Draw an answer whose rows are administrative units, not LSOAs.
-
-    SCQ7 and SCQ8 read in both directions. When the fixed side is an LSOA the
-    answer is a set of wards or communities, and the ordinary answer map had
-    nothing to draw, because it only recognises LSOA codes. The selected LSOA
-    is the dark anchor; the administrative units it reaches are drawn around
-    it in the same depth palette the containment map uses, so the crossing
-    from the statistical geography to the administrative one is visible.
-    """
+    """Draw an answer whose rows are administrative units, not LSOAs."""
     if result_df is None or result_df.empty:
         return None
-    # Column names differ between the SCQ7 and SCQ8 answers, so the column is
-    # found by its contents rather than its label: any column whose values are
-    # YAGO2geo resource URIs.
     uri_col = None
     for c in result_df.columns:
         series = result_df[c].dropna()
@@ -6732,8 +6103,6 @@ def render_admin_answer_map(
         keys = [str(u) for u in result_df[uri_col].dropna().unique().tolist()]
         by_name = False
     else:
-        # SCQ7 returns unit names without URIs, so fall back to name lookup
-        # rather than drawing nothing at all.
         name_col = next(
             (c for c in result_df.columns
              if str(c).lower() in ("administrative_unit", "unit", "name",
@@ -6747,8 +6116,6 @@ def render_admin_answer_map(
     uris = keys
     if not uris:
         return None
-    # DRAW_CAP is a local in the containment map, not a module constant; this
-    # function needs its own ceiling.
     admin_draw_cap = 400
     if len(uris) > admin_draw_cap:
         st.caption(
@@ -6816,9 +6183,6 @@ def render_admin_answer_map(
     if not rows or not lats:
         return None
 
-    # deck.gl picks whatever is drawn last, so a small unit sitting inside a
-    # larger one was unreachable. Ordering by ring extent puts the smallest
-    # shapes on top, which makes every unit clickable.
     def _extent(r: Dict[str, Any]) -> float:
         ring = r["polygon"]
         xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
@@ -6890,12 +6254,7 @@ def render_admin_containment_map(
     focus_contains: bool,
     key: str = "admin_map",
 ) -> Dict[str, Any] | None:
-    """Draw a containment answer: container pale, contained solid on top.
-
-    focus_contains is True for SCQ6, where the selected unit is the parent
-    and the answer rows are its children, and False for SCQ5, where the
-    selected unit is the child and the answer rows are its parents.
-    """
+    """Draw a containment answer: container pale, contained solid on top."""
     if result_df is None or result_df.empty or "uri" not in result_df.columns:
         return
 
@@ -6903,8 +6262,6 @@ def render_admin_containment_map(
     if not row_uris:
         return
 
-    # Rendering every child of a unitary authority would mean hundreds of
-    # polygons; the table above is never truncated, only the drawing is.
     DRAW_CAP = 400
     drawn_note = ""
     if len(row_uris) > DRAW_CAP:
@@ -6946,8 +6303,6 @@ def render_admin_containment_map(
     for _, prow in polys.iterrows():
         uri = str(prow["uri"])
         is_focus = focus_uri is not None and uri == str(focus_uri)
-        # Whoever does the containing is drawn pale, regardless of which
-        # side of the question it sits on.
         is_container = is_focus if focus_contains else (uri in row_set)
         base = ADMIN_FILL.get(str(prow.get("type")), ADMIN_FILL["Unknown"])
         for ring in _wkt_rings(prow.get("wkt")):
@@ -6957,8 +6312,6 @@ def render_admin_containment_map(
                 lons.append(pt[0]); lats.append(pt[1])
             item = {
                 "polygon": ring,
-                # uri is what the click handler needs to look the unit up;
-                # without it the panel below the map had nothing to open.
                 "uri": uri,
                 "lsoas": school_counts.get(uri, {}).get("lsoas", 0),
                 "schools": school_counts.get(uri, {}).get("schools", 0),
@@ -6976,8 +6329,6 @@ def render_admin_containment_map(
                 str(prow.get("type")), ADMIN_DEPTH["Unknown"]
             )
             if is_container:
-                # The container keeps its thick outline and stays faint, so
-                # anything drawn inside it remains legible through the fill.
                 item["fill"] = base + [max(30, depth // 3)]
                 item["line"] = base + [255]
                 item["width"] = 5
@@ -6991,19 +6342,12 @@ def render_admin_containment_map(
     if not lats:
         return
 
-    # The children of a unitary authority tile it completely, so a pale
-    # container drawn underneath disappears entirely. Its boundary is
-    # therefore redrawn, unfilled, on top of everything.
     outline_rows = [
         {**item, "fill": [0, 0, 0, 0], "width": 6}
         for item in containers
     ]
 
     layers = []
-    # Containers first so the contained units sit on top of them. The outline
-    # copy sits above everything and must NOT be pickable: deck.gl picks by
-    # polygon area, not by stroke, so a transparent container drawn on top
-    # would swallow every hover and report the parent for each child.
     for rows_, layer_id, pickable in (
         (containers, "admin-container", True),
         (contained, "admin-contained", True),
@@ -7091,6 +6435,7 @@ def render_admin_containment_map(
     return picked_unit
 
 
+# SCQ interface
 def page_scq_demonstrator(
     cfg: Dict[str, str],
 ) -> None:
@@ -7106,11 +6451,6 @@ def page_scq_demonstrator(
         "Complete",
     )
 
-    # The question box comes first: a reader who knows what they want to ask
-    # should not have to work out which of eight forms it corresponds to.
-    # Both helpers take a mode. The touch list is the widest LSOA set and the
-    # parent list is the widest administrative one, which is all the parser
-    # needs: it only has to recognise a name, not decide what can answer.
     try:
         nl_lsoas = lsoa_options(cfg, "lsoa_touch")
     except Exception:
@@ -7119,33 +6459,16 @@ def page_scq_demonstrator(
         nl_admin = nl_admin_options(cfg)
     except Exception:
         nl_admin = []
-    # The deterministic panel is the instrument: every figure reported in
-    # the dissertation was produced by it. The sentence box is a
-    # demonstration of query understanding, and it misroutes often enough
-    # that it should not be the first thing a reader meets. So it is folded,
-    # and the eight forms are open.
     with st.expander("Ask a question in your own words", expanded=False):
         render_nl_search(nl_lsoas, nl_admin)
         render_nl_understanding()
 
-    # The panel is the other route, so the sentence's answer is dropped
-    # BEFORE it is drawn, not after. Clearing it afterwards left the old
-    # answer on screen for one more run, which is why it took two clicks
-    # to go away.
     if st.session_state.get("scq_manual_open"):
         st.session_state.pop("nl_answer", None)
 
-    # The answer belongs directly under the question that produced it.
     _answered = render_question_answer(cfg)
 
-    # The question and the controls are one path, not two. Without saying so,
-    # a reader cannot tell whether a selector still holds a value from the
-    # last question or one they chose themselves, which is exactly how a
-    # result for the wrong unit gets read as an answer.
     _driven = st.session_state.get("nl_controls_set") or []
-    # Once the reader changes the form themselves, the sentence no longer
-    # describes what is on screen. Claiming otherwise would misreport the
-    # provenance of the answer, so the notice is dropped instead.
     _nl_last = st.session_state.get("nl_last") or {}
     if _nl_last.get("scq") and st.session_state.get("scq_select") != _nl_last.get("scq"):
         _driven = []
@@ -7165,15 +6488,6 @@ def page_scq_demonstrator(
                 st.session_state.pop("nl_controls_set", None)
                 st.rerun()
 
-    # Nothing is pre-selected. A default would answer a question the reader
-    # never asked, and once a question box sits above these controls there is
-    # no way to tell a default apart from something the sentence set.
-    # The manual route is folded away by default. The box above is the way
-    # in; the eight forms and their selectors are the way to override it or
-    # to work without a sentence. Keeping them closed until asked for stops
-    # a reader wondering whether a selector holds a value they never set.
-    # When a question drives the controls the panel opens itself, because
-    # the reader has to be able to see what the sentence chose.
     if _answered:
         st.divider()
 
@@ -7212,7 +6526,6 @@ def page_scq_demonstrator(
 
     meta = SCQ_META[scq_key]
 
-    # SCQ7/SCQ8 support both starting points over the same stored facts.
     direction = "lsoa"
     if scq_key in ("SCQ7", "SCQ8"):
         direction = direction_toggle(f"{scq_key}_direction")
@@ -7261,10 +6574,6 @@ def page_scq_demonstrator(
             unsafe_allow_html=True,
         )
 
-    # No result-limit control: every SCQ returns its full answer so the
-    # counts on screen are the real figures and can go straight into the
-    # research log. The parameter is kept at a high internal ceiling only to
-    # stop a pathological query from hanging the app.
     limit = 5000
 
     scq3_hops = 6
@@ -7299,10 +6608,6 @@ def page_scq_demonstrator(
             )
             return
 
-        # Landing on an empty state reads as a broken page to anyone who has
-        # not been told to pick something first. Opening on the first Cardiff
-        # LSOA means the demonstrator shows a worked answer on arrival, while
-        # the placeholder stays in the list for anyone who wants it.
         lsoa_choices = [("", "\u2014 choose an LSOA \u2014")] + list(options)
         default_lsoa = next(
             (i for i, opt in enumerate(lsoa_choices)
@@ -7325,10 +6630,6 @@ def page_scq_demonstrator(
         params["lsoa"] = selected_lsoa[0]
 
     elif param_type == "lsoa_pair":
-        # The paper's own worked example of between is over communities, not
-        # statistical areas, and administrative TOUCHES is native while
-        # LSOA_TOUCHES had to be computed. Offering both levels lets the same
-        # question be asked through a native relation and a derived one.
         between_kind = st.radio(
             "Between over",
             ["LSOA", "Ward", "Community"],
@@ -7447,10 +6748,6 @@ def page_scq_demonstrator(
             )
             return
 
-        # Labels are "Name | Type", so the type can be filtered before the
-        # list reaches the widget. This is also the single biggest speed win
-        # on this page: the unfiltered list can carry ~19,000 options, and
-        # every one of them is serialised to the browser on each rerun.
         unit_types = sorted({
             str(label).rsplit("|", 1)[-1].strip()
             for _value, label in admin_units
@@ -7503,8 +6800,6 @@ def page_scq_demonstrator(
             st.error("No administrative units were found in this database.")
             return
 
-        # Settings parked by the question box are applied here, and only
-        # when the value actually exists in the list the graph returned.
         _pend = st.session_state.pop("LENS_pending", None)
         if _pend:
             if _pend.get("atype") in types:
@@ -7582,9 +6877,6 @@ def page_scq_demonstrator(
             )
             nbr_type = None if nbr_choice == "Any type" else nbr_choice
         elif mode == "near":
-            # The control is withheld rather than disabled, because offering
-            # a choice the definition cannot honour is what produced empty
-            # answers with no reason attached.
             st.caption(
                 "Near is defined inside one division: disjoint units of the "
                 "same kind joined by a path of two touches edges (IJGI 2024, "
@@ -7593,8 +6885,6 @@ def page_scq_demonstrator(
             )
         params["nbr_type"] = nbr_type
 
-        # The school path needs INTERSECTS, which only some types carry.
-        # Report that limit explicitly instead of returning an empty table.
         if want == "Schools":
             reachable = types_with_intersects(cfg)
             blocked = None
@@ -7728,11 +7018,6 @@ def page_scq_demonstrator(
         st.markdown(f"### {t('parameters')}")
         st.json(params)
 
-    # Clicking a region fires a Streamlit rerun, and on a rerun a button
-    # reports False again — which used to wipe the answer and send the page
-    # back to its empty state. The fact that this question has been run is
-    # therefore held in session state: once run, the answer survives reruns
-    # and re-executes against whatever parameters are currently selected.
     run_state_key = f"scq_ran_{scq_key}"
     if run_query:
         st.session_state[run_state_key] = True
@@ -7869,8 +7154,6 @@ def page_scq_demonstrator(
             with tab_answer:
                 st.metric(answer_metric, len(result_df))
                 st.caption(answer_caption)
-                # Which way the question was asked decides which map can
-                # draw it: administrative rows need administrative polygons.
                 if params.get("admin"):
                     clicked = render_answer_map(
                         cfg, result_df,
@@ -7908,11 +7191,6 @@ def page_scq_demonstrator(
             )
 
             if scq_key == "SCQ3":
-                # The question asks WHICH LSOAs lie between, so the answer is
-                # a set of areas, not a count of routes. The same area recurs
-                # across many paths, so the path count alone overstates the
-                # size of the answer and reads as if the whole neighbourhood
-                # were "between" the two endpoints.
                 between_codes: List[str] = []
                 min_hops_codes: List[str] = []
                 if not result_df.empty and "between_lsoas" in result_df.columns:
@@ -7979,10 +7257,6 @@ def page_scq_demonstrator(
                 and st.session_state.get("scq3_kind", "LSOA") != "LSOA"
             )
             if _scq3_admin:
-                # The answer map colours LSOAs by deprivation, and
-                # administrative units carry no WIMD value, so drawing them
-                # there would either be blank or invent a figure. The path
-                # table is the whole answer at this level.
                 st.caption(
                     "Administrative level: the paths are listed below. No "
                     "map is drawn because administrative units carry no "
@@ -7990,9 +7264,6 @@ def page_scq_demonstrator(
                     "shading to show."
                 )
             elif scq_key in ("SCQ5", "SCQ6"):
-                # Containment inside the administrative hierarchy nests
-                # cleanly, which is exactly the contrast with SCQ7 that the
-                # reclassification rests on, so it is worth drawing.
                 clicked_unit = render_admin_containment_map(
                     cfg,
                     result_df,
@@ -8094,22 +7365,12 @@ def page_scq_demonstrator(
 
 @st.cache_data(show_spinner=False)
 def load_report_html(path: str) -> str:
-    """Read the completeness report once per session.
-
-    The file is ~20 MB, so it is cached and only read when the reader asks
-    to see it rather than on every rerun of the page.
-    """
+    """Read the completeness report once per session."""
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
         return handle.read()
 
 
 def page_evaluation() -> None:
-    # Evaluation page rule:
-    # keep the native Education Use Case scorecard separate from the
-    # administrative comparison and from the broader demonstrator capability.
-    # This directly addresses the supervisor note that SCQ5/SCQ6 should be
-    # reclassified for Ward-LSOA questions rather than counted as independent
-    # education-use-case answers.
     hero()
 
     task_badge(
@@ -8146,7 +7407,6 @@ def page_evaluation() -> None:
         unsafe_allow_html=True,
     )
 
-    # Four coverage cards
     st.markdown(
         """
 <style>
@@ -8239,7 +7499,6 @@ native YAGO2geo coverage.
         unsafe_allow_html=True,
     )
 
-    # Competency-question coverage definition
     st.latex(
         r"CQCov(O)=\frac{N_{\mathrm{covered\ SCQs}}}"
         r"{N_{\mathrm{SCQs}}}"
@@ -8381,12 +7640,6 @@ native YAGO2geo coverage.
                 ),
             )
             if show_report:
-                # The page is capped at a comfortable reading width for
-                # prose, which is too narrow for the report's tables, so the
-                # cap is lifted whenever the report is on screen. This used
-                # to be a second checkbox; it was never a decision the reader
-                # needed to make, since the wide setting is the only one that
-                # renders the tables without a horizontal scrollbar.
                 st.markdown(
                     "<style>.block-container{max-width:100% !important;"
                     "padding-left:1.2rem !important;"
@@ -8524,15 +7777,7 @@ native YAGO2geo coverage.
     )
 
 def render_question_answer(cfg: Dict[str, str]) -> bool:
-    """Answer the typed question directly, without the manual panel.
-
-    The panel and the question box used to be one path: the sentence set the
-    widgets and the widgets built the query, so an answer could not exist
-    unless the panel was open. This function is the separation. It takes the
-    intent parked by the parser, chooses an approved template, binds its
-    parameters and renders the answer and its map on its own. The panel stays
-    what it should be: a way to ask without a sentence.
-    """
+    """Answer the typed question directly, without the manual panel."""
     intent = st.session_state.get("nl_answer")
     if not intent or not intent.get("kind"):
         return False
@@ -8554,9 +7799,6 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
             cypher = LENS_UNIT_CYPHER[mode]
         else:
             cypher = LENS_CYPHER.get(mode)
-        # Same rule as the panel: near cannot carry a neighbour type. A
-        # model-parsed sentence can still propose one, so the guard lives
-        # here as well as in the rule parser.
         params["nbr_type"] = None if mode == "near" else intent.get("ntype")
         if mode == "near" and intent.get("ntype"):
             st.caption(
@@ -8571,8 +7813,6 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         if not meta:
             return False
         cypher = meta["cypher"]
-        # A cross-hierarchy question naming a unit and no LSOA has to run
-        # from the administrative side, exactly as the toggle would set it.
         if kind in ("SCQ7", "SCQ8") and admin and not areas:
             cypher = meta.get("cypher_reverse", cypher)
         chain = ("", meta.get("relation", ""), meta.get("provenance", ""))
@@ -8586,11 +7826,6 @@ def render_question_answer(cfg: Dict[str, str]) -> bool:
         _missing = "an LSOA"
     elif "$admin" in cypher and "admin" not in params:
         _missing = "an administrative unit"
-    # The sentence usually names the kind of thing it wants back, and that
-    # is a different question from which relation to travel. "LSOAs inside
-    # Cardiff" and "communities inside Cardiff" walk the same containment,
-    # and differ only in what they return. Honouring the named output stops
-    # the reader having to accept whatever the matched form happens to give.
     _lowq = str(intent.get("text") or "").lower()
     _wants_schools = any(w in _lowq for w in _SCHOOL_WORDS)
     _out = None
@@ -8634,18 +7869,7 @@ LIMIT $limit
         chain = LENS_MODES["inside"]
         _missing = None
 
-    # "Needs an LSOA" was only ever true of the eight forms, not of the
-    # graph: TOUCHES and WITHIN between administrative units are stored and
-    # audited, and the lens answers near and touches over them. Before
-    # refusing, try to resolve the place as an administrative unit. Welsh
-    # units are stored bilingually -- Cardiff is "Caerdydd - Cardiff" -- so
-    # a plain name misses by a prefix, not by a spelling error.
     if _missing == "an LSOA" and not admin:
-        # An Arabic sentence carries no Latin token to match against the
-        # graph's English names, but the model's own reading of it does:
-        # it writes out "Cathays" even when the reader typed the name in
-        # Arabic script. Both sources are searched, so a question asked in
-        # either language can still resolve a place.
         _src = str(intent.get("text") or "")
         try:
             _src += " " + " ".join(
@@ -8683,12 +7907,6 @@ LIMIT 6
             except Exception:
                 _cand = None
         if _cand is not None and not _cand.empty:
-            # Requiring exactly one match was the root of this failure:
-            # "Cathays" matches both "Cathays" and "Cathays Community", so
-            # the recovery declined and the reader got nothing. Ties are
-            # broken deterministically instead -- an exact word match first,
-            # then the shortest name -- and the unit chosen is printed above
-            # the answer, so the choice is visible rather than silent.
             _tied = len(_cand)
             if len(_cand) > 1:
                 _wl = set(_w)
@@ -8702,9 +7920,6 @@ LIMIT 6
             admin = _cand.iloc[0]["uri"]
             params["admin"] = admin
             if _tied > 1:
-                # A choice made among several matches must be declared. The
-                # rule is deterministic, but the reader still has to be told
-                # that a rule was applied and what it passed over.
                 _others = ", ".join(
                     f"{r['name']} ({r['type']})"
                     for _, r in _cand.iloc[1:6].iterrows()
@@ -8739,9 +7954,6 @@ LIMIT 6
             )
 
     if _missing:
-        # Silence here was the worst behaviour of all: the reader saw a form
-        # chosen, a banner claiming the controls were set, and no answer and
-        # no reason. Naming the missing piece is the minimum owed.
         st.warning(
             f"The eight spatial forms are anchored on {_missing}, and no "
             f"{_missing} in your sentence could be matched to a name in the "
@@ -8749,10 +7961,6 @@ LIMIT 6
             "and WITHIN between administrative units are stored, and the "
             "Education lens answers over them."
         )
-        # Telling a reader their name was not found, without showing what the
-        # graph does call it, leaves them guessing. Welsh units are stored
-        # bilingually -- Cardiff is "Caerdydd - Cardiff" -- so a plain name
-        # often misses by a prefix rather than by a spelling error.
         _words = [
             w.strip(",.?!'\"") for w in str(intent.get("text") or "").split()
             if len(w.strip(",.?!'\"")) >= 4
@@ -8798,10 +8006,6 @@ LIMIT 12
     params["phase"] = intent.get("phase")
 
     st.markdown("### Answer to your question")
-    # The resolved unit is printed before the answer, not buried in the
-    # parse trace. A name matched to the wrong unit produces figures that
-    # are entirely correct for a place the reader never asked about, and
-    # that is the one failure mode a reader cannot detect from the result.
     if intent.get("admin_label"):
         st.markdown(
             f"**Answered for: {intent['admin_label']}** \u2014 if that is not "
@@ -8825,9 +8029,6 @@ LIMIT 12
             "no row in the graph satisfies it for the place and filter you "
             "named. An empty answer is a result, not a fault."
         )
-        # An empty containment answer usually means the unit sits at the
-        # bottom of the hierarchy, not that the question was wrong. Saying
-        # which is which turns a blank into a finding.
         if admin:
             try:
                 _d = run_cypher(cfg, """
@@ -8863,10 +8064,6 @@ RETURN coalesce(a.name, a.uri) AS name, a.type AS type,
         "relations added by this project and does not raise the coverage of "
         "the original YAGO2geo model."
     )
-    # The map harvests LSOA codes, because LSOA polygons are the only
-    # boundaries this graph stores. An answer made of administrative units
-    # carries no such code, so nothing can be drawn — and saying that is
-    # better than an empty space the reader has to interpret.
     import re as _re
     _has_lsoa = any(
         bool(_re.match(r"^W\d{8}$", str(v)))
@@ -8891,11 +8088,6 @@ RETURN coalesce(a.name, a.uri) AS name, a.type AS type,
                 "your question and the card is the context around it."
             )
     elif admin:
-        # An administrative answer carries no LSOA code, so the eight forms
-        # cannot be mapped on their own. Rather than alter those queries --
-        # their rows are reported figures -- a companion query fetches the
-        # LSOAs the answer's units cover, through the computed INTERSECTS.
-        # The table stays the answer; the map is a view of where it falls.
         try:
             _areas_df = run_cypher(cfg, """
 MATCH (a:AdminUnit {uri:$admin})
@@ -8936,25 +8128,15 @@ LIMIT 3000
             "question with schools in it, or use the Education lens with "
             "Return set to Schools, and the answer will map."
         )
-    # lsoa_codes exists so the map can draw an administrative answer. It is
-    # not part of the answer: a reader who asked for communities should see
-    # communities, not a column of statistical codes that makes it look as
-    # though the question was answered at the wrong level.
     _show = df.drop(columns=["lsoa_codes"]) if "lsoa_codes" in df.columns else df
     st.dataframe(_show, use_container_width=True, hide_index=True)
     return True
 
 
 def render_seam_context(cfg: Dict[str, str]) -> None:
-    """The cross-hierarchy seam: the bridge diagram, its live counts and
-    the finding. Shown wherever SCQ7 or SCQ8 is being answered, so the
-    question, its verdict and the bridge that carries it sit together."""
+    """The cross-hierarchy seam: the bridge diagram, its live counts and"""
     visual_cross_hierarchy_bridge()
 
-    # ------------------------------------------------------------------
-    # Current Neo4j relationship counts
-    # Direction is specified to avoid counting every relationship twice.
-    # ------------------------------------------------------------------
     try:
         intersects_count = int(
             scalar(
@@ -9047,10 +8229,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 
     render_seam_context(cfg)
 
-    # ------------------------------------------------------------------
-    # Parameterised SCQ7 query:
-    # selected LSOA -> directly intersecting administrative units
-    # ------------------------------------------------------------------
 
     scq7_query = """
     MATCH (admin:AdminUnit)-[:INTERSECTS]->(l:LSOA {code:$lsoa})
@@ -9079,23 +8257,10 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 
     
 
-    # ------------------------------------------------------------------
-    # Parameterised SCQ8 query:
-    # selected LSOA -> GRAPH_NEAR LSOAs -> intersecting AdminUnits
-    #
-    # Each AdminUnit is returned once. All supporting nearby LSOAs
-    # are collected in the same result row.
-    # ------------------------------------------------------------------
 
 
     scq8_query = SCQ8_ANSWER_CYPHER
 
-    # ------------------------------------------------------------------
-    # Direction toggle: the stored INTERSECTS relation is symmetric, so
-    # both starting points read the same facts. Default = LSOA-first,
-    # matching the education use case (deprivation and school data live
-    # on LSOAs) and the supervisor's own example question.
-    # ------------------------------------------------------------------
     direction = direction_toggle("cross_direction")
     st.caption(t("direction_caption"))
 
@@ -9103,7 +8268,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
         opts7 = lsoa_options(cfg, "lsoa_intersects")
         opts8 = lsoa_options(cfg, "lsoa_near_intersects")
 
-        # Use Cardiff 018B as the default documented example when available.
         example_code = "W01001770"
 
         default7 = next(
@@ -9126,9 +8290,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 
         c7, c8 = st.columns(2)
 
-        # ------------------------------------------------------------------
-        # SCQ7
-        # ------------------------------------------------------------------
         with c7:
             st.subheader(
                 "6.2 SCQ7 — Cross-hierarchy intersects"
@@ -9185,9 +8346,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         language="cypher",
                     )
 
-        # ------------------------------------------------------------------
-        # SCQ8
-        # ------------------------------------------------------------------
         with c8:
             st.subheader(
                 "6.3 SCQ8 — Cross-hierarchy near"
@@ -9275,7 +8433,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                 "relations were found in Neo4j."
             )
         else:
-            # Default documented example: Cathays (Community), if present.
             default_admin = next(
                 (
                     index
@@ -9287,9 +8444,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 
             ca7, ca8 = st.columns(2)
 
-            # ----------------------------------------------------------
-            # SCQ7 (reversed): Ward/Community -> intersecting LSOAs
-            # ----------------------------------------------------------
             with ca7:
                 st.subheader(
                     "6.2 SCQ7 \u2014 Cross-hierarchy intersects"
@@ -9331,9 +8485,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                             language="cypher",
                         )
 
-            # ----------------------------------------------------------
-            # SCQ8 (reversed): Ward/Community -> nearby LSOAs (disjoint)
-            # ----------------------------------------------------------
             with ca8:
                 st.subheader(
                     "6.3 SCQ8 \u2014 Cross-hierarchy near"
@@ -9418,13 +8569,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 
     visual_final_finding()
 
-# ---------------------------------------------------------------------------
-# Map Explorer: a second engine, for school properties rather than relations
-# ---------------------------------------------------------------------------
-# Kept apart from the spatial engine on purpose. The demonstrator measures
-# eight relation definitions and the scorecard depends on those definitions
-# staying exact; property questions are exploration over the same graph and
-# must not be able to move a measured answer.
 
 MAP_NL_RULES: List[Tuple[str, List[str]]] = [
     ("dep_high", ["most deprived", "highly deprived", "high deprivation",
@@ -9468,8 +8612,6 @@ def _map_admin_hint(text: str) -> Dict[str, str] | None:
         relation = "graph_near"
     elif any(x in low for x in ("touching", "touches", "adjacent", "neighbouring", "neighboring")):
         relation = "touches"
-    # Accept the common natural forms "in/near X community/ward". Resolution
-    # against Neo4j below is authoritative; this is merely a candidate name.
     words = "|".join(re.escape(k) for k, v in _ADMIN_TYPE_WORDS.items() if v == unit_type)
     match = re.search(
         rf"(?:in|inside|within|near|around|touching)\s+(.+?)\s+(?:{words})(?:\b|$)",
@@ -9486,13 +8628,7 @@ def _map_admin_hint(text: str) -> Dict[str, str] | None:
 def resolve_map_admin_scope(
     cfg: Dict[str, str], scope: Dict[str, str] | None
 ) -> Tuple[Dict[str, Any] | None, List[str]]:
-    """Resolve one admin anchor and its target units through the LSOA bridge.
-
-    TOUCHES selects adjacent administrative units. GRAPH_NEAR selects units
-    at exactly two TOUCHES steps and excludes the anchor and its direct
-    neighbours. All LSOAs intersecting the selected target units remain
-    candidates; school-point containment performs the final disambiguation.
-    """
+    """Resolve one admin anchor and its target units through the LSOA bridge."""
     if not scope:
         return None, []
     name = str(scope.get("anchor_name") or "").strip()
@@ -9653,12 +8789,7 @@ _MAP_FIELD = {
 
 
 def parse_map_question(text: str) -> Dict[str, Any]:
-    """Turn a school-property question into extra Cypher conditions.
-
-    Every condition is parameterised. Nothing from the sentence is ever
-    concatenated into the query text, so a question cannot become an
-    injection.
-    """
+    """Turn a school-property question into extra Cypher conditions."""
     raw = (text or "").strip()
     low = raw.lower()
     out: Dict[str, Any] = {
@@ -9747,11 +8878,6 @@ def parse_map_question(text: str) -> Dict[str, Any]:
     return out
 
 
-# The map answers a different kind of question from the demonstrator: not
-# which regions stand in a spatial relation, but which schools satisfy a
-# description. Grouping by the property being described keeps that distinction
-# visible, and mirrors the eight groups on the demonstrator without pretending
-# the two libraries are interchangeable.
 MAP_QUESTION_LIBRARY: Dict[str, Dict[str, Any]] = {
     "Deprivation": {
         "colour": "ql-scq1",
@@ -9822,13 +8948,7 @@ MAP_QUESTION_LIBRARY: Dict[str, Dict[str, Any]] = {
 
 
 def llm_parse_map_question(text: str) -> Dict[str, Any]:
-    """Model reading of a school-property question, rebuilt locally.
-
-    The model is asked only to name properties and numbers. Every condition
-    is then constructed here from a fixed field map and bound as a parameter,
-    so nothing the model writes reaches the query text. A model that invents
-    a field simply produces no condition.
-    """
+    """Model reading of a school-property question, rebuilt locally."""
     used = st.session_state.get("nl_llm_calls", 0)
     if used >= NL_LLM_CALL_CAP:
         out = parse_map_question(text)
@@ -9908,9 +9028,6 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
 
     anchor_type = str(data.get("anchor_type") or "")
     relation = str(data.get("relation") or "direct")
-    # Administrative relation words are authoritative. This local correction
-    # prevents the model from collapsing explicit NEAR into TOUCHES. Transport
-    # proximity is excluded because it is a separate DISTANCE_NEAR condition.
     low_text = (text or "").lower()
     if re.search(
         r"\b(?:wards?|communities|unitary authorities)\s+"
@@ -9961,8 +9078,6 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         if not out["admin_scopes"]:
             out["admin_scopes"] = [dict(out["admin_scope"])]
         elif len(out["admin_scopes"]) == 1:
-            # The explicit local NEAR/TOUCH correction above is authoritative
-            # for a single scope even if the model mislabeled that list item.
             out["admin_scopes"][0]["relation"] = relation
 
     admin_operator = str(data.get("admin_operator") or "").upper()
@@ -9970,8 +9085,6 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         admin_operator = "OR" if re.search(r"\bor\b", low_text) else "AND"
     out["admin_operator"] = admin_operator
 
-    # Recover the common same-anchor form even if the model returned only one
-    # relation. This is deterministic and does not invent a place or type.
     if out["admin_scope"] and len(out["admin_scopes"]) < 2:
         compound_relations: List[str] = []
         if re.search(r"\b(?:in|inside|within)\b", low_text):
@@ -10010,9 +9123,6 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         out["params"]["nl_phases"] = phases
         out["chips"].append("phase = " + " / ".join(phases))
 
-    # The manual sidebar has always had a Local authority filter; the parser
-    # schema did not, so a question naming a place parsed to nothing and the
-    # map fell back to all 1,444 schools. Bound as a parameter like the rest.
     authority = str(data.get("authority") or "").strip()
     if out["admin_scopes"]:
         authority = ""
@@ -10109,10 +9219,6 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
                 cols = st.columns(2)
                 for i, question_text in enumerate(entry["questions"]):
                     chosen = question_text == current
-                    # The chosen question is marked and its button becomes the
-                    # primary one, so a reader can see at a glance which of
-                    # the library produced what is on the map. Pressing it
-                    # again clears the question and the results with it.
                     if cols[i % 2].button(
                         ("\u2713  " if chosen else "") + question_text,
                         key=f"map_q_{group}_{i}",
@@ -10134,16 +9240,10 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
             label_visibility="collapsed",
         )
     with col_go:
-        # The map already re-reads the question on every run, so this button
-        # is a deliberate submit affordance rather than new behaviour: a
-        # search field with no Search button reads as unfinished.
         st.button("Search", type="primary", use_container_width=True)
     with col_clear:
         clear = st.button("Clear", use_container_width=True)
     if clear:
-        # Raised as a plain flag and applied at the top of the next run,
-        # before the text box is created. Writing to a widget's state after
-        # the widget exists is refused by Streamlit.
         st.session_state["map_nl_clear"] = True
         st.rerun()
 
@@ -10175,8 +9275,6 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     else:
         parsed = parse_map_question(question)
 
-    # The model/rules identify only a constrained intent. Neo4j resolves the
-    # exact unit and executes one of three fixed parameterised graph paths.
     parsed["resolved_admin_scope"] = None
     parsed["admin_scope_failed"] = False
     requested_scopes = parsed.get("admin_scopes") or (
@@ -10214,22 +9312,12 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
             parsed["admin_scope_failed"] = True
             parsed["unmatched"].append(f"Administrative path unavailable: {exc}")
 
-    # School conditions have no effect in cluster search, which pools LSOAs
-    # rather than schools, so a question that names any of them switches the
-    # mode instead of returning a map that quietly ignored it.
-    # The radio is drawn in the sidebar before this runs, and Streamlit
-    # forbids writing to a widget's state once the widget exists. A plain
-    # flag is raised instead and applied at the top of the next run, before
-    # the radio is created.
     last_applied = st.session_state.get("map_nl_applied")
     if (
         (parsed["conditions"] or parsed.get("resolved_admin_scope"))
         and question != last_applied
         and st.session_state.get("map_search_mode") == "Cluster search"
     ):
-        # Only when the question is new. Forcing on every rerun made cluster
-        # search unreachable: the moment it was chosen, the standing question
-        # switched it straight back.
         st.session_state["map_nl_applied"] = question
         st.session_state["map_force_standard"] = True
         st.rerun()
@@ -10283,6 +9371,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     return parsed
 
 
+# Map explorer
 def page_map(cfg: Dict[str, str]) -> None:
     hero()
     task_badge(
@@ -10313,8 +9402,6 @@ def page_map(cfg: Dict[str, str]) -> None:
     LIMIT 100
     """)
     if not phase_opts:
-        # Fallback when phase_group values differ from the standard four:
-        # show whatever distinct values exist rather than an empty list.
         phase_opts = safe_options(cfg, """
         MATCH (s:School)
         WITH DISTINCT coalesce(s.phase_group, s.phase, s.school_type) AS phase
@@ -10340,9 +9427,6 @@ def page_map(cfg: Dict[str, str]) -> None:
             "Standard search",
             "Cluster search",
         ],
-        # Standard is the default: it shows the school pins, which is what a
-        # reader arriving at a map of schools expects to see. Cluster search
-        # answers a narrower question and is chosen deliberately.
         index=0,
         key="map_search_mode",
         label_visibility="collapsed",
@@ -10355,8 +9439,6 @@ def page_map(cfg: Dict[str, str]) -> None:
         ),
     )
 
-    # Property names match load_to_neo4j.py's load_wimd(); the last three
-    # are added by the extended loader and need one RUN_WIMD_LOAD re-run.
     WIMD_DOMAIN_PROPS = {
         "Overall (WIMD 2019)": "wimd_rank",
         "Income": "income_rank",
@@ -10547,18 +9629,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         cluster_inputs_ok = not st.session_state.get(
             "_cluster_input_error", False
         )
-        # Cluster search always builds bounded pools. The former
-        # "All severity bands" whole-map view was removed as a second
-        # control the user had to reason about: pin colours already carry
-        # the traffic-light grading in every mode.
         cluster_view = "Bounded pool"
-        # Cluster reach, named with the evaluation instrument's own
-        # proximity vocabulary instead of a raw hop count: touches = 1 hop,
-        # graph-near = 2 hops (the paper's near), far = more than 2.
-        # Clusters are true connected components via APOC, so there is no
-        # depth to choose. This value is only used by the fallback query if
-        # APOC is unavailable on the target database.
-        cluster_depth = 4
         min_cluster_size = st.sidebar.number_input(
             "Smallest cluster to show (LSOAs)",
             min_value=1,
@@ -10581,8 +9652,6 @@ def page_map(cfg: Dict[str, str]) -> None:
         ("unknown", "Unknown"),
     ]
     if search_mode == "Cluster search":
-        # In cluster mode the cluster itself defines the deprivation scope,
-        # so the general filter is hidden to avoid two competing controls.
         dep_choice = dep_options[0]
     else:
         dep_choice = st.sidebar.selectbox(
@@ -10712,13 +9781,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             "secondary only) — published for secondaries only, so this is a "
             "source limitation, not missing data."
         )
-        # Metric filters always require a value; how many schools were
-        # removed for having no value is disclosed above the map, so the
-        # exclusion is visible without an extra control here.
         include_missing_metrics = False
 
-    # Bounds are enforced by the number inputs themselves; only the
-    # From/To ordering can still be wrong.
     range_order_ok = True
     for low, high, label in (
         (fsm_min, fsm_max, "FSM"),
@@ -10734,9 +9798,6 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     nl_map = render_map_nl(cfg)
 
-    # A named administrative scope is part of the meaning of the question.
-    # Falling back to every Welsh school after resolution fails would return
-    # a confident-looking answer to a different question.
     if nl_map.get("admin_scope_failed"):
         st.info(
             "The map was not run because the requested administrative unit "
@@ -10747,9 +9808,6 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
     params: Dict[str, Any] = {}
-    # Sentence conditions sit alongside the sidebar filters rather than
-    # replacing them, so the two can be combined and the reader can see
-    # exactly what each contributed.
     conditions.extend(nl_map["conditions"])
     params.update(nl_map["params"])
     admin_scope = nl_map.get("resolved_admin_scope")
@@ -11066,80 +10124,73 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
 
         if cluster_view == "Bounded pool":
-            # Exact connected components via APOC: no depth bound, so a
-            # cluster is the full maximal set of touching pool members.
             cluster_cypher = f"""
-// Adjacency cluster over the computed LSOA_TOUCHES graph.
+// Exact adjacency clusters over geometry-origin LSOA_TOUCHES.
 // Pool: {cluster_pool_label}
-// Geometry-origin: LSOA_TOUCHES is derived from boundary geometry and is not
-// asserted by YAGO2geo, so this does not count towards model completeness.
-// Clusters are exact connected components: apoc.path.subgraphNodes explores
-// the whole component with traversal restricted to the pool, so there is no
-// depth parameter and no truncation.
 {pool_match}
-UNWIND pool_nodes AS seed
-CALL apoc.path.subgraphNodes(seed, {{
-    relationshipFilter: 'LSOA_TOUCHES',
-    whitelistNodes: pool_nodes
-}}) YIELD node
-WITH seed, collect(DISTINCT node.code) AS reach
-WITH reach,
-     reduce(smallest = head(reach), c IN reach |
-            CASE WHEN c < smallest THEN c ELSE smallest END) AS cluster_id
-WITH cluster_id, head(collect(reach)) AS members
-WHERE size(members) >= $min_size
-RETURN cluster_id,
-       size(members) AS cluster_size,
-       members
-ORDER BY cluster_size DESC, cluster_id
+UNWIND pool_nodes AS l
+OPTIONAL MATCH (l)-[:LSOA_TOUCHES]-(m:LSOA)
+WHERE m IN pool_nodes
+RETURN pool_codes,
+       collect(DISTINCT [l.code, m.code]) AS edges
 """
-
-            fallback_cypher = f"""
-// Fallback used only if APOC is unavailable: bounded expansion, which
-// truncates large components at {int(cluster_depth)} steps.
-{pool_match}
-UNWIND pool_codes AS seed_code
-MATCH (seed:LSOA {{code: seed_code}})
-MATCH p = (seed)-[:LSOA_TOUCHES*0..{int(cluster_depth)}]-(m:LSOA)
-WHERE all(n IN nodes(p) WHERE n.code IN pool_codes)
-WITH seed_code, collect(DISTINCT m.code) AS reach
-WITH seed_code,
-     reduce(smallest = head(reach), c IN reach |
-            CASE WHEN c < smallest THEN c ELSE smallest END) AS cluster_id
-WITH cluster_id, collect(DISTINCT seed_code) AS members
-WHERE size(members) >= $min_size
-RETURN cluster_id,
-       size(members) AS cluster_size,
-       members
-ORDER BY cluster_size DESC, cluster_id
-"""
-            cluster_exact = True
             try:
                 with st.spinner("Finding connected clusters..."):
-                    cluster_df = run_cypher(
+                    component_df = run_cypher(
                         cfg, cluster_cypher, cluster_params
                     )
-            except Exception:
-                cluster_exact = False
-                try:
-                    with st.spinner(
-                        "APOC unavailable — using bounded expansion..."
-                    ):
-                        cluster_df = run_cypher(
-                            cfg, fallback_cypher, cluster_params
-                        )
-                    st.warning(
-                        "APOC is not available on this database, so clusters "
-                        f"were built with a {int(cluster_depth)}-step bound "
-                        "and very large components may be split. Record this "
-                        "in the research log if these figures are used."
-                    )
-                    cluster_cypher = fallback_cypher
-                except Exception as exc:
-                    st.error(f"Cluster query failed: {exc}")
-                    if SHOW_QUERIES:
-                        st.code(cluster_cypher, language="cypher")
-                    return
+            except Exception as exc:
+                st.error(f"Cluster query failed: {exc}")
+                if SHOW_QUERIES:
+                    st.code(cluster_cypher, language="cypher")
+                return
+
+            pool_codes = []
+            edges = []
+            if not component_df.empty:
+                pool_codes = list(component_df.iloc[0].get("pool_codes") or [])
+                edges = list(component_df.iloc[0].get("edges") or [])
+
+            parent = {code: code for code in pool_codes}
+
+            def find(code):
+                while parent[code] != code:
+                    parent[code] = parent[parent[code]]
+                    code = parent[code]
+                return code
+
+            def union(left, right):
+                left_root = find(left)
+                right_root = find(right)
+                if left_root != right_root:
+                    parent[right_root] = left_root
+
+            for edge in edges:
+                if not edge or len(edge) != 2:
+                    continue
+                left, right = edge
+                if left in parent and right in parent:
+                    union(left, right)
+
+            components = {}
+            for code in pool_codes:
+                components.setdefault(find(code), []).append(code)
+
+            component_rows = []
+            for members in components.values():
+                members = sorted(members)
+                if len(members) >= int(min_cluster_size):
+                    component_rows.append({
+                        "cluster_id": members[0],
+                        "cluster_size": len(members),
+                        "members": members,
+                    })
+
+            component_rows.sort(
+                key=lambda row: (-row["cluster_size"], row["cluster_id"])
+            )
+            cluster_df = pd.DataFrame(component_rows)
+            cluster_exact = True
             if cluster_df.empty:
                 st.warning(
                     "No cluster reached the smallest size you asked for "
@@ -11241,12 +10292,6 @@ ORDER BY cluster_size DESC, cluster_id
         st.error(f"Map query failed: {e}")
         return
 
-    # INTERSECTS supplies the required AdminUnit-to-LSOA bridge and therefore
-    # the candidate schools. The natural-language words in/inside, TOUCHES
-    # and graph-near refer to administrative units, however, so retain only
-    # school points contained by the selected target administrative geometry.
-    # This prevents a school in the outside part of a crossing LSOA from being
-    # reported as inside the administrative result.
     if admin_scope and not df.empty:
         components = (
             admin_scope.get("components", [])
@@ -11441,8 +10486,6 @@ ORDER BY cluster_size DESC, cluster_id
     c1.metric("Schools matching filters", f"{total_schools:,}")
     c2.metric("Deprivation", dep_label)
     near_transport_count = int(summary.get("near_transport_schools") or 0)
-    # The label never matched the option text, so the "far" case always fell
-    # through to the near count. Matched to the two options that remain.
     if transport == "Distance-far (no stop within 800m)":
         transport_value = total_schools - near_transport_count
     elif transport == "Distance-near (within 800m)":
@@ -11551,9 +10594,6 @@ ORDER BY cluster_size DESC, cluster_id
             subset=["uri", "role"]
         )
     if search_mode == "Standard search" and "lsoa_code" in map_df.columns:
-        # The pins say where the schools are; the boundaries say what kind of
-        # place each sits in. Drawn underneath and left unpickable, so the
-        # pins keep their tooltips and the areas only supply the background.
         std_codes = sorted(
             {str(c) for c in map_df["lsoa_code"].dropna() if str(c)}
         )
@@ -11607,9 +10647,6 @@ ORDER BY cluster_size DESC, cluster_id
             if not polygon_df.empty:
                 summary_rows = []
                 for code, grp in map_df.groupby(map_df["lsoa_code"].astype(str)):
-                    # School names are no longer gathered here: the hover
-                    # card must not grow with the number of schools, so
-                    # identities live in the panel opened below the map.
                     fsm_vals = pd.to_numeric(
                         grp["fsm_pct"] if "fsm_pct" in grp.columns
                         else pd.Series(dtype=float),
@@ -11622,9 +10659,6 @@ ORDER BY cluster_size DESC, cluster_id
                     )
                     n_fsm = int(fsm_vals.notna().sum())
                     n_att = int(att_vals.notna().sum())
-                    # 73% of Welsh LSOAs hold exactly one school, so a
-                    # "mean" is often a single value. The basis is stated
-                    # rather than left to be assumed.
                     basis = (
                         f"FSM from {n_fsm} school"
                         + ("s" if n_fsm != 1 else "")
@@ -11724,15 +10758,8 @@ ORDER BY cluster_size DESC, cluster_id
             st.caption(
                 "An adjacency cluster is a connected group of LSOAs that "
                 "all meet the threshold and are joined by computed "
-                "LSOA_TOUCHES edges. "
-                + (
-                    "Clusters are exact connected components — the whole "
-                    "component is explored, with no depth limit. "
-                    if cluster_exact
-                    else f"APOC was unavailable, so a "
-                    f"{int(cluster_depth)}-step bound was used. "
-                )
-                + "It is not the statistical cluster "
+                "LSOA_TOUCHES edges. Clusters are exact connected components "
+                "with no depth limit. It is not the statistical cluster "
                 "used by Sandu et al., which comes from a Moran's I "
                 "spatial-weights matrix and stays outside the completeness "
                 "scoring."
@@ -11755,19 +10782,14 @@ ORDER BY cluster_size DESC, cluster_id
             st.json(params)
 
 
+# Application entry point
 def main() -> None:
     cfg = sidebar_config()
     apply_dashboard_theme(bool(cfg.get("dark_theme")))
     page = cfg.pop("page")
-    # Each page is drawn inside its own keyed container. Without this the
-    # pages share element slots, so a widget from the previous page
-    # can survive the switch and paint over the new one -- which is what put
-    # the Evaluation page's SpCom equation underneath the map search box.
     try:
         body = st.container(key=f"page_{page.replace(' ', '_').lower()}")
     except TypeError:
-        # Older Streamlit builds take no key; the container still isolates
-        # the subtree, only without the stable identity.
         body = st.container()
     with body:
         if page == "SCQ Demonstrator":
