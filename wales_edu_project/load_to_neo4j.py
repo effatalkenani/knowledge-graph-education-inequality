@@ -49,7 +49,7 @@ LSOA_GPKG_FILE = os.path.join(
     "lsoa_wales_2011.gpkg"
 )
 
-RUN_OS_NEW_ENRICHMENT = True   
+RUN_OS_NEW_ENRICHMENT = False   
 RUN_LSOA_LOAD = False           
 RUN_WIMD_LOAD = False
 RUN_STOP_LSOA_LINKS = False           
@@ -72,6 +72,7 @@ RUN_UNLINKED_LSOA_DIAGNOSTICS = False
 
 
 TRANSPORT_NEAR_METRES = 800
+#تخدمنا سماحية متر واحد لمعالجة الفروق الطفيفة في 
 TOUCH_TOLERANCE_METRES = 1
 
 WELSH_UA_OS_IDS = {
@@ -80,7 +81,7 @@ WELSH_UA_OS_IDS = {
     "25500", "25490", "25485", "25487", "25489", "25486",
     "25482", "25776", "44425", "25831"
 }
-
+#تحويل الاحداثيات
 WGS84_TO_BNG = Transformer.from_crs(
     "EPSG:4326", "EPSG:27700", always_xy=True
 ).transform
@@ -97,7 +98,7 @@ SF_TOUCHES = URIRef("http://www.opengis.net/ont/geosparql#sfTouches" )
 SF_WITHIN_ALT = URIRef("http://www.opengis.net/ont/geosparql#within" )
 SF_TOUCHES_ALT = URIRef("http://www.opengis.net/ont/geosparql#touches" )
 
-
+#انشاء الاتصال 
 def driver():
     return GraphDatabase.driver(URI, auth=AUTH)
 
@@ -343,7 +344,7 @@ def enrich_admin_units():
     for i in range(0, len(all_rels), batch_size):
         batch = all_rels[i : i + batch_size]
         
-        # محاولة الرفع مع إعادة المحاولة في حال الخطأ
+        # تحميل العلاقات الوذين والتاتش كما وردت من المصدر
         retry_count = 0
         success = False
         while retry_count < 5 and not success:
@@ -930,7 +931,7 @@ def build_lsoa_touches():
     lsoas = get_lsoa_geoms()
     codes = [x["code"] for x in lsoas]
     polygons = [x["geometry"] for x in lsoas]
-
+    #لتقليل المقارنات
     tree = STRtree(polygons)
     pairs = set()
 
@@ -978,7 +979,7 @@ def build_lsoa_graph_near():
     d = driver()
     with d.session(database=DATABASE) as s:
         s.run("MATCH (:LSOA)-[r:GRAPH_NEAR]->(:LSOA) DELETE r")
-
+        #لم تُحسب من المسافة. تم الاشتقاق من خطوتين عبر LSOA_TOUCHES
         s.run("""
         MATCH (a:LSOA)-[:LSOA_TOUCHES]-(mid:LSOA)-[:LSOA_TOUCHES]-(b:LSOA)
         WHERE a.code <> b.code
@@ -1234,12 +1235,9 @@ def load_stop_lsoa_links():
     Link each TransportStop to the LSOA whose polygon contains it, creating
     (:TransportStop)-[:LOCATED_IN]->(:LSOA).
 
-    This is what makes a topological (graph) notion of transport proximity
-    possible. Without it the only transport relation in the graph is the
-    800 m DISTANCE_NEAR proxy, which is a metric distance and stays outside
-    the completeness scoring. With stops placed inside LSOAs, graph-near and
-    graph-far transport can be derived from LSOA_TOUCHES using the
-    evaluation instrument's own proximity definitions.
+    Transport-stop coordinates are stored in WGS84 (EPSG:4326), while the
+    recovered LSOA polygons use British National Grid (EPSG:27700).
+    Each stop point is therefore transformed before point-in-polygon matching.
 
     Gated by RUN_STOP_LSOA_LINKS.
     """
@@ -1253,43 +1251,70 @@ def load_stop_lsoa_links():
 
     made = 0
     unmatched = 0
+
     d = driver()
+
     with d.session(database=DATABASE) as s:
-        s.run("MATCH (:TransportStop)-[r:LOCATED_IN]->(:LSOA) DELETE r")
+        s.run(
+            "MATCH (:TransportStop)-[r:LOCATED_IN]->(:LSOA) DELETE r"
+        )
 
         stops = s.run("""
-        MATCH (t:TransportStop)
-        WHERE t.latitude IS NOT NULL AND t.longitude IS NOT NULL
-        RETURN t.code AS code, t.latitude AS lat, t.longitude AS lon
+            MATCH (t:TransportStop)
+            WHERE t.latitude IS NOT NULL
+              AND t.longitude IS NOT NULL
+            RETURN
+                t.code AS code,
+                t.latitude AS lat,
+                t.longitude AS lon
         """).data()
 
         print("Transport stops with coordinates:", len(stops))
 
         for st in stops:
-            p = Point(float(st["lon"]), float(st["lat"]))
+            # Convert the WGS84 stop coordinates to British National Grid
+            # before comparison with the LSOA polygons.
+            p = transform(
+                WGS84_TO_BNG,
+                Point(
+                    float(st["lon"]),
+                    float(st["lat"])
+                )
+            )
+
             placed = False
+
             for j in tree.query(p):
                 j = int(j)
-                if lsoa_polygons[j].covers(p) or lsoa_polygons[j].intersects(p):
+                polygon = lsoa_polygons[j]
+
+                # covers() includes points inside the polygon and points
+                # located exactly on its boundary.
+                #School/TransportStop → LOCATED_IN → LSOA
+                if polygon.covers(p):
                     s.run("""
-                    MATCH (t:TransportStop {code:$stop_code})
-                    MATCH (l:LSOA {code:$lsoa_code})
-                    MERGE (t)-[r:LOCATED_IN]->(l)
-                    SET r.origin = "geometry",
-                        r.method = "point_in_polygon"
+                        MATCH (t:TransportStop {code:$stop_code})
+                        MATCH (l:LSOA {code:$lsoa_code})
+                        MERGE (t)-[r:LOCATED_IN]->(l)
+                        SET r.origin = "geometry",
+                            r.method = "point_in_polygon",
+                            r.distance_m = 0.0,
+                            r.confidence = "high"
                     """,
                     stop_code=st["code"],
                     lsoa_code=lsoa_codes[j])
+
                     made += 1
                     placed = True
                     break
+
             if not placed:
                 unmatched += 1
 
     d.close()
-    print("TransportStop LOCATED_IN LSOA created:", made)
-    print("Stops in no LSOA polygon (expected: stops outside Wales):", unmatched)
 
+    print("TransportStop LOCATED_IN LSOA created:", made)
+    print("Transport stops not matched to an LSOA:", unmatched)
 
 def build_school_lsoa_links():
     print("Computing School LOCATED_IN LSOA with quality metadata...")
@@ -1494,7 +1519,7 @@ def tag_existing_relation_origins():
 
 def verify():
     d = driver()
-
+#فتح جلسة على قاعدة البيانات 
     with d.session(database=DATABASE) as s:
         print("\nNode counts:")
         for r in s.run("""
