@@ -1,3 +1,11 @@
+"""
+Project: Education Inequality Analysis with a Geospatial Knowledge Graph
+Student: Afaf Alhajjaji
+Student Number: 24106532
+Supervisor: Dr Alia Abdelmoty
+"""
+
+
 import os
 import re
 import pandas as pd
