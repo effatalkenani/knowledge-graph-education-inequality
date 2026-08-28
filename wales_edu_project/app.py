@@ -5352,6 +5352,28 @@ def render_school_map(
                     "name": arow.get("name") or arow.get("uri"),
                     "unit_type": arow.get("unit_type") or "AdminUnit",
                     "role": role,
+                    # The deck uses one tooltip template for every layer.
+                    # Populate its school-card fields with administrative
+                    # labels so hovering the blue boundary reports the unit
+                    # itself rather than the LSOA drawn underneath it.
+                    "school": arow.get("name") or arow.get("uri"),
+                    "local_authority": "Administrative boundary",
+                    "school_type": arow.get("unit_type") or "AdminUnit",
+                    "language_medium": (
+                        "Chosen area" if role == "anchor"
+                        else "Related administrative unit"
+                    ),
+                    "deprivation_label": "Not applicable",
+                    "wimd_label": "N/A",
+                    "fsm_label": "N/A",
+                    "attendance_label": "N/A",
+                    "pupils_label": "N/A",
+                    "ptr_label": "N/A",
+                    "budget_label": "N/A",
+                    "nearest_stop_label": "N/A",
+                    "perf_summary": "Administrative boundary",
+                    "address": str(role).replace("_", " ").title(),
+                    "postcode": "",
                     "line": [124, 58, 237, 245] if role == "anchor"
                             else [14, 116, 144, 220],
                     "fill": [124, 58, 237, 42] if role == "anchor"
@@ -5363,7 +5385,7 @@ def render_school_map(
                 data=admin_rows, get_polygon="polygon",
                 get_fill_color="fill", get_line_color="line",
                 line_width_min_pixels=4, stroked=True, filled=True,
-                pickable=False,
+                pickable=True,
             )
     if polygon_df is not None and not polygon_df.empty:
         DEP_FILL = {
