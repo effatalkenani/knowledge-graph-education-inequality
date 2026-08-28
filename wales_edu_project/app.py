@@ -2959,19 +2959,19 @@ def lens_unit_types(cfg):
 LENS_UNIT_CYPHER = {
     'touches': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    nbr.uri                       AS unit_uri,\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'near': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(mid:AdminUnit)-[:TOUCHES]-(nbr:AdminUnit)\nWHERE mid.type = anchor.type\n  AND nbr.type = anchor.type\n  AND nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    nbr.uri                       AS unit_uri,\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'inside': (
         'MATCH (anchor:AdminUnit {uri:$admin})<-[:WITHIN]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    nbr.uri                       AS unit_uri,\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'contains': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:WITHIN]->(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    nbr.uri                       AS unit_uri,\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     )
 }
 
@@ -8904,7 +8904,28 @@ RETURN coalesce(a.name, a.uri) AS name, a.type AS type,
         bool(_re.match(r"^W\d{8}$", str(v)))
         for col in df.columns for v in df[col].head(50).tolist()
     )
-    if _has_lsoa:
+    _admin_unit_answer = (
+        kind == "LENS"
+        and intent.get("want") == "units"
+        and "unit_uri" in df.columns
+    )
+    if _admin_unit_answer:
+        # A LENS unit answer is already a set of administrative regions.
+        # Draw those exact rows.  The old fallback instead queried the
+        # selected anchor's LSOAs and therefore showed Cathays' statistical
+        # footprint for a question whose answer was its touching Communities.
+        picked_admin = render_admin_answer_map(
+            cfg, df, None, key="nl_answer_admin_units"
+        )
+        if picked_admin:
+            render_unit_school_card(cfg, picked_admin)
+        st.caption(
+            "The coloured polygons are the administrative units returned "
+            "by the relation above. Hover a polygon for its name and type; "
+            "click it for the schools reached through INTERSECTS then "
+            "LOCATED_IN."
+        )
+    elif _has_lsoa:
         try:
             render_answer_map(
                 cfg, df,
