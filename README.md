@@ -83,6 +83,10 @@ Open:
 http://localhost:8501
 ```
 
+## Switching between Local and Cloud
+
+> **Important:** The database connection mode is controlled by the `APP_MODE` environment variable. To use the restored Neo4j Desktop database, set `APP_MODE=LOCAL`. To connect to Neo4j Aura, change it to `APP_MODE=CLOUD`. No changes to `app.py` or `load_to_neo4j.py` are required.
+
 ## Cloud Configuration
 
 To connect the application to Neo4j Aura, set:
