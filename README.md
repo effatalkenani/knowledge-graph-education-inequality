@@ -6,10 +6,22 @@ A Neo4j knowledge graph and Streamlit demonstrator for exploring educational ine
 
 * `app.py` — Streamlit demonstrator, SCQ interface, map explorer and natural-language parser.
 * `load_to_neo4j.py` — source-data preparation, geometry processing and Neo4j loading.
-* `data/` — source datasets used to construct the graph.
+* `data/` — directory expected by the loader for the source datasets. Large source files are supplied separately through Microsoft Teams.
 * `requirements.txt` — required Python packages.
 * `.env.example` — environment-variable template.
-* `education-inequality-project.dump` — Neo4j database dump supplied separately.
+* `education-inequality-project.dump` — Neo4j database dump supplied separately through Microsoft Teams.
+
+## Separately Supplied Files
+
+The complete `QPKG-Project-Files` folder is supplied separately through Microsoft Teams. It contains:
+
+* the Neo4j database dump and backup;
+* the complete source datasets;
+* the large YAGO2geo Turtle (`.ttl`) and N-Triples (`.nt`) files;
+* the larger spreadsheet and geospatial source files; and
+* copies of the implementation files.
+
+These files are not committed to this repository because some exceed GitHub’s web-upload or repository file-size limits. The GitHub repository contains the application code, loader, configuration template, requirements file and documentation needed to understand and run the project.
 
 ## Database
 
@@ -22,6 +34,8 @@ A Neo4j knowledge graph and Streamlit demonstrator for exploring educational ine
 ## Local Setup
 
 ### 1. Restore the database
+
+Obtain `education-inequality-project.dump` from the separately supplied `QPKG-Project-Files/database` folder.
 
 Create a Neo4j Desktop instance compatible with Neo4j `2026.07.1`, then restore:
 
@@ -117,7 +131,9 @@ If Gemini is temporarily unavailable, the application reports the service condit
 
 ## Data Loading
 
-The complete graph can be restored directly from the supplied dump. To reconstruct it from the source data instead, place the datasets in `data/`, configure the database connection, and run:
+The complete graph can be restored directly from the database dump supplied through Microsoft Teams.
+
+To reconstruct the graph from the source data instead, copy the separately supplied source datasets into the project’s `data/` directory, configure the database connection, and run:
 
 ```bash
 python load_to_neo4j.py
