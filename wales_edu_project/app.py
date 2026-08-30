@@ -3457,6 +3457,152 @@ def edit_map_search() -> None:
 
 def render_page_switcher(page: str) -> None:
     """Two centred tabs for the public SCQ and Map experiences."""
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stButton"] button,
+        div[data-testid="stDownloadButton"] button{
+          border-radius:14px!important;
+          min-height:3rem!important;
+          font-weight:800!important;
+          letter-spacing:.005em!important;
+          transition:transform .16s ease,box-shadow .16s ease,
+                     border-color .16s ease,filter .16s ease!important;
+          will-change:transform;
+        }
+        div[data-testid="stButton"] button[kind="primary"],
+        div[data-testid="stDownloadButton"] button[kind="primary"]{
+          color:#fff!important;
+          background:linear-gradient(135deg,#ff6575 0%,#ff8b6d 55%,#ffad63 100%)!important;
+          border:1px solid rgba(190,70,54,.28)!important;
+          border-bottom:4px solid #cf5548!important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,.48),
+            inset 0 -8px 16px rgba(190,70,54,.08),
+            0 9px 18px rgba(219,84,65,.22),
+            0 2px 4px rgba(87,45,37,.14)!important;
+          text-shadow:0 1px 1px rgba(91,42,34,.18)!important;
+        }
+        div[data-testid="stButton"] button[kind="secondary"],
+        div[data-testid="stDownloadButton"] button[kind="secondary"]{
+          color:#4b302a!important;
+          background:linear-gradient(180deg,#fffdfa 0%,#fff5ee 100%)!important;
+          border:1px solid #edc9bb!important;
+          border-bottom:4px solid #ddb09f!important;
+          box-shadow:
+            inset 0 1px 0 #fff,
+            inset 0 -7px 14px rgba(193,112,84,.045),
+            0 7px 14px rgba(91,48,38,.10),
+            0 2px 3px rgba(91,48,38,.08)!important;
+        }
+        div[data-testid="stButton"] button:hover,
+        div[data-testid="stDownloadButton"] button:hover{
+          transform:translateY(-2px)!important;
+          filter:saturate(1.04) brightness(1.015)!important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,.7),
+            0 12px 22px rgba(157,76,58,.18),
+            0 4px 7px rgba(91,48,38,.10)!important;
+        }
+        div[data-testid="stButton"] button:active,
+        div[data-testid="stDownloadButton"] button:active{
+          transform:translateY(2px)!important;
+          border-bottom-width:1px!important;
+          box-shadow:inset 0 3px 7px rgba(103,47,37,.16),
+                     0 2px 4px rgba(91,48,38,.10)!important;
+        }
+        div[data-testid="stButton"] button:focus-visible,
+        div[data-testid="stDownloadButton"] button:focus-visible{
+          outline:3px solid rgba(255,143,105,.34)!important;
+          outline-offset:3px!important;
+        }
+        div[data-testid="stButton"] button:disabled{
+          transform:none!important;filter:grayscale(.15)!important;
+          opacity:.58!important;box-shadow:none!important;
+        }
+        html{scroll-behavior:smooth}
+        .st-key-page_scq_demonstrator,
+        .st-key-page_map{
+          animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
+          transform-origin:50% 0;
+        }
+        .guided-hero,.map-search-hero{
+          position:relative;isolation:isolate;overflow:hidden;
+          transform:perspective(1200px) translateZ(0);
+          animation:hero-settle .55s cubic-bezier(.2,.8,.2,1) both;
+          border:1px solid rgba(255,255,255,.38)!important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,.52),
+            inset 0 -18px 35px rgba(186,71,52,.07),
+            0 28px 58px rgba(143,68,50,.18),
+            0 7px 16px rgba(95,49,39,.08)!important;
+        }
+        .guided-hero:after,.map-search-hero:after{
+          content:"";position:absolute;z-index:-1;inset:-35% -12% auto auto;
+          width:58%;height:115%;border-radius:50%;
+          background:radial-gradient(circle,rgba(255,255,255,.28),transparent 66%);
+          transform:rotate(-12deg);pointer-events:none;
+        }
+        div[data-testid="stSelectbox"]>div>div,
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stMetric"],
+        div[data-testid="stDataFrame"],
+        div[data-testid="stExpander"]{
+          transition:transform .2s cubic-bezier(.2,.75,.25,1),
+                     box-shadow .2s ease,border-color .2s ease!important;
+        }
+        div[data-testid="stSelectbox"]>div>div:hover,
+        div[data-testid="stTextInput"] input:hover,
+        div[data-testid="stNumberInput"] input:hover{
+          transform:translateY(-2px)!important;
+          border-color:#ee9e82!important;
+          box-shadow:0 12px 24px rgba(118,60,46,.12)!important;
+        }
+        div[data-testid="stMetric"]:hover,
+        div[data-testid="stExpander"]:hover{
+          transform:translateY(-3px)!important;
+          box-shadow:0 17px 34px rgba(103,53,41,.12)!important;
+        }
+        div[data-testid="stDeckGlJsonChart"]{
+          animation:result-rise .48s cubic-bezier(.2,.8,.2,1) both;
+          transform-origin:50% 20%;
+        }
+        div[data-testid="stDataFrame"]{
+          animation:result-rise .55s .06s cubic-bezier(.2,.8,.2,1) both;
+        }
+        button[data-baseweb="tab"]{
+          transition:color .18s ease,background .18s ease,
+                     transform .18s ease!important;
+          border-radius:12px 12px 0 0!important;
+        }
+        button[data-baseweb="tab"]:hover{
+          background:#fff4ed!important;transform:translateY(-1px)!important;
+        }
+        @keyframes page-enter{
+          from{opacity:0;transform:translateY(10px) scale(.995)}
+          to{opacity:1;transform:translateY(0) scale(1)}
+        }
+        @keyframes hero-settle{
+          from{opacity:0;transform:perspective(1200px) rotateX(2.5deg) translateY(14px)}
+          to{opacity:1;transform:perspective(1200px) rotateX(0) translateY(0)}
+        }
+        @keyframes result-rise{
+          from{opacity:0;transform:translateY(18px) scale(.992)}
+          to{opacity:1;transform:translateY(0) scale(1)}
+        }
+        @media (prefers-reduced-motion:reduce){
+          html{scroll-behavior:auto}
+          *,*:before,*:after{
+            animation-duration:.01ms!important;
+            animation-iteration-count:1!important;
+            transition-duration:.01ms!important;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     pad_left, scq, map_col, pad_right = st.columns([1, 2.2, 2.2, 1])
     with scq:
         st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
@@ -7919,10 +8065,6 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     button[data-baseweb="tab"]{color:#6d4a42!important;font-weight:750!important}
     button[data-baseweb="tab"][aria-selected="true"]{
       color:#d6534f!important;border-color:#ff776f!important}
-    div[data-testid="stButton"] button{border-radius:999px!important;min-height:2.8rem}
-    div[data-testid="stButton"] button[kind="primary"]{
-      background:linear-gradient(120deg,#ff6877,#ff9b69)!important;
-      box-shadow:0 10px 24px rgba(255,104,119,.22)!important}
     div[data-testid="stTextInput"] input{border-radius:999px!important;
       min-height:3.3rem;padding-left:1.25rem;border:1px solid #dfe3ea;
       box-shadow:0 10px 28px rgba(15,23,42,.06)}
@@ -11702,10 +11844,6 @@ def page_map(cfg: Dict[str, str]) -> None:
         "div[data-testid='stMetric']{background:linear-gradient(135deg,#fffdfa,#fff3ec)!important;"
         "border:1px solid #f2d5ca!important;border-radius:17px!important;"
         "box-shadow:0 9px 24px rgba(91,48,38,.06)!important;padding:.7rem .9rem!important}"
-        ".st-key-page_map div[data-testid='stButton'] button[kind='primary']{"
-        "background:linear-gradient(120deg,#ff6877,#ff9b69)!important;"
-        "border:0!important;color:#fff!important;"
-        "box-shadow:0 10px 24px rgba(255,104,119,.22)!important}"
         ".school-results-title{font-size:1.45rem;font-weight:850;color:#4c2b25;"
         "margin:1.4rem 0 .6rem}.results-basis{color:#76574f;font-size:.88rem;"
         "margin:.2rem 0 1rem}"
