@@ -4850,6 +4850,7 @@ def deck_chart_with_click(deck: Any, key: str) -> Dict[str, Any] | None:
         event = st.pydeck_chart(
             deck,
             use_container_width=True,
+            height=720 if key == "standard_school_map" else 520,
             on_select="rerun",
             selection_mode="single-object",
             key=key,
@@ -11473,9 +11474,12 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         # The map already re-reads the question on every run, so this button
         # is a deliberate submit affordance rather than new behaviour: a
         # search field with no Search button reads as unfinished.
-        st.button("Search", type="primary", use_container_width=True)
+        asked = st.button(
+            "Search", type="primary", use_container_width=True,
+            key="map_nl_submit",
+        )
     with col_clear:
-        clear = st.button("Clear", use_container_width=True)
+        clear = st.button("Clear", use_container_width=True, key="map_nl_clear_button")
     if clear:
         # Raised as a plain flag and applied at the top of the next run,
         # before the text box is created. Writing to a widget's state after
@@ -11487,6 +11491,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # is used here so temporary model demand or missing credentials can never
     # replace the user's result with a technical status message.
     parsed = parse_map_question(question)
+    parsed["submitted"] = bool(asked)
 
     if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
         relation = _map_explicit_relation(question)
@@ -11594,13 +11599,39 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
 
 def page_map(cfg: Dict[str, str]) -> None:
     st.markdown(
-        "<style>.map-search-hero{max-width:850px;margin:1rem auto 1.3rem;"
-        "text-align:center}.map-search-hero h1{font-size:clamp(2rem,4vw,3.2rem);"
-        "letter-spacing:-.04em;line-height:1.08;margin:0;color:#172033;"
-        "font-weight:850}.map-search-hero p{font-size:1rem;color:#667085;"
-        "margin:.55rem 0 0}div[data-testid='stTextInput'] input{"
-        "border-radius:999px!important;min-height:3.3rem;padding-left:1.25rem;"
-        "border:1px solid #dfe3ea;box-shadow:0 10px 28px rgba(15,23,42,.06)}"
+        "<style>[data-testid='stMainBlockContainer']{max-width:1600px!important;"
+        "padding-left:2.2rem!important;padding-right:2.2rem!important}"
+        ".map-search-hero{max-width:980px;margin:1rem auto 1.45rem;"
+        "text-align:center;padding:2.2rem 1.5rem;border-radius:28px;"
+        "background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);"
+        "box-shadow:0 22px 55px rgba(185,76,55,.18)}"
+        ".map-search-hero h1{font-size:clamp(2rem,4vw,3.2rem);"
+        "letter-spacing:-.04em;line-height:1.08;margin:0;color:#fff;"
+        "font-weight:850}.map-search-hero p{font-size:1rem;color:#fff7f2;"
+        "margin:.55rem 0 0}"
+        "div[data-testid='stTextInput'] input,div[data-testid='stNumberInput'] input{"
+        "border-radius:14px!important;min-height:3.15rem;padding-left:1rem;"
+        "background:#fffdfa!important;border:1px solid #f3cbbc!important;"
+        "box-shadow:0 7px 18px rgba(117,58,43,.07)!important}"
+        "div[data-testid='stSelectbox']>div>div{background:#fffdfa!important;"
+        "border:1px solid #f3cbbc!important;border-radius:14px!important;"
+        "box-shadow:0 7px 18px rgba(117,58,43,.07)!important}"
+        "div[data-testid='stExpander']{border:1px solid #f0cfc2!important;"
+        "border-radius:18px!important;background:#fffaf7!important;"
+        "box-shadow:0 10px 28px rgba(91,48,38,.06)!important}"
+        "div[data-testid='stDeckGlJsonChart']{border:1px solid #f0cfc2;"
+        "border-radius:24px;overflow:hidden;box-shadow:0 20px 48px rgba(91,48,38,.14)}"
+        "div[data-testid='stDataFrame']{border:1px solid #f0cfc2!important;"
+        "border-radius:20px!important;overflow:hidden!important;background:#fffdfa!important;"
+        "box-shadow:0 14px 34px rgba(91,48,38,.10)!important;padding:6px!important}"
+        "div[data-testid='stDataFrame'] [role='columnheader']{"
+        "background:#fff0e8!important;color:#65362e!important;font-weight:800!important}"
+        "div[data-testid='stMetric']{background:linear-gradient(135deg,#fffdfa,#fff3ec)!important;"
+        "border:1px solid #f2d5ca!important;border-radius:17px!important;"
+        "box-shadow:0 9px 24px rgba(91,48,38,.06)!important;padding:.7rem .9rem!important}"
+        ".school-results-title{font-size:1.45rem;font-weight:850;color:#4c2b25;"
+        "margin:1.4rem 0 .6rem}.results-basis{color:#76574f;font-size:.88rem;"
+        "margin:.2rem 0 1rem}"
         "</style>"
         "<div class='map-search-hero'><h1>Explore Welsh schools by place</h1>"
         "<p>Search schools, compare local indicators and view the geographic "
@@ -11640,9 +11671,10 @@ def page_map(cfg: Dict[str, str]) -> None:
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
-    st.markdown("## Find schools")
-    st.caption("Choose a search type. Only the filters that apply will appear.")
-    controls = st.container()
+    search_tabs = st.tabs(["Build a search", "Write in your own words"])
+    controls = search_tabs[0].container()
+    controls.markdown("## Find schools")
+    controls.caption("Choose filters, then open the results on the map.")
     if st.session_state.pop("map_nl_clear", False):
         st.session_state["map_nl_question"] = ""
         st.session_state.pop("map_nl_applied", None)
@@ -12025,7 +12057,23 @@ def page_map(cfg: Dict[str, str]) -> None:
         st.info("Swap the From and To values marked in red above.")
         return
 
-    nl_map = render_map_nl(cfg)
+    build_run = controls.button(
+        "Show results on map", type="primary", use_container_width=True,
+        key="map_filter_submit",
+    )
+    with search_tabs[1]:
+        st.markdown("## Ask for schools in your own words")
+        st.caption(
+            "Use a place, school phase, deprivation level, transport access, "
+            "FSM, attendance or Capped 9 condition."
+        )
+        nl_map = render_map_nl(cfg)
+
+    if build_run or nl_map.get("submitted"):
+        st.session_state["map_has_run"] = True
+        st.session_state["map_scroll_to_results"] = True
+    if not st.session_state.get("map_has_run"):
+        return
 
     if nl_map.get("spatial_relation_failed"):
         st.info(
@@ -12782,27 +12830,9 @@ ORDER BY cluster_size DESC, cluster_id
                 + (f" … and {len(unit_names) - 8} more" if len(unit_names) > 8 else "")
             )
 
-    summary = (
-        summary_df.iloc[0].to_dict()
-        if not summary_df.empty
-        else {}
-    )
-    c1, c2, c3, c4 = st.columns(4)
+    summary = summary_df.iloc[0].to_dict() if not summary_df.empty else {}
     total_schools = int(summary.get("total_schools") or 0)
-    c1.metric("Schools matching filters", f"{total_schools:,}")
-    c2.metric("Deprivation", dep_label)
     near_transport_count = int(summary.get("near_transport_schools") or 0)
-    # The label never matched the option text, so the "far" case always fell
-    # through to the near count. Matched to the two options that remain.
-    if transport == "Distance-far (no stop within 800m)":
-        transport_value = total_schools - near_transport_count
-    elif transport == "Distance-near (within 800m)":
-        transport_value = total_schools
-    else:
-        transport_value = near_transport_count
-    c3.metric("Transport", f"{transport_value:,}")
-    avg_fsm = summary.get("avg_fsm_pct")
-    c4.metric("Average FSM", f"{avg_fsm:.1f}%" if pd.notna(avg_fsm) else "N/A")
 
     if filtered_metric_props:
         if include_missing_metrics:
@@ -13060,11 +13090,82 @@ ORDER BY cluster_size DESC, cluster_id
             "for its counts and averages, then click it to see the schools "
             "by name. School pins return in Standard search."
         )
+    st.markdown("<div id='school-map-results'></div>", unsafe_allow_html=True)
+    if st.session_state.pop("map_scroll_to_results", False):
+        components.html(
+            """
+            <script>
+            const target = window.parent.document.getElementById('school-map-results');
+            if (target) setTimeout(() => target.scrollIntoView({behavior:'smooth', block:'start'}), 120);
+            </script>
+            """,
+            height=0,
+        )
     clicked_region = render_school_map(
         map_df, selected_school, polygon_df, cluster_only, admin_polygon_df
     )
     if clicked_region:
         render_lsoa_school_panel(cfg, clicked_region)
+
+    def result_range(column: str, suffix: str = "") -> Tuple[str, int]:
+        values = pd.to_numeric(
+            map_df.get(column, pd.Series(dtype=float)), errors="coerce"
+        ).dropna()
+        if values.empty:
+            return "N/A", 0
+        return f"{values.min():.1f}–{values.max():.1f}{suffix}", int(len(values))
+
+    fsm_range, fsm_basis = result_range("fsm_pct", "%")
+    attendance_range, attendance_basis = result_range("attendance_pct", "%")
+    capped_range, capped_basis = result_range("capped9_score", " points")
+    st.markdown(
+        "<div class='school-results-title'>Result summary</div>",
+        unsafe_allow_html=True,
+    )
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Matching schools", f"{len(map_df):,}")
+    m2.metric("FSM range", fsm_range)
+    m3.metric("Attendance range", attendance_range)
+    m4.metric("Capped 9 range", capped_range)
+    st.markdown(
+        "<div class='results-basis'>"
+        f"FSM range uses {fsm_basis:,} of {len(map_df):,} schools · "
+        f"attendance uses {attendance_basis:,} of {len(map_df):,} · "
+        f"Capped 9 uses {capped_basis:,} of {len(map_df):,} and is a points "
+        "score for secondary schools, not a percentage. "
+        f"Deprivation filter: {escape(str(dep_label))} · "
+        f"schools with a transport stop within 800m: {near_transport_count:,}."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div class='school-results-title'>Schools in this map</div>",
+        unsafe_allow_html=True,
+    )
+    school_table_columns = [
+        c for c in (
+            "school", "school_type", "local_authority", "lsoa_code",
+            "deprivation", "fsm_pct", "attendance_pct", "capped9_score",
+            "nearest_stop_distance_m",
+        ) if c in map_df.columns
+    ]
+    school_table = map_df[school_table_columns].rename(columns={
+        "school": "School",
+        "school_type": "Phase",
+        "local_authority": "Local authority",
+        "lsoa_code": "LSOA",
+        "deprivation": "Deprivation",
+        "fsm_pct": "FSM (%)",
+        "attendance_pct": "Attendance (%)",
+        "capped9_score": "Capped 9 (points)",
+        "nearest_stop_distance_m": "Nearest stop (m)",
+    })
+    st.dataframe(
+        school_table, use_container_width=True, hide_index=True,
+        height=min(560, 44 + 35 * min(len(school_table), 14)),
+        key="map_school_results_table",
+    )
 
     if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
