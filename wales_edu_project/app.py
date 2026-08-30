@@ -3590,9 +3590,18 @@ def render_page_switcher(page: str) -> None:
           color:#4a2b25!important;font-weight:850!important;
         }
         div[data-testid="stSpinner"]:before{
-          content:"⌛";display:block;font-size:3.1rem;line-height:1;
-          filter:drop-shadow(0 10px 14px rgba(117,58,43,.18));
-          animation:hourglass-turn 1.35s ease-in-out infinite;
+          content:"";display:block;width:190px;height:205px;
+          background-position:center;background-repeat:no-repeat;
+          background-size:contain;
+          filter:drop-shadow(0 16px 22px rgba(117,58,43,.20));
+          animation:loader-map-pulse 1.65s ease-in-out infinite;
+        }
+        div[data-testid="stSpinner"]:after{
+          content:"";display:block;width:42px;height:42px;border-radius:50%;
+          border:4px solid rgba(255,157,112,.22);
+          border-top-color:#ff6f78;border-right-color:#ffad63;
+          box-shadow:0 8px 18px rgba(117,58,43,.12);
+          animation:loader-ring .85s linear infinite;
         }
         div[data-testid="stSpinner"] svg{display:none!important}
         .st-key-page_scq_demonstrator,
@@ -3686,10 +3695,12 @@ def render_page_switcher(page: str) -> None:
           from{opacity:0;transform:translateY(18px) scale(.992)}
           to{opacity:1;transform:translateY(0) scale(1)}
         }
-        @keyframes hourglass-turn{
-          0%,35%{transform:rotate(0deg) translateY(0)}
-          50%,85%{transform:rotate(180deg) translateY(-2px)}
-          100%{transform:rotate(360deg) translateY(0)}
+        @keyframes loader-map-pulse{
+          0%,100%{transform:translateY(0) scale(.96);opacity:.72}
+          50%{transform:translateY(-7px) scale(1.025);opacity:1}
+        }
+        @keyframes loader-ring{
+          to{transform:rotate(360deg)}
         }
         @media (prefers-reduced-motion:reduce){
           html{scroll-behavior:auto}
@@ -3703,6 +3714,15 @@ def render_page_switcher(page: str) -> None:
         """,
         unsafe_allow_html=True,
     )
+    loader_logo = Path(__file__).with_name("wales_education_kg.png")
+    if loader_logo.exists():
+        loader_b64 = base64.b64encode(loader_logo.read_bytes()).decode("ascii")
+        st.markdown(
+            "<style>div[data-testid='stSpinner']:before{"
+            f"background-image:url('data:image/png;base64,{loader_b64}')!important;"
+            "}</style>",
+            unsafe_allow_html=True,
+        )
     nav_shell = st.container(key="nav_switcher")
     pad_left, scq, map_col, pad_right = nav_shell.columns([.05, 1, 1, .05])
     with scq:
