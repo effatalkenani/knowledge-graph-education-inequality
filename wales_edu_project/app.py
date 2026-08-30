@@ -7613,7 +7613,11 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     if asked:
         st.session_state.pop("place_nl_scope", None)
         st.session_state.pop("place_nl_error", None)
-        intent = llm_parse_map_question(text) if text.strip() else {}
+        input_error = natural_spatial_input_error(text)
+        intent = (
+            llm_parse_map_question(text)
+            if text.strip() and not input_error else {}
+        )
         requested_scopes = intent.get("admin_scopes") or (
             [intent["admin_scope"]] if intent.get("admin_scope") else []
         )
@@ -7622,7 +7626,9 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         if not requested_scopes:
             hint = _map_spatial_hint(text)
             requested_scopes = [hint] if hint else []
-        if (
+        if input_error:
+            st.session_state["place_nl_error"] = input_error
+        elif (
             not text.strip()
             or not requested_scopes
             or not requested_scopes[0].get("anchor_name")
@@ -10749,6 +10755,68 @@ def _map_spatial_hint(text: str) -> Dict[str, str] | None:
     return hint
 
 
+def natural_spatial_input_error(text: str) -> str | None:
+    """Explain a missing spatial argument before parsing or querying.
+
+    Unary relations need one named anchor and an explicit answer class.
+    BETWEEN alone needs two named anchors. School-property questions are not
+    spatial comparisons and therefore deliberately bypass this check.
+    """
+    raw = str(text or "").strip()
+    low = raw.lower()
+    if not raw or re.search(r"\b(?:near|close to)\s+transport\b", low):
+        return None
+    relation = _map_explicit_relation(raw)
+    if relation == "direct":
+        return None
+    relation_word = re.search(
+        r"\b(?:touch(?:es|ing)?|adjacent|neighbours?|neighbors?|"
+        r"intersect(?:s|ing)?|inside|within|contains?|near|between|"
+        r"not\s+touch(?:es|ing)?)\b",
+        low,
+    )
+    if not relation_word:
+        return None
+
+    prefix = low[:relation_word.start()]
+    target_named = bool(re.search(
+        r"\bschools?\b|\blsoas?\b|lower layer super output areas?",
+        prefix,
+    ))
+    if not target_named:
+        for phrase in sorted(_ADMIN_TYPE_WORDS, key=len, reverse=True):
+            plural = phrase + "s" if not phrase.endswith("y") else phrase[:-1] + "ies"
+            if re.search(rf"\b(?:{re.escape(phrase)}|{re.escape(plural)})\b", prefix):
+                target_named = True
+                break
+
+    hint = _map_spatial_hint(raw)
+    if relation == "between":
+        if not hint or not hint.get("second_name"):
+            return (
+                "BETWEEN needs two named places. For example: “LSOAs between "
+                "W01001440 and W01001441”."
+            )
+        if not target_named:
+            return (
+                "Add the type of area to return, such as LSOAs, Communities "
+                "or Wards."
+            )
+        return None
+    if not target_named:
+        return (
+            "Add what you want to find, not only the reference place. For "
+            "example: “LSOAs near W01001440” or “Communities near "
+            "W01001440”."
+        )
+    if not hint or not hint.get("anchor_name"):
+        return (
+            "Add the reference place by name or code. For example: “LSOAs "
+            "near W01001440”."
+        )
+    return None
+
+
 def resolve_map_admin_scope(
     cfg: Dict[str, str], scope: Dict[str, str] | None
 ) -> Tuple[Dict[str, Any] | None, List[str]]:
@@ -11870,17 +11938,30 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # llm_parse_map_question falls back to the deterministic parser.
     cached_text = st.session_state.get("map_nl_parsed_text")
     cached_intent = st.session_state.get("map_nl_parsed_intent")
-    if asked:
+    input_error = natural_spatial_input_error(question) if asked else None
+    if asked and input_error:
+        parsed = parse_map_question(question)
+        parsed["input_validation_failed"] = True
+        parsed["input_validation_message"] = input_error
+        parsed["conditions"] = []
+        parsed["admin_scope"] = None
+        parsed["admin_scopes"] = []
+    elif asked:
         parsed = llm_parse_map_question(question)
-        st.session_state["map_nl_parsed_text"] = question
-        st.session_state["map_nl_parsed_intent"] = parsed
     elif cached_text == question and isinstance(cached_intent, dict):
         parsed = cached_intent
     else:
         # Before Search is pressed, use the local reader only to keep the form
         # responsive. It cannot execute until submitted below.
         parsed = parse_map_question(question)
+    if asked:
+        st.session_state["map_nl_parsed_text"] = question
+        st.session_state["map_nl_parsed_intent"] = parsed
     parsed["submitted"] = bool(asked)
+
+    if parsed.get("input_validation_failed"):
+        st.info(str(parsed.get("input_validation_message")))
+        return parsed
 
     if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
         relation = _map_explicit_relation(question)
@@ -12474,6 +12555,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             int(st.session_state.get("map_spatial_selection_version", 0)) + 1
         )
     if not st.session_state.get("map_has_run"):
+        return
+    if nl_map.get("input_validation_failed"):
         return
     if nl_map.get("spatial_relation_failed"):
         st.info(
