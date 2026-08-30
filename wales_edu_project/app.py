@@ -7327,6 +7327,18 @@ GUIDED_TYPE_LABELS = {
     "EuropeanRegion": "European region",
 }
 
+# The 22 Welsh principal councils from the OS data used by the loader.  This
+# is the authoritative administrative seed for the public search.  Geometry
+# alone is not enough to define the country at the border: an English area can
+# legitimately touch or intersect a Welsh boundary and must not then become a
+# selectable Welsh place.
+WELSH_UA_OS_IDS = (
+    "25492", "25494", "25502", "25484", "25496", "44426",
+    "25498", "25493", "25483", "25497", "25495", "25491",
+    "25500", "25490", "25485", "25487", "25489", "25486",
+    "25482", "25776", "44425", "25831",
+)
+
 GUIDED_RELATION_LABELS = {
     "touches": "touches",
     "near": "is near",
@@ -7343,6 +7355,55 @@ def clear_guided_result() -> None:
     st.session_state.pop("guided_has_run", None)
 
 
+def guided_admin_kind_expr(alias: str) -> str:
+    """Canonical administrative type from the actual YAGO2geo spelling."""
+    raw = (
+        # raw_type preserves the ontology class before the loader folds both
+        # OS_COMMUNITY and OS_CivilParishorCommunity into `Community`.
+        f"toLower(replace(replace(coalesce({alias}.raw_type, "
+        f"{alias}.type, ''), '_', ''), ' ', ''))"
+    )
+    return (
+        "CASE "
+        f"WHEN {raw} CONTAINS 'civilparishorcommunity' "
+        "THEN 'CivilParishorCommunity' "
+        f"WHEN {raw} CONTAINS 'communityward' OR {raw} = 'ward' "
+        "THEN 'CommunityWard' "
+        f"WHEN {raw} CONTAINS 'unitaryauthority' "
+        "THEN 'UnitaryAuthority' "
+        f"WHEN {raw} CONTAINS 'europeanregion' "
+        "THEN 'EuropeanRegion' "
+        f"WHEN {raw} CONTAINS 'community' THEN 'Community' "
+        f"ELSE coalesce({alias}.raw_type, {alias}.type, 'Unknown') END"
+    )
+
+
+def guided_wales_admin_predicate(alias: str) -> str:
+    """True for a unit in, or above, the 22 Welsh unitary authorities."""
+    ids = "[" + ",".join(repr(x) for x in WELSH_UA_OS_IDS) + "]"
+    return (
+        "(coalesce(toString(" + alias + ".os_id),'') IN " + ids + " "
+        "OR EXISTS { MATCH (" + alias + ")-[:WITHIN*1..5]->(ua:AdminUnit) "
+        "WHERE coalesce(toString(ua.os_id),'') IN " + ids + " } "
+        "OR EXISTS { MATCH (ua:AdminUnit)-[:WITHIN*1..5]->(" + alias + ") "
+        "WHERE coalesce(toString(ua.os_id),'') IN " + ids + " })"
+    )
+
+
+def guided_pair_supported(domain: str, range_: str, relation: str) -> bool:
+    """Apply the dissertation table, plus the explicit SCQ8 composition."""
+    possible = _possible_pair_relations(domain, range_)
+    if relation == "near" and ((domain == "LSOA") != (range_ == "LSOA")):
+        # Cross-geography near is not a direct edge. It is the SCQ8 path
+        # INTERSECTS -> GRAPH_NEAR (or its reverse).
+        return "intersects" in possible
+    table_relation = {
+        "near": "touches", "between": "touches",
+        "not_touches": "disjoint",
+    }.get(relation, relation)
+    return table_relation in possible
+
+
 @st.cache_data(show_spinner=False, ttl=600)
 def guided_entity_types(
     cfg_key: Tuple[str, str, str, str]
@@ -7350,16 +7411,18 @@ def guided_entity_types(
     """Only expose geographic types that actually exist in this graph."""
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
-    rows = run_cypher(cfg, """
+    admin_kind = guided_admin_kind_expr("n")
+    wales_admin = guided_wales_admin_predicate("n")
+    rows = run_cypher(cfg, f"""
     MATCH (n)
-    WHERE n:LSOA OR n:AdminUnit
-    RETURN DISTINCT CASE WHEN n:LSOA THEN 'LSOA' ELSE n.type END AS kind
+    WHERE n:LSOA OR (n:AdminUnit AND {wales_admin})
+    RETURN DISTINCT CASE WHEN n:LSOA THEN 'LSOA' ELSE {admin_kind} END AS kind
     ORDER BY kind
     """)
     if rows.empty:
         return ()
     preferred = [
-        "LSOA", "Community", "Ward", "CommunityWard",
+        "LSOA", "Community", "CommunityWard",
         "CivilParishorCommunity", "UnitaryAuthority", "EuropeanRegion",
     ]
     found = {str(v) for v in rows["kind"].dropna().tolist()}
@@ -7380,9 +7443,11 @@ def guided_anchor_options(
         ORDER BY label
         """
     else:
-        query = """
+        admin_kind = guided_admin_kind_expr("n")
+        wales_admin = guided_wales_admin_predicate("n")
+        query = f"""
         MATCH (n:AdminUnit)
-        WHERE n.type = $kind
+        WHERE {admin_kind} = $kind AND {wales_admin}
         RETURN n.uri AS value, coalesce(n.name, n.uri) AS label
         ORDER BY label
         """
@@ -7403,6 +7468,7 @@ def guided_capabilities(
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
     if kind == "LSOA":
+        unit_kind = guided_admin_kind_expr("u")
         query = """
         MATCH (a:LSOA {code:$anchor})
         CALL {
@@ -7420,7 +7486,12 @@ def guided_capabilities(
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (u:AdminUnit)-[:INTERSECTS]->(a)
-          RETURN 'intersects' AS relation, u.type AS result_type,
+          RETURN 'intersects' AS relation, __UNIT_KIND__ AS result_type,
+                 count(DISTINCT u) AS n
+          UNION
+          WITH a MATCH (a)-[:GRAPH_NEAR]-(b:LSOA)<-[:INTERSECTS]-(u:AdminUnit)
+          WHERE NOT (u)-[:INTERSECTS]->(a)
+          RETURN 'near' AS relation, __UNIT_KIND__ AS result_type,
                  count(DISTINCT u) AS n
           UNION
           WITH a MATCH (a)-[:LSOA_TOUCHES]-(:LSOA)
@@ -7429,45 +7500,60 @@ def guided_capabilities(
         }
         WITH relation, result_type, n WHERE n > 0
         RETURN relation, result_type, n
-        """
+        """.replace("__UNIT_KIND__", unit_kind)
     else:
+        a_kind = guided_admin_kind_expr("a")
+        b_kind = guided_admin_kind_expr("b")
+        b_wales = guided_wales_admin_predicate("b")
+        m_wales = guided_wales_admin_predicate("m")
         query = """
         MATCH (a:AdminUnit {uri:$anchor})
         CALL {
           WITH a MATCH (a)-[:TOUCHES]-(b:AdminUnit)
-          RETURN 'touches' AS relation, b.type AS result_type,
+          WHERE __B_WALES__
+          RETURN 'touches' AS relation, __B_KIND__ AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (a)-[:TOUCHES]-(m:AdminUnit)-[:TOUCHES]-(b:AdminUnit)
-          WHERE b <> a AND b.type = a.type AND NOT (a)-[:TOUCHES]-(b)
-          RETURN 'near' AS relation, b.type AS result_type,
+          WHERE b <> a AND __B_KIND__ = __A_KIND__
+            AND __B_WALES__ AND __M_WALES__ AND NOT (a)-[:TOUCHES]-(b)
+          RETURN 'near' AS relation, __B_KIND__ AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (b:AdminUnit)
-          WHERE b.type = a.type AND b <> a AND NOT (a)-[:TOUCHES]-(b)
-          RETURN 'not_touches' AS relation, b.type AS result_type,
+          WHERE __B_KIND__ = __A_KIND__ AND __B_WALES__
+            AND b <> a AND NOT (a)-[:TOUCHES]-(b)
+          RETURN 'not_touches' AS relation, __B_KIND__ AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (a)-[:WITHIN]->(b:AdminUnit)
-          RETURN 'within' AS relation, b.type AS result_type,
+          WHERE __B_WALES__
+          RETURN 'within' AS relation, __B_KIND__ AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (b:AdminUnit)-[:WITHIN]->(a)
-          RETURN 'contains' AS relation, b.type AS result_type,
+          WHERE __B_WALES__
+          RETURN 'contains' AS relation, __B_KIND__ AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (a)-[:INTERSECTS]->(b:LSOA)
           RETURN 'intersects' AS relation, 'LSOA' AS result_type,
                  count(DISTINCT b) AS n
           UNION
+          WITH a MATCH (a)-[:INTERSECTS]->(base:LSOA)-[:GRAPH_NEAR]-(b:LSOA)
+          WHERE NOT (a)-[:INTERSECTS]->(b)
+          RETURN 'near' AS relation, 'LSOA' AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
           WITH a MATCH (a)-[:TOUCHES]-(b:AdminUnit)
-          WHERE b.type = a.type
-          RETURN 'between' AS relation, a.type AS result_type,
+          WHERE __B_KIND__ = __A_KIND__ AND __B_WALES__
+          RETURN 'between' AS relation, __A_KIND__ AS result_type,
                  count(DISTINCT b) AS n
         }
         WITH relation, result_type, n WHERE n > 0
         RETURN relation, result_type, n
-        """
+        """.replace("__A_KIND__", a_kind).replace("__B_KIND__", b_kind) \
+           .replace("__B_WALES__", b_wales).replace("__M_WALES__", m_wales)
     return run_cypher(cfg, query, {"anchor": anchor})
 
 
@@ -7476,6 +7562,19 @@ def guided_result_query(
 ) -> str:
     """Cypher for one validated guided-search combination."""
     if kind == "LSOA":
+        if relation == "near" and result_type != "LSOA":
+            unit_kind = guided_admin_kind_expr("u")
+            return """
+                MATCH (a:LSOA {code:$anchor})-[:GRAPH_NEAR]-(b:LSOA)
+                      <-[:INTERSECTS]-(u:AdminUnit)
+                WHERE __UNIT_KIND__ = $result_type
+                  AND NOT (u)-[:INTERSECTS]->(a)
+                RETURN DISTINCT u.uri AS unit_uri,
+                       coalesce(u.name,u.uri) AS unit_name,
+                       __UNIT_KIND__ AS unit_type
+                ORDER BY unit_name
+            """.replace("__UNIT_KIND__", unit_kind)
+        unit_kind = guided_admin_kind_expr("u")
         queries = {
             "touches": """
                 MATCH (a:LSOA {code:$anchor})-[:LSOA_TOUCHES]-(b:LSOA)
@@ -7495,47 +7594,153 @@ def guided_result_query(
                 ORDER BY name""",
             "intersects": """
                 MATCH (u:AdminUnit)-[:INTERSECTS]->(a:LSOA {code:$anchor})
-                WHERE u.type = $result_type
+                WHERE __UNIT_KIND__ = $result_type
                 RETURN DISTINCT u.uri AS unit_uri, coalesce(u.name,u.uri) AS unit_name,
-                       u.type AS unit_type ORDER BY unit_name""",
+                       __UNIT_KIND__ AS unit_type ORDER BY unit_name""",
         }
-        return queries[relation]
+        return queries[relation].replace("__UNIT_KIND__", unit_kind)
 
+    b_kind = guided_admin_kind_expr("b")
+    b_wales = guided_wales_admin_predicate("b")
+    m_wales = guided_wales_admin_predicate("m")
+    if relation == "near" and result_type == "LSOA":
+        return """
+            MATCH (a:AdminUnit {uri:$anchor})-[:INTERSECTS]->(base:LSOA)
+                  -[:GRAPH_NEAR]-(b:LSOA)
+            WHERE NOT (a)-[:INTERSECTS]->(b)
+            RETURN DISTINCT b.code AS lsoa_code,
+                   coalesce(b.name,b.code) AS name,
+                   'LSOA' AS result_type
+            ORDER BY name
+        """
     queries = {
         "touches": """
             MATCH (a:AdminUnit {uri:$anchor})-[:TOUCHES]-(b:AdminUnit)
-            WHERE b.type = $result_type
+            WHERE __B_KIND__ = $result_type AND __B_WALES__
             RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
-                   b.type AS unit_type ORDER BY unit_name""",
+                   __B_KIND__ AS unit_type ORDER BY unit_name""",
         "near": """
             MATCH (a:AdminUnit {uri:$anchor})-[:TOUCHES]-(m:AdminUnit)
                   -[:TOUCHES]-(b:AdminUnit)
-            WHERE b <> a AND b.type = $result_type
-              AND NOT (a)-[:TOUCHES]-(b)
+            WHERE b <> a AND __B_KIND__ = $result_type
+              AND __B_WALES__ AND __M_WALES__ AND NOT (a)-[:TOUCHES]-(b)
             RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
-                   b.type AS unit_type ORDER BY unit_name""",
+                   __B_KIND__ AS unit_type ORDER BY unit_name""",
         "not_touches": """
             MATCH (a:AdminUnit {uri:$anchor}), (b:AdminUnit)
-            WHERE b.type = $result_type AND b <> a
-              AND NOT (a)-[:TOUCHES]-(b)
+            WHERE __B_KIND__ = $result_type AND b <> a
+              AND __B_WALES__ AND NOT (a)-[:TOUCHES]-(b)
             RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
-                   b.type AS unit_type ORDER BY unit_name""",
+                   __B_KIND__ AS unit_type ORDER BY unit_name""",
         "within": """
             MATCH (a:AdminUnit {uri:$anchor})-[:WITHIN]->(b:AdminUnit)
-            WHERE b.type = $result_type
+            WHERE __B_KIND__ = $result_type AND __B_WALES__
             RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
-                   b.type AS unit_type ORDER BY unit_name""",
+                   __B_KIND__ AS unit_type ORDER BY unit_name""",
         "contains": """
             MATCH (b:AdminUnit)-[:WITHIN]->(a:AdminUnit {uri:$anchor})
-            WHERE b.type = $result_type
+            WHERE __B_KIND__ = $result_type AND __B_WALES__
             RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
-                   b.type AS unit_type ORDER BY unit_name""",
+                   __B_KIND__ AS unit_type ORDER BY unit_name""",
         "intersects": """
             MATCH (a:AdminUnit {uri:$anchor})-[:INTERSECTS]->(b:LSOA)
             RETURN DISTINCT b.code AS lsoa_code, coalesce(b.name,b.code) AS name,
                    'LSOA' AS result_type ORDER BY name""",
     }
-    return queries[relation]
+    return queries[relation].replace("__B_KIND__", b_kind) \
+        .replace("__B_WALES__", b_wales).replace("__M_WALES__", m_wales)
+
+
+def render_guided_natural_search(cfg: Dict[str, str]) -> None:
+    """Natural wording routed through the same spatial resolver as the map."""
+    qcol, bcol = st.columns([7, 1.2])
+    with qcol:
+        text = st.text_input(
+            "Place question",
+            placeholder="Try: Which Communities touch Cathays Community?",
+            label_visibility="collapsed",
+            key="place_nl_question",
+        )
+    with bcol:
+        asked = st.button(
+            "Search", type="primary", use_container_width=True,
+            key="place_nl_search",
+        )
+    if asked:
+        st.session_state.pop("place_nl_scope", None)
+        st.session_state.pop("place_nl_error", None)
+        hint = _map_admin_hint(text)
+        if not text.strip() or not hint or not hint.get("anchor_name"):
+            st.session_state["place_nl_error"] = (
+                "We could not identify the place, area type and spatial "
+                "relationship. Try the example shown in the search box."
+            )
+        else:
+            try:
+                scope, _warnings = resolve_map_admin_scope(cfg, hint)
+            except Exception:
+                scope = None
+            if scope is None:
+                st.session_state["place_nl_error"] = (
+                    "That relationship is not available for the place and "
+                    "area types in your question."
+                )
+            else:
+                st.session_state["place_nl_scope"] = scope
+
+    error = st.session_state.get("place_nl_error")
+    if error:
+        st.info(error)
+        return
+    scope = st.session_state.get("place_nl_scope")
+    if not scope:
+        return
+
+    anchor = scope.get("anchor") or {}
+    relation = str(scope.get("relation") or "spatial relation")
+    result_kind = str(scope.get("result_kind") or "AdminUnit")
+    if result_kind == "Schools":
+        st.info(
+            "This page returns geographic areas. Use Schools map to search "
+            "for individual schools and education indicators."
+        )
+        return
+    if result_kind == "LSOA":
+        codes = sorted(set(scope.get("lsoa_codes") or []))
+        result = pd.DataFrame({"lsoa_code": codes})
+        if result.empty:
+            st.info("No LSOA satisfies this relationship for the selected place.")
+            return
+        st.metric("Areas found", len(result))
+        clicked = render_answer_map(
+            cfg, result, key="place_nl_lsoa_map",
+            focus_admin=str(anchor.get("uri") or ""),
+        )
+        if clicked:
+            render_lsoa_school_panel(cfg, clicked)
+        display_df(result)
+        return
+
+    units = scope.get("units", pd.DataFrame())
+    result = (
+        units.dropna(subset=["unit_uri"]).drop_duplicates("unit_uri")
+        if isinstance(units, pd.DataFrame) and not units.empty
+        else pd.DataFrame()
+    )
+    if result.empty:
+        st.info(
+            f"No area satisfies {relation.replace('_', ' ')} for "
+            f"{anchor.get('name', 'the selected place')}."
+        )
+        return
+    st.metric("Areas found", len(result))
+    picked = render_admin_answer_map(
+        cfg, result, None, key="place_nl_admin_map",
+        focus_admin=str(anchor.get("uri") or ""),
+    )
+    if picked:
+        render_unit_school_card(cfg, picked)
+    display_df(result)
 
 
 def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
@@ -7572,15 +7777,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
 
     guided, words = st.tabs(["Build a search", "Write in your own words"])
     with words:
-        # Retain the existing natural-language route as an optional route,
-        # while keeping its technical parser controls out of the main flow.
-        try:
-            nl_lsoas = lsoa_options(cfg, "lsoa_touch")
-            nl_admin = nl_admin_options(cfg)
-        except Exception:
-            nl_lsoas, nl_admin = [], []
-        render_nl_search(nl_lsoas, nl_admin)
-        render_question_answer(cfg)
+        render_guided_natural_search(cfg)
 
     with guided:
         c1, c2 = st.columns([1, 1.65])
@@ -7617,16 +7814,10 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 "place and area type."
             )
             return
-        semantic_relation = {
-            "near": "touches", "between": "touches",
-            "not_touches": "disjoint",
-        }
         caps = caps[
             caps.apply(
-                lambda row: semantic_relation.get(
-                    str(row["relation"]), str(row["relation"])
-                ) in _possible_pair_relations(
-                    kind, str(row["result_type"])
+                lambda row: guided_pair_supported(
+                    kind, str(row["result_type"]), str(row["relation"])
                 ),
                 axis=1,
             )
@@ -11223,29 +11414,14 @@ def page_map(cfg: Dict[str, str]) -> None:
         st.session_state["map_nl_question"] = ""
         st.session_state.pop("map_nl_applied", None)
 
-    if st.session_state.pop("map_force_standard", False):
-        st.session_state["map_search_mode"] = "Standard search"
-
-    search_mode = controls.radio(
-        "Search type",
-        [
-            "Standard search",
-            "Cluster search",
-        ],
-        # Standard is the default: it shows the school pins, which is what a
-        # reader arriving at a map of schools expects to see. Cluster search
-        # answers a narrower question and is chosen deliberately.
-        index=0,
-        key="map_search_mode",
-        label_visibility="collapsed",
-        help=(
-            "Standard search shows every school passing the filters below, "
-            "including any metric ranges you set. Cluster search is "
-            "different in kind: it finds connected groups of neighbouring "
-            "LSOAs that share a condition, then shows the schools inside "
-            "them."
-        ),
-    )
+    # This page has one job: find schools and show their pins.  The former
+    # Standard/Cluster switch exposed an evaluation implementation detail to
+    # a first-time user and made the ordinary map look like one of several
+    # specialist modes.  Keep the implementation variable for the existing
+    # query path, but do not present a redundant choice.
+    st.session_state.pop("map_force_standard", None)
+    st.session_state["map_search_mode"] = "Standard search"
+    search_mode = "Standard search"
 
     # Property names match load_to_neo4j.py's load_wimd(); the last three
     # are added by the extended loader and need one RUN_WIMD_LOAD re-run.
@@ -11549,61 +11725,53 @@ def page_map(cfg: Dict[str, str]) -> None:
             "or keep All matching schools."
         ),
     )
+    fsm_min = fsm_max = None
+    attendance_min = attendance_max = None
+    capped9_min = capped9_max = None
     with school_filters:
         st.markdown("---")
-        st.caption(
-            "Each range is locked to the loaded data, so a value below the "
-            "minimum or above the maximum cannot be entered. Leave a box "
-            "empty (All) to drop that side."
+        metric_filter = st.selectbox(
+            "Filter by a school measure",
+            ["None", "FSM", "Attendance", "Capped 9"],
+            help=(
+                "Choose a measure first. Its available range will appear "
+                "from the data currently loaded in the graph."
+            ),
         )
-        st.markdown("**FSM %** — allowed: **0.0 to 71.8**")
-        f1, f2 = st.columns(2)
-        with f1:
-            fsm_min = st.number_input(
-                "From", min_value=0.0, max_value=71.8, value=None,
-                step=0.5, placeholder="All", key="m_fsm_from",
-                help="Lowest FSM % to include. Allowed 0.0–71.8; typing outside shows an error. Empty = no lower bound.",
+        metric_specs = {
+            "FSM": ("FSM %", 0.0, 71.8, 0.5, "m_fsm"),
+            "Attendance": ("Attendance %", 79.1, 98.1, 0.1, "m_att"),
+            "Capped 9": ("Capped 9 points", 245.1, 453.1, 1.0, "m_cap"),
+        }
+        if metric_filter in metric_specs:
+            label, data_min, data_max, step, metric_key = metric_specs[metric_filter]
+            st.caption(
+                f"Available in this graph: {data_min:g}–{data_max:g}. "
+                "Leave either side empty when no limit is needed."
             )
-        with f2:
-            fsm_max = st.number_input(
-                "To", min_value=0.0, max_value=71.8, value=None,
-                step=0.5, placeholder="All", key="m_fsm_to",
-                help="Highest FSM % to include. Allowed 0.0–71.8; typing outside shows an error. Empty = no upper bound.",
-            )
-        st.markdown("**Attendance %** — allowed: **79.1 to 98.1**")
-        a1, a2 = st.columns(2)
-        with a1:
-            attendance_min = st.number_input(
-                "From", min_value=79.1, max_value=98.1, value=None,
-                step=0.1, placeholder="All", key="m_att_from",
-                help="Lowest attendance % to include. Allowed 79.1–98.1; typing outside shows an error. Empty = no lower bound.",
-            )
-        with a2:
-            attendance_max = st.number_input(
-                "To", min_value=79.1, max_value=98.1, value=None,
-                step=0.1, placeholder="All", key="m_att_to",
-                help="Highest attendance % to include. Allowed 79.1–98.1; typing outside shows an error. Empty = no upper bound.",
-            )
-        st.markdown("**Capped 9 points** — allowed: **245.1 to 453.1**")
-        c1_, c2_ = st.columns(2)
-        with c1_:
-            capped9_min = st.number_input(
-                "From", min_value=245.1, max_value=453.1, value=None,
-                step=1.0, placeholder="All", key="m_cap_from",
-                help="Lowest Capped 9 score to include. Allowed 245.1–453.1; typing outside shows an error. Empty = no lower bound.",
-            )
-        with c2_:
-            capped9_max = st.number_input(
-                "To", min_value=245.1, max_value=453.1, value=None,
-                step=1.0, placeholder="All", key="m_cap_to",
-                help="Highest Capped 9 score to include. Allowed 245.1–453.1; typing outside shows an error. Empty = no upper bound.",
-            )
-        st.caption(
-            "Capped 9 is a secondary-school points score, not a 0-100 "
-            "percentage. It exists for 205 of 1,453 schools (14.1%, "
-            "secondary only) — published for secondaries only, so this is a "
-            "source limitation, not missing data."
-        )
+            low_col, high_col = st.columns(2)
+            with low_col:
+                low_value = st.number_input(
+                    f"{label} from", min_value=data_min, max_value=data_max,
+                    value=None, step=step, placeholder=f"Min {data_min:g}",
+                    key=f"{metric_key}_from",
+                )
+            with high_col:
+                high_value = st.number_input(
+                    f"{label} to", min_value=data_min, max_value=data_max,
+                    value=None, step=step, placeholder=f"Max {data_max:g}",
+                    key=f"{metric_key}_to",
+                )
+            if metric_filter == "FSM":
+                fsm_min, fsm_max = low_value, high_value
+            elif metric_filter == "Attendance":
+                attendance_min, attendance_max = low_value, high_value
+            else:
+                capped9_min, capped9_max = low_value, high_value
+                st.caption(
+                    "Capped 9 is a points score available for secondary "
+                    "schools; it is not a percentage."
+                )
         # Metric filters always require a value; how many schools were
         # removed for having no value is disclosed above the map, so the
         # exclusion is visible without an extra control here.
