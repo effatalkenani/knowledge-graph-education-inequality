@@ -7826,6 +7826,14 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     """Clean, progressive spatial search for a first-time user."""
     st.markdown("""
     <style>
+    /* The SCQ landing page has no sidebar controls. Remove the empty brand
+       rail so the search experience uses the full browser width. */
+    section[data-testid="stSidebar"],
+    div[data-testid="stSidebarCollapsedControl"],
+    button[data-testid="stBaseButton-headerNoPadding"]{
+      display:none!important}
+    [data-testid="stAppViewContainer"]>.main{
+      margin-left:0!important;width:100%!important}
     .guided-hero{max-width:980px;margin:1.1rem auto 1.45rem;text-align:center;
       padding:2.25rem 1.5rem;border-radius:28px;
       background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);
