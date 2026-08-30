@@ -3404,14 +3404,7 @@ def sidebar_config() -> Dict[str, str]:
         "database": DEFAULT_DATABASE,
     }
 
-    st.sidebar.markdown("""
-    <div style="padding:.35rem 0 .9rem 0;">
-      <div style="font-size:1.3rem;font-weight:900;color:#7c2d12;line-height:1.15;">Wales Education KG</div>
-      <div style="font-size:.82rem;color:#64748b;margin-top:.25rem;">Spatial competency demonstrator</div>
-    </div>
-    """, unsafe_allow_html=True)
-    with st.sidebar:
-        inject_segmented_css()
+    inject_segmented_css()
     st.session_state["ui_lang"] = "English"
 
     # One deliberately light visual system. The former dark-mode toggle was
@@ -3425,11 +3418,7 @@ def sidebar_config() -> Dict[str, str]:
         # explains why pages look empty.
         _ = scalar(cfg, "RETURN 1", default=1)
     except Exception:
-        st.sidebar.markdown("""
-        <div class="side-card">
-          <div class="side-alert">● Database not connected</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.warning("Database not connected")
 
     # "Task Overview" and "Visual Story" were development-time learning aids
     # and are intentionally removed from the submission navigation. Their
@@ -3460,23 +3449,15 @@ def set_page(page_name: str) -> None:
 
 
 def render_page_switcher(page: str) -> None:
-    """A visible, two-way SCQ/Map switcher modelled on a hero carousel."""
-    left, scq, map_col, right = st.columns([.55, 2.2, 2.2, .55])
-    with left:
-        st.button("←", key="page_previous", help="Back to SCQ search",
-                  disabled=page == "SCQ Demonstrator", use_container_width=True,
-                  on_click=set_page, args=("SCQ Demonstrator",))
+    """Two centred tabs for the public SCQ and Map experiences."""
+    pad_left, scq, map_col, pad_right = st.columns([1, 2.2, 2.2, 1])
     with scq:
-        st.button("SCQ Search", key="page_scq", use_container_width=True,
+        st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
                   on_click=set_page, args=("SCQ Demonstrator",))
     with map_col:
-        st.button("Map Explorer", key="page_map", use_container_width=True,
+        st.button("Map Explorer", key="nav_tab_map", use_container_width=True,
                   type="primary" if page == "Map" else "secondary",
-                  on_click=set_page, args=("Map",))
-    with right:
-        st.button("→", key="page_next", help="Open Map Explorer",
-                  disabled=page == "Map", use_container_width=True,
                   on_click=set_page, args=("Map",))
 
 
@@ -7847,7 +7828,37 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     .guided-sentence{font-size:1.15rem;font-weight:750;color:#4a2b25;
       padding:.85rem 1rem;background:#fff3ec;border:1px solid #ffd9c8;
       border-radius:14px;margin:.6rem 0 1rem}
-    div[data-testid="stSelectbox"]>div>div{min-height:3.15rem;border-radius:14px!important}
+    div[data-testid="stSelectbox"] label p{
+      color:#63372f!important;font-weight:800!important;letter-spacing:.01em}
+    div[data-testid="stSelectbox"]>div>div{
+      min-height:3.15rem;border-radius:15px!important;
+      background:linear-gradient(180deg,#fffdfa 0%,#fff7f1 100%)!important;
+      border:1px solid #f3cbbc!important;
+      box-shadow:0 7px 18px rgba(117,58,43,.07)!important}
+    div[data-testid="stSelectbox"]>div>div:hover{
+      border-color:#ff9278!important;
+      box-shadow:0 9px 22px rgba(255,112,124,.12)!important}
+    div[data-testid="stSelectbox"] svg{color:#b35443!important}
+    div[data-testid="stDataFrame"]{
+      border:1px solid #f0cfc2!important;border-radius:18px!important;
+      overflow:hidden!important;background:#fffdfa!important;
+      box-shadow:0 14px 34px rgba(91,48,38,.09)!important;
+      padding:5px!important}
+    div[data-testid="stDataFrame"] [role="columnheader"]{
+      background:#fff0e8!important;color:#65362e!important;
+      font-weight:800!important}
+    div[data-testid="stDataFrame"] [role="gridcell"]{
+      border-color:#f5e5de!important}
+    div[data-testid="stMetric"]{
+      background:linear-gradient(135deg,#fffdfa,#fff3ec)!important;
+      border:1px solid #f2d5ca!important;border-radius:16px!important;
+      box-shadow:0 9px 24px rgba(91,48,38,.06)!important;
+      padding:.65rem .9rem!important}
+    div[data-testid="stMetric"] [data-testid="stMetricValue"]{
+      color:#4c2b25!important;font-weight:850!important}
+    button[data-baseweb="tab"]{color:#6d4a42!important;font-weight:750!important}
+    button[data-baseweb="tab"][aria-selected="true"]{
+      color:#d6534f!important;border-color:#ff776f!important}
     div[data-testid="stButton"] button{border-radius:999px!important;min-height:2.8rem}
     div[data-testid="stButton"] button[kind="primary"]{
       background:linear-gradient(120deg,#ff6877,#ff9b69)!important;
@@ -8040,21 +8051,6 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             )
             selected_lsoas = set(st.session_state.get("guided_selected_lsoas", []))
             table_result = result.reset_index(drop=True)
-            if lsoa_col:
-                try:
-                    table_event = st.dataframe(
-                        table_result, use_container_width=True, hide_index=True,
-                        on_select="rerun", selection_mode="multi-row",
-                        key="guided_lsoa_results_table",
-                    )
-                    selected_rows = list(table_event.selection.rows)
-                    selected_lsoas = {
-                        str(table_result.iloc[int(i)][lsoa_col])
-                        for i in selected_rows
-                    }
-                    st.session_state["guided_selected_lsoas"] = sorted(selected_lsoas)
-                except TypeError:
-                    display_df(table_result)
             clicked = render_answer_map(
                 cfg, result,
                 focus_code=(
@@ -8069,6 +8065,29 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             )
             if clicked and re.match(r"^W\d{8}$", clicked):
                 render_lsoa_school_panel(cfg, clicked)
+            st.caption(
+                "Select one or more rows to emphasise those answer areas. "
+                "Select a row again to remove it from the selection."
+            )
+            if lsoa_col:
+                try:
+                    table_event = st.dataframe(
+                        table_result, use_container_width=True, hide_index=True,
+                        on_select="rerun", selection_mode="multi-row",
+                        key="guided_lsoa_results_table",
+                    )
+                    selected_rows = list(table_event.selection.rows)
+                    table_selected_lsoas = {
+                        str(table_result.iloc[int(i)][lsoa_col])
+                        for i in selected_rows
+                    }
+                    if table_selected_lsoas != selected_lsoas:
+                        st.session_state["guided_selected_lsoas"] = sorted(
+                            table_selected_lsoas
+                        )
+                        st.rerun()
+                except TypeError:
+                    display_df(table_result)
         else:
             selected_admins = set(
                 st.session_state.get("guided_selected_admins", [])
