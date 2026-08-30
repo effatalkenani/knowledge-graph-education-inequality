@@ -3609,7 +3609,7 @@ def render_page_switcher(page: str) -> None:
           animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
           transform-origin:50% 0;
           width:100%!important;
-          padding:clamp(.7rem,1.35vw,1.35rem)!important;
+          padding:clamp(.35rem,.8vw,.8rem)!important;
           background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%)!important;
           border:1px solid #f0cfc1!important;
           border-radius:30px!important;
@@ -3618,9 +3618,16 @@ def render_page_switcher(page: str) -> None:
             0 24px 58px rgba(102,52,40,.10)!important;
         }
         .st-key-nav_switcher{
-          width:min(960px,88%)!important;
-          margin:-.65rem auto 1.55rem auto!important;
+          width:min(1180px,94%)!important;
+          margin:-.72rem auto 1.1rem auto!important;
           position:relative;z-index:20;
+        }
+        .st-key-nav_switcher button{
+          min-height:3.75rem!important;
+          border-radius:16px!important;
+          font-size:1.02rem!important;
+          font-weight:800!important;
+          letter-spacing:.005em!important;
         }
         .guided-hero,.map-search-hero{
           position:relative;isolation:isolate;overflow:hidden;
@@ -3675,6 +3682,35 @@ def render_page_switcher(page: str) -> None:
         div[data-testid="stDataFrame"]{
           animation:result-rise .55s .06s cubic-bezier(.2,.8,.2,1) both;
         }
+        div[data-testid="stDataFrame"] [role="columnheader"]{
+          background:linear-gradient(180deg,#ffbd8e 0%,#ff9d70 100%)!important;
+          color:#3f241f!important;font-weight:850!important;
+          border-color:#f0b39c!important;
+        }
+        div[data-testid="stDataFrame"] [role="gridcell"]{
+          color:#342522!important;border-color:#f3e2da!important;
+        }
+        div[data-testid="stDataFrame"] [role="row"]:hover [role="gridcell"]{
+          background:#fff0e8!important;
+        }
+        .result-loading-overlay{
+          position:fixed;inset:0;z-index:999998;display:flex;
+          flex-direction:column;align-items:center;justify-content:center;
+          background:rgba(255,250,247,.84);backdrop-filter:blur(11px) saturate(1.08);
+          color:#4a2b25;font-weight:850;text-align:center;
+        }
+        .result-loader-map{
+          width:210px;height:220px;background-position:center;
+          background-repeat:no-repeat;background-size:contain;
+          filter:drop-shadow(0 18px 25px rgba(117,58,43,.20));
+          animation:loader-map-pulse 1.65s ease-in-out infinite;
+        }
+        .result-loader-copy{font-size:1.05rem;margin-top:.35rem}
+        .result-loader-dots{display:flex;gap:7px;margin-top:.75rem}
+        .result-loader-dots i{width:9px;height:9px;border-radius:50%;
+          background:#ff7a75;animation:loader-dot 1.15s ease-in-out infinite}
+        .result-loader-dots i:nth-child(2){animation-delay:.14s;background:#ff9770}
+        .result-loader-dots i:nth-child(3){animation-delay:.28s;background:#ffb466}
         button[data-baseweb="tab"]{
           transition:color .18s ease,background .18s ease,
                      transform .18s ease!important;
@@ -3702,6 +3738,10 @@ def render_page_switcher(page: str) -> None:
         @keyframes loader-ring{
           to{transform:rotate(360deg)}
         }
+        @keyframes loader-dot{
+          0%,100%{transform:translateY(0);opacity:.4}
+          50%{transform:translateY(-7px);opacity:1}
+        }
         @media (prefers-reduced-motion:reduce){
           html{scroll-behavior:auto}
           *,*:before,*:after{
@@ -3719,6 +3759,12 @@ def render_page_switcher(page: str) -> None:
         loader_b64 = base64.b64encode(loader_logo.read_bytes()).decode("ascii")
         st.markdown(
             "<style>div[data-testid='stSpinner']:before{"
+            f"background-image:url('data:image/png;base64,{loader_b64}')!important;"
+            "}</style>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "<style>.result-loader-map{"
             f"background-image:url('data:image/png;base64,{loader_b64}')!important;"
             "}</style>",
             unsafe_allow_html=True,
@@ -5273,6 +5319,47 @@ def warm_table(df: pd.DataFrame) -> Any:
     )
 
 
+def result_map_zoom(lats: Any, lons: Any, *, single: bool = False) -> float:
+    """Frame result geometry tightly without clipping its outer edges."""
+    lat_values = [float(v) for v in lats if pd.notna(v)]
+    lon_values = [float(v) for v in lons if pd.notna(v)]
+    if not lat_values or not lon_values:
+        return 7.2
+    if single:
+        return 13.2
+    span = max(
+        max(lat_values) - min(lat_values),
+        (max(lon_values) - min(lon_values)) * 0.72,
+        0.002,
+    )
+    # The previous values left small local results as a dot in a national
+    # view. These bands retain breathing room while making the answer the
+    # visual subject of the map.
+    if span < 0.018:
+        return 13.0
+    if span < 0.05:
+        return 11.9
+    if span < 0.14:
+        return 10.8
+    if span < 0.38:
+        return 9.8
+    if span < 0.85:
+        return 8.7
+    return 7.15
+
+
+def branded_loading_overlay(message: str) -> Any:
+    """Keep visible feedback on screen until the map has actually rendered."""
+    slot = st.empty()
+    slot.markdown(
+        "<div class='result-loading-overlay'><div class='result-loader-map'></div>"
+        f"<div class='result-loader-copy'>{escape(message)}</div>"
+        "<div class='result-loader-dots'><i></i><i></i><i></i></div></div>",
+        unsafe_allow_html=True,
+    )
+    return slot
+
+
 def school_outline_points(df: pd.DataFrame, bins: int = 34) -> List[Dict[str, float]]:
     """Approximate a Wales outline from available school coordinates."""
     pts = df[["longitude", "latitude"]].dropna().copy()
@@ -5403,6 +5490,7 @@ def render_school_map(
     polygon_df: pd.DataFrame | None = None,
     polygons_only: bool = False,
     admin_polygon_df: pd.DataFrame | None = None,
+    selected_school_codes: Any = None,
 ) -> str | None:
     """Render the Wales school map with pydeck (deck.gl).
 
@@ -5506,10 +5594,27 @@ def render_school_map(
             lambda d: PIN_ICONS.get(str(d), PIN_ICONS["unknown"])
         )
 
-    focused = selected_school[0] != "All"
+    selected_code_set = {
+        str(v) for v in (
+            selected_school_codes
+            if isinstance(selected_school_codes, (list, tuple, set))
+            else [selected_school_codes]
+        ) if v
+    }
+    focused = selected_school[0] != "All" or bool(selected_code_set)
+    if "school_code" not in chart_df.columns:
+        chart_df["school_code"] = chart_df["school"]
+    chart_df["is_selected"] = chart_df["school_code"].astype(str).isin(
+        selected_code_set
+    )
+    chart_df["pin_tint"] = chart_df["is_selected"].map(
+        lambda chosen: [255, 255, 255, 255 if chosen else 58]
+        if selected_code_set else [255, 255, 255, 255]
+    )
 
     icon_cols = [
-        "longitude", "latitude", "icon", "school", "local_authority",
+        "longitude", "latitude", "icon", "school", "school_code",
+        "pin_tint", "is_selected", "local_authority",
         "school_type", "language_medium", "gender_mix", "address", "postcode",
         "deprivation_label", "wimd_label", "fsm_label", "attendance_label",
         "capped9_label", "literacy_label", "numeracy_label", "science_label",
@@ -5521,7 +5626,8 @@ def render_school_map(
         data=chart_df[icon_cols],
         get_icon="icon",
         get_position=["longitude", "latitude"],
-        get_size=5.2 if focused else 3.4,
+        get_size=4.2 if focused else 3.4,
+        get_color="pin_tint",
         size_scale=10,
         size_min_pixels=18 if focused else 13,
         size_max_pixels=74,
@@ -5531,22 +5637,31 @@ def render_school_map(
         # teardrop. Without this, the card only appeared near the centre.
         alpha_cutoff=-1,
     )
+    selected_layer = None
+    if selected_code_set:
+        selected_points = chart_df[chart_df["is_selected"]]
+        if not selected_points.empty:
+            selected_layer = pdk.Layer(
+                "IconLayer", id="selected-school-pins",
+                data=selected_points[icon_cols], get_icon="icon",
+                get_position=["longitude", "latitude"], get_size=6.2,
+                size_scale=10, size_min_pixels=25, size_max_pixels=82,
+                pickable=True, alpha_cutoff=-1,
+            )
 
     lat_min, lat_max = chart_df["latitude"].min(), chart_df["latitude"].max()
     lon_min, lon_max = chart_df["longitude"].min(), chart_df["longitude"].max()
-    span = max(float(lat_max - lat_min), float(lon_max - lon_min) * .62, .002)
-    if focused or len(chart_df) == 1:
-        map_zoom = 13.0
-    elif span < .025:
-        map_zoom = 12.0
-    elif span < .07:
-        map_zoom = 10.8
-    elif span < .22:
-        map_zoom = 9.5
-    elif span < .65:
-        map_zoom = 8.2
-    else:
-        map_zoom = 6.8
+    frame_df = (
+        chart_df[chart_df["is_selected"]]
+        if selected_code_set and chart_df["is_selected"].any()
+        else chart_df
+    )
+    lat_min, lat_max = frame_df["latitude"].min(), frame_df["latitude"].max()
+    lon_min, lon_max = frame_df["longitude"].min(), frame_df["longitude"].max()
+    map_zoom = result_map_zoom(
+        frame_df["latitude"], frame_df["longitude"],
+        single=len(frame_df) == 1,
+    )
     view_state = pdk.ViewState(
         latitude=float((lat_min + lat_max) / 2),
         longitude=float((lon_min + lon_max) / 2),
@@ -5788,6 +5903,8 @@ def render_school_map(
         layers.append(admin_line_layer)
     if not polygons_only:
         layers.append(pin_layer)
+        if selected_layer is not None:
+            layers.append(selected_layer)
 
     if polygons_only:
         tooltip = {
@@ -6664,10 +6781,7 @@ def render_answer_map(
         centre_lon = (max(focus_lons) + min(focus_lons)) / 2
         zoom = 11.2
     else:
-        span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
-        zoom = 12.4 if span < 0.02 else 11.0 if span < 0.06 else (
-            9.8 if span < 0.2 else 8.6 if span < 0.6 else 7.2
-        )
+        zoom = result_map_zoom(lats, lons, single=len(rows) == 1)
         centre_lat = (max(lats) + min(lats)) / 2
         centre_lon = (max(lons) + min(lons)) / 2
     view = pdk.ViewState(
@@ -7359,13 +7473,10 @@ def render_admin_answer_map(
 
     rows.sort(key=_extent, reverse=True)
 
-    span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.6, 0.004)
     view = pdk.ViewState(
         latitude=(max(lats) + min(lats)) / 2,
         longitude=(max(lons) + min(lons)) / 2,
-        zoom=12.4 if span < 0.02 else 11.0 if span < 0.06 else (
-            9.8 if span < 0.2 else 8.6 if span < 0.6 else 7.2
-        ),
+        zoom=result_map_zoom(lats, lons, single=len(rows) == 1),
         pitch=0, bearing=0,
     )
     tooltip = {
@@ -8040,7 +8151,13 @@ def guided_result_query(
 
 def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     """Natural wording routed through the same spatial resolver as the map."""
-    qcol, bcol = st.columns([7, 1.2])
+    if st.session_state.pop("place_nl_clear_pending", False):
+        st.session_state["place_nl_question"] = ""
+        st.session_state.pop("place_nl_scope", None)
+        st.session_state.pop("place_nl_error", None)
+
+    st.markdown("### Search in your own words")
+    qcol, bcol, clear_col = st.columns([6, 1, 1])
     with qcol:
         text = st.text_input(
             "Place question",
@@ -8053,6 +8170,13 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             "Search", type="primary", use_container_width=True,
             key="place_nl_search",
         )
+    with clear_col:
+        clear = st.button(
+            "Clear", use_container_width=True, key="place_nl_clear_button"
+        )
+    if clear:
+        st.session_state["place_nl_clear_pending"] = True
+        st.rerun()
     if asked:
         st.session_state.pop("place_nl_scope", None)
         st.session_state.pop("place_nl_error", None)
@@ -8064,7 +8188,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             )
         else:
             try:
-                scope, _warnings = resolve_map_admin_scope(cfg, hint)
+                with st.spinner("Understanding the place question…"):
+                    scope, _warnings = resolve_map_admin_scope(cfg, hint)
             except Exception:
                 scope = None
             if scope is None:
@@ -8074,6 +8199,7 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
                 )
             else:
                 st.session_state["place_nl_scope"] = scope
+                st.session_state["place_nl_scroll_to_results"] = True
 
     error = st.session_state.get("place_nl_error")
     if error:
@@ -8082,6 +8208,9 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     scope = st.session_state.get("place_nl_scope")
     if not scope:
         return
+
+    if st.session_state.pop("place_nl_scroll_to_results", False):
+        scroll_to_rendered_map()
 
     anchor = scope.get("anchor") or {}
     relation = str(scope.get("relation") or "spatial relation")
@@ -8142,7 +8271,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
       display:none!important}
     [data-testid="stAppViewContainer"]>.main{
       margin-left:0!important;width:100%!important}
-    .guided-hero{width:100%;max-width:none;min-height:238px;margin:1.1rem 0 1.45rem;
+    .guided-hero{width:100%;max-width:none;min-height:238px;margin:.15rem 0 1.15rem;
       display:flex;align-items:center;gap:2rem;text-align:left;
       padding:1.8rem 2.2rem;border-radius:28px;
       background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);
@@ -8213,6 +8342,12 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
 
     guided, words = st.tabs(["Build a search", "Write in your own words"])
     with words:
+        st.markdown("## Ask about places in your own words")
+        st.caption(
+            "Use an LSOA, Community, Ward or other available Welsh area, "
+            "then describe whether places touch, intersect, contain, lie "
+            "within, near or between one another."
+        )
         render_guided_natural_search(cfg)
 
     with guided:
@@ -8349,10 +8484,16 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             params["second"] = second[0]
         else:
             query = guided_result_query(kind, relation, result_type)
+        guided_loading_slot = (
+            branded_loading_overlay("Building and framing the spatial answer…")
+            if run else None
+        )
         try:
             with st.spinner("Building the spatial answer…"):
                 result = run_cypher(cfg, query, params)
         except Exception:
+            if guided_loading_slot is not None:
+                guided_loading_slot.empty()
             st.error(
                 "We could not complete this search. Try another place or "
                 "relationship."
@@ -8375,6 +8516,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                     use_container_width=True, on_click=clear_guided_selection,
                 )
         if result.empty:
+            if guided_loading_slot is not None:
+                guided_loading_slot.empty()
             st.info(
                 "No area satisfies this relationship for the selected place."
             )
@@ -8400,6 +8543,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 selected_codes=selected_lsoas,
                 key="guided_lsoa_map",
             )
+            if guided_loading_slot is not None:
+                guided_loading_slot.empty()
             if clicked and re.match(r"^W\d{8}$", clicked):
                 render_lsoa_school_panel(cfg, clicked)
             st.caption(
@@ -8443,6 +8588,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 selected_admins=selected_admins,
                 key="guided_admin_map",
             )
+            if guided_loading_slot is not None:
+                guided_loading_slot.empty()
             st.caption(
                 "Select a row to focus that area. Its boundary stays strong, "
                 "the other answers fade, and only its school pins remain."
@@ -11942,7 +12089,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
 
 def page_map(cfg: Dict[str, str]) -> None:
     st.markdown(
-        "<style>.map-search-hero{width:100%;max-width:none;min-height:238px;margin:1.1rem 0 1.45rem;"
+        "<style>.map-search-hero{width:100%;max-width:none;min-height:238px;margin:.15rem 0 1.15rem;"
         "display:flex;align-items:center;gap:2rem;text-align:left;"
         "padding:1.8rem 2.2rem;border-radius:28px;"
         "background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);"
@@ -11975,9 +12122,9 @@ def page_map(cfg: Dict[str, str]) -> None:
         ".school-results-title{font-size:1.45rem;font-weight:850;color:#4c2b25;"
         "margin:1.4rem 0 .6rem}.results-basis{color:#76574f;font-size:.88rem;"
         "margin:.2rem 0 1rem}"
-        "</style>",
-        unsafe_allow_html=True,
-    )
+            "</style>",
+            unsafe_allow_html=True,
+        )
     hero_shell = st.container(key="map_search_hero")
     logo_html = wales_logo_html()
     hero_shell.markdown(
@@ -12962,7 +13109,8 @@ ORDER BY cluster_size DESC, cluster_id
         s,
         l,
         min(near_rel.distance_m) AS nearest_stop_distance_m
-    RETURN coalesce(s.name, s.school_name, s.code) AS school,
+    RETURN s.code AS school_code,
+           coalesce(s.name, s.school_name, s.code) AS school,
            coalesce(s.phase, s.school_type) AS school_type,
            coalesce(s.local_authority_name, s.local_authority, l.local_authority) AS local_authority,
            s.gender_mix AS gender_mix,
@@ -12988,11 +13136,17 @@ ORDER BY cluster_size DESC, cluster_id
            nearest_stop_distance_m IS NOT NULL AS near_transport
     ORDER BY coalesce(s.fsm_pct, -1) DESC, school
     """
+    loading_slot = (
+        branded_loading_overlay("Finding the schools and framing the result…")
+        if build_run or nl_map.get("submitted") else None
+    )
     try:
         with st.spinner("Finding schools and preparing the map…"):
             summary_df = run_cypher(cfg, count_cypher, params)
             df = run_cypher(cfg, cypher, params)
     except Exception as e:
+        if loading_slot is not None:
+            loading_slot.empty()
         st.error(f"Map query failed: {e}")
         return
 
@@ -13219,6 +13373,8 @@ ORDER BY cluster_size DESC, cluster_id
         )
 
     if df.empty:
+        if loading_slot is not None:
+            loading_slot.empty()
         st.info("No rows with coordinates after filtering.")
         if SHOW_QUERIES:
             st.code(cypher, language="cypher")
@@ -13250,6 +13406,8 @@ ORDER BY cluster_size DESC, cluster_id
                 st.code(band_cypher, language="cypher")
                 st.json({"c1": float(band_cut1), "c2": float(band_cut2)})
     if map_df.empty:
+        if loading_slot is not None:
+            loading_slot.empty()
         st.info("No rows with valid map coordinates after filtering.")
         if SHOW_QUERIES:
             st.code(cypher, language="cypher")
@@ -13456,9 +13614,20 @@ ORDER BY cluster_size DESC, cluster_id
     st.markdown("<div id='school-map-results'></div>", unsafe_allow_html=True)
     if st.session_state.pop("map_scroll_to_results", False):
         scroll_to_rendered_map()
+    valid_school_codes = {
+        str(v) for v in map_df.get(
+            "school_code", pd.Series(dtype=str)
+        ).dropna().astype(str)
+    }
+    selected_school_codes = set(
+        st.session_state.get("map_selected_school_codes", [])
+    ) & valid_school_codes
     clicked_region = render_school_map(
-        map_df, selected_school, polygon_df, cluster_only, admin_polygon_df
+        map_df, selected_school, polygon_df, cluster_only, admin_polygon_df,
+        selected_school_codes=selected_school_codes,
     )
+    if loading_slot is not None:
+        loading_slot.empty()
     if clicked_region:
         render_lsoa_school_panel(cfg, clicked_region)
 
@@ -13498,6 +13667,22 @@ ORDER BY cluster_size DESC, cluster_id
         "<div class='school-results-title'>Schools in this map</div>",
         unsafe_allow_html=True,
     )
+    st.caption(
+        "Select one or more schools to keep their pins prominent. "
+        "The other schools remain visible in the background for context."
+    )
+    if selected_school_codes:
+        clear_left, clear_button, clear_right = st.columns([4, 1.4, 4])
+        with clear_button:
+            if st.button(
+                "Clear selected schools", key="map_clear_school_selection",
+                use_container_width=True,
+            ):
+                st.session_state["map_selected_school_codes"] = []
+                st.session_state["map_school_selection_version"] = (
+                    st.session_state.get("map_school_selection_version", 0) + 1
+                )
+                st.rerun()
     school_table_columns = [
         c for c in (
             "school", "school_type", "local_authority", "lsoa_code",
@@ -13530,11 +13715,32 @@ ORDER BY cluster_size DESC, cluster_id
             school_table[numeric_column] = pd.to_numeric(
                 school_table[numeric_column], errors="coerce"
             ).round(1)
-    st.dataframe(
-        warm_table(school_table), use_container_width=True, hide_index=True,
-        height=min(560, 44 + 35 * min(len(school_table), 14)),
-        key="map_school_results_table",
-    )
+    try:
+        school_event = st.dataframe(
+            warm_table(school_table), use_container_width=True, hide_index=True,
+            height=min(560, 52 + 39 * min(len(school_table), 14)),
+            on_select="rerun", selection_mode="multi-row",
+            key=(
+                "map_school_results_table_"
+                f"{st.session_state.get('map_school_selection_version', 0)}"
+            ),
+        )
+        selected_rows = list(school_event.selection.rows)
+        table_selected_codes = {
+            str(map_df.iloc[int(i)].get("school_code") or "")
+            for i in selected_rows
+        } - {""}
+        if table_selected_codes != selected_school_codes:
+            st.session_state["map_selected_school_codes"] = sorted(
+                table_selected_codes
+            )
+            st.rerun()
+    except TypeError:
+        st.dataframe(
+            warm_table(school_table), use_container_width=True,
+            hide_index=True,
+            height=min(560, 52 + 39 * min(len(school_table), 14)),
+        )
 
     if search_mode == "Cluster search" and not cluster_df.empty:
         with st.expander(
