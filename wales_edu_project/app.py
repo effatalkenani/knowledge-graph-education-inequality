@@ -3445,7 +3445,14 @@ def sidebar_config() -> Dict[str, str]:
 
 def set_page(page_name: str) -> None:
     """Switch between the two public experiences before the next rerun."""
+    if page_name == "Map" and st.session_state.get("page") != "Map":
+        st.session_state["map_has_run"] = False
     st.session_state.page = page_name
+
+
+def edit_map_search() -> None:
+    """Return from the map result to its two search routes."""
+    st.session_state["map_has_run"] = False
 
 
 def render_page_switcher(page: str) -> None:
@@ -5224,10 +5231,25 @@ def render_school_map(
         alpha_cutoff=-1,
     )
 
+    lat_min, lat_max = chart_df["latitude"].min(), chart_df["latitude"].max()
+    lon_min, lon_max = chart_df["longitude"].min(), chart_df["longitude"].max()
+    span = max(float(lat_max - lat_min), float(lon_max - lon_min) * .62, .002)
+    if focused or len(chart_df) == 1:
+        map_zoom = 13.0
+    elif span < .025:
+        map_zoom = 12.0
+    elif span < .07:
+        map_zoom = 10.8
+    elif span < .22:
+        map_zoom = 9.5
+    elif span < .65:
+        map_zoom = 8.2
+    else:
+        map_zoom = 6.8
     view_state = pdk.ViewState(
-        latitude=float(chart_df["latitude"].mean()),
-        longitude=float(chart_df["longitude"].mean()),
-        zoom=12 if focused else 6.9,
+        latitude=float((lat_min + lat_max) / 2),
+        longitude=float((lon_min + lon_max) / 2),
+        zoom=map_zoom,
         pitch=0,
         bearing=0,
     )
@@ -8032,9 +8054,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             return
 
         st.markdown("### Results")
-        metric_col, reset_col = st.columns([4, 1])
-        with metric_col:
-            st.metric("Areas found", len(result))
+        st.metric("Areas found", len(result))
+        reset_left, reset_col, reset_right = st.columns([2.4, 1, 2.4])
         with reset_col:
             st.button(
                 "Reset selection", key="guided_reset_selection",
@@ -11632,13 +11653,29 @@ def page_map(cfg: Dict[str, str]) -> None:
         ".school-results-title{font-size:1.45rem;font-weight:850;color:#4c2b25;"
         "margin:1.4rem 0 .6rem}.results-basis{color:#76574f;font-size:.88rem;"
         "margin:.2rem 0 1rem}"
-        "</style>"
-        "<div class='map-search-hero'><h1>Explore Welsh schools by place</h1>"
-        "<p>Search schools, compare local indicators and view the geographic "
-        "areas connected to each result.</p>"
-        "</div>",
+        "</style>",
         unsafe_allow_html=True,
     )
+    hero_shell = st.container(key="map_search_hero")
+    logo_col, hero_col = hero_shell.columns([1, 4])
+    with logo_col:
+        logo_path = Path(__file__).with_name("wales_education_kg.png")
+        if logo_path.exists():
+            st.image(str(logo_path), use_container_width=True)
+        else:
+            st.markdown(
+                "<div style='height:100%;min-height:190px;display:flex;"
+                "align-items:center;justify-content:center;color:#7c4437;"
+                "font-weight:850;text-align:center'>Wales Education KG</div>",
+                unsafe_allow_html=True,
+            )
+    with hero_col:
+        st.markdown(
+            "<div class='map-search-hero'><h1>Explore Welsh schools by place</h1>"
+            "<p>Search schools, compare local indicators and view the geographic "
+            "areas connected to each result.</p></div>",
+            unsafe_allow_html=True,
+        )
 
     la_opts = safe_options(cfg, """
     MATCH (s:School)
@@ -11671,7 +11708,8 @@ def page_map(cfg: Dict[str, str]) -> None:
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
-    search_tabs = st.tabs(["Build a search", "Write in your own words"])
+    search_shell = st.container(key="map_search_builder")
+    search_tabs = search_shell.tabs(["Build a search", "Write in your own words"])
     controls = search_tabs[0].container()
     controls.markdown("## Find schools")
     controls.caption("Choose filters, then open the results on the map.")
@@ -12074,6 +12112,11 @@ def page_map(cfg: Dict[str, str]) -> None:
         st.session_state["map_scroll_to_results"] = True
     if not st.session_state.get("map_has_run"):
         return
+    st.markdown(
+        "<style>.st-key-map_search_hero,.st-key-map_search_builder{"
+        "display:none!important}</style>",
+        unsafe_allow_html=True,
+    )
 
     if nl_map.get("spatial_relation_failed"):
         st.info(
@@ -12647,7 +12690,7 @@ ORDER BY cluster_size DESC, cluster_id
     # This prevents a school in the outside part of a crossing LSOA from being
     # reported as inside the administrative result.
     if admin_scope and not df.empty:
-        components = (
+        scope_components = (
             admin_scope.get("components", [])
             if admin_scope.get("compound") else [admin_scope]
         )
@@ -12657,7 +12700,7 @@ ORDER BY cluster_size DESC, cluster_id
                 for target_wkt in _admin_component_target_wkts(component)
                 for ring in _wkt_rings(target_wkt)
             ]
-            for component in components
+            for component in scope_components
         ]
         if component_rings and all(component_rings):
             spatial_operator = admin_scope.get("operator", "AND")
@@ -13089,6 +13132,12 @@ ORDER BY cluster_size DESC, cluster_id
             "Cluster regions are shaded by deprivation level. Hover a region "
             "for its counts and averages, then click it to see the schools "
             "by name. School pins return in Standard search."
+        )
+    edit_left, edit_mid, edit_right = st.columns([5, 1.35, 5])
+    with edit_mid:
+        st.button(
+            "Edit search", key="map_edit_search", use_container_width=True,
+            on_click=edit_map_search,
         )
     st.markdown("<div id='school-map-results'></div>", unsafe_allow_html=True)
     if st.session_state.pop("map_scroll_to_results", False):
