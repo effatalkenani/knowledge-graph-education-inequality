@@ -7610,6 +7610,10 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     if clear:
         st.session_state["place_nl_clear_pending"] = True
         st.rerun()
+    natural_loading_slot = (
+        branded_loading_overlay("Building and framing the spatial answer…")
+        if asked else None
+    )
     if asked:
         st.session_state.pop("place_nl_scope", None)
         st.session_state.pop("place_nl_error", None)
@@ -7627,12 +7631,16 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             hint = _map_spatial_hint(text)
             requested_scopes = [hint] if hint else []
         if input_error:
+            if natural_loading_slot is not None:
+                natural_loading_slot.empty()
             st.session_state["place_nl_error"] = input_error
         elif (
             not text.strip()
             or not requested_scopes
             or not requested_scopes[0].get("anchor_name")
         ):
+            if natural_loading_slot is not None:
+                natural_loading_slot.empty()
             st.session_state["place_nl_error"] = (
                 "We could not identify the place, area type and spatial "
                 "relationship. Try the example shown in the search box."
@@ -7649,6 +7657,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
                 scope = None
                 scope_warnings = []
             if scope is None:
+                if natural_loading_slot is not None:
+                    natural_loading_slot.empty()
                 st.session_state["place_nl_error"] = (
                     scope_warnings[0] if scope_warnings else
                     "That relationship is not available for the place and "
@@ -7673,6 +7683,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     relation = str(scope.get("relation") or "spatial relation")
     result_kind = str(scope.get("result_kind") or "AdminUnit")
     if result_kind == "Schools":
+        if natural_loading_slot is not None:
+            natural_loading_slot.empty()
         st.info(
             "This page returns geographic areas. Use Schools map to search "
             "for individual schools and education indicators."
@@ -7682,6 +7694,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         codes = sorted(set(scope.get("lsoa_codes") or []))
         result = pd.DataFrame({"lsoa_code": codes})
         if result.empty:
+            if natural_loading_slot is not None:
+                natural_loading_slot.empty()
             st.info("No LSOA satisfies this relationship for the selected place.")
             return
         st.metric("Areas found", len(result))
@@ -7691,6 +7705,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         )
         if clicked:
             render_lsoa_school_panel(cfg, clicked)
+        if natural_loading_slot is not None:
+            dismiss_loading_when_ready(require_map=True)
         display_df(result)
         return
 
@@ -7701,6 +7717,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         else pd.DataFrame()
     )
     if result.empty:
+        if natural_loading_slot is not None:
+            natural_loading_slot.empty()
         st.info(
             f"No area satisfies {relation.replace('_', ' ')} for "
             f"{anchor.get('name', 'the selected place')}."
@@ -7713,6 +7731,8 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     )
     if picked:
         render_unit_school_card(cfg, picked)
+    if natural_loading_slot is not None:
+        dismiss_loading_when_ready(require_map=True)
     display_df(result)
 
 
@@ -11932,6 +11952,11 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         st.session_state.pop("map_nl_parsed_text", None)
         st.rerun()
 
+    natural_loading_slot = (
+        branded_loading_overlay("Finding the schools and framing the result…")
+        if asked else None
+    )
+
     # Interpret once per submitted question.  Keeping the validated intent in
     # session state prevents a Gemini call on every Streamlit rerun caused by
     # a row selection, map click or tab change.  If the model is unavailable,
@@ -11957,9 +11982,15 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     if asked:
         st.session_state["map_nl_parsed_text"] = question
         st.session_state["map_nl_parsed_intent"] = parsed
+    # Do not persist Streamlit placeholders in session state. The page uses
+    # this run-local handle to dismiss the cover on success or failure.
+    parsed = dict(parsed)
+    parsed["_loading_slot"] = natural_loading_slot
     parsed["submitted"] = bool(asked)
 
     if parsed.get("input_validation_failed"):
+        if natural_loading_slot is not None:
+            natural_loading_slot.empty()
         st.info(str(parsed.get("input_validation_message")))
         return parsed
 
@@ -12538,6 +12569,10 @@ def page_map(cfg: Dict[str, str]) -> None:
         "Show results on map", type="primary", use_container_width=True,
         key="map_filter_submit",
     )
+    build_loading_slot = (
+        branded_loading_overlay("Finding the schools and framing the result…")
+        if build_run else None
+    )
     with search_tabs[1]:
         st.markdown("## Ask for schools in your own words")
         st.caption(
@@ -12545,6 +12580,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             "FSM, attendance or Capped 9 condition."
         )
         nl_map = render_map_nl(cfg)
+    natural_loading_slot = nl_map.pop("_loading_slot", None)
+    active_loading_slot = natural_loading_slot or build_loading_slot
 
     if build_run or nl_map.get("submitted"):
         st.session_state["map_has_run"] = True
@@ -12557,8 +12594,12 @@ def page_map(cfg: Dict[str, str]) -> None:
     if not st.session_state.get("map_has_run"):
         return
     if nl_map.get("input_validation_failed"):
+        if active_loading_slot is not None:
+            active_loading_slot.empty()
         return
     if nl_map.get("spatial_relation_failed"):
+        if active_loading_slot is not None:
+            active_loading_slot.empty()
         st.info(
             "The map was not run because the requested Domain–Range pair "
             "does not support that spatial relationship. No alternative "
@@ -12570,6 +12611,8 @@ def page_map(cfg: Dict[str, str]) -> None:
     # Falling back to every Welsh school after resolution fails would return
     # a confident-looking answer to a different question.
     if nl_map.get("admin_scope_failed"):
+        if active_loading_slot is not None:
+            active_loading_slot.empty()
         st.info(
             "The map was not run because the requested administrative unit "
             "could not be resolved exactly. Change the name or type shown "
@@ -12593,6 +12636,11 @@ def page_map(cfg: Dict[str, str]) -> None:
         if result_kind == "LSOA":
             codes = sorted(set(admin_scope.get("lsoa_codes") or []))
             spatial_df = pd.DataFrame({"lsoa_code": codes})
+            if spatial_df.empty:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
+                st.info("No LSOA satisfies this relationship for the selected place.")
+                return
             st.metric("LSOAs returned", len(codes))
             st.caption(
                 f"{relation.upper()} from {anchor.get('name')} "
@@ -12622,6 +12670,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
             if clicked_lsoa:
                 render_lsoa_school_panel(cfg, clicked_lsoa)
+            if active_loading_slot is not None:
+                dismiss_loading_when_ready(require_map=True)
             st.caption(
                 "Select one or more rows to emphasise those areas. "
                 "The remaining answers fade but stay visible for context."
@@ -12651,6 +12701,11 @@ def page_map(cfg: Dict[str, str]) -> None:
                 if isinstance(units, pd.DataFrame) and not units.empty
                 else pd.DataFrame()
             )
+            if unit_df.empty:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
+                st.info("No administrative area satisfies this relationship.")
+                return
             st.metric("Administrative units returned", len(unit_df))
             st.caption(
                 f"{relation.replace('_', ' ').upper()} from "
@@ -12684,6 +12739,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
             if picked_unit and picked_unit.get("uri") != anchor.get("uri"):
                 render_unit_school_card(cfg, picked_unit)
+            if active_loading_slot is not None:
+                dismiss_loading_when_ready(require_map=True)
             st.caption(
                 "Select one or more rows to keep those boundaries strong. "
                 "Other answers fade and selected schools remain prominent."
@@ -13195,10 +13252,7 @@ ORDER BY cluster_size DESC, cluster_id
            nearest_stop_distance_m IS NOT NULL AS near_transport
     ORDER BY coalesce(s.fsm_pct, -1) DESC, school
     """
-    loading_slot = (
-        branded_loading_overlay("Finding the schools and framing the result…")
-        if build_run or nl_map.get("submitted") else None
-    )
+    loading_slot = active_loading_slot
     try:
         with st.spinner("Finding schools and preparing the map…"):
             summary_df = run_cypher(cfg, count_cypher, params)
