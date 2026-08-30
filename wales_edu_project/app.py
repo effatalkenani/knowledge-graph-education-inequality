@@ -3455,6 +3455,42 @@ def edit_map_search() -> None:
     st.session_state["map_has_run"] = False
 
 
+def wales_logo_html() -> str:
+    """Embed the project mark so both public heroes use the same asset."""
+    logo_path = Path(__file__).with_name("wales_education_kg.png")
+    if not logo_path.exists():
+        return ""
+    logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+    return (
+        "<img class='shared-hero-logo' alt='Wales Education KG' "
+        f"src='data:image/png;base64,{logo_b64}'>"
+    )
+
+
+def scroll_to_rendered_map() -> None:
+    """Wait for Deck.gl to mount, then move it smoothly into view."""
+    components.html(
+        """
+        <script>
+        let attempts = 0;
+        const timer = setInterval(() => {
+          const target = window.parent.document.querySelector(
+            '[data-testid="stDeckGlJsonChart"]'
+          );
+          attempts += 1;
+          if (target) {
+            target.scrollIntoView({behavior:'smooth', block:'start'});
+            clearInterval(timer);
+          } else if (attempts > 50) {
+            clearInterval(timer);
+          }
+        }, 100);
+        </script>
+        """,
+        height=0,
+    )
+
+
 def render_page_switcher(page: str) -> None:
     """Two centred tabs for the public SCQ and Map experiences."""
     st.markdown(
@@ -3521,10 +3557,52 @@ def render_page_switcher(page: str) -> None:
           opacity:.58!important;box-shadow:none!important;
         }
         html{scroll-behavior:smooth}
+        [data-testid="stMainBlockContainer"]{
+          width:100%!important;
+          max-width:none!important;
+          padding-left:clamp(.75rem,1.6vw,1.6rem)!important;
+          padding-right:clamp(.75rem,1.6vw,1.6rem)!important;
+          margin-left:0!important;
+          margin-right:0!important;
+        }
+        section[data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"]{
+          display:none!important;
+          width:0!important;
+          min-width:0!important;
+        }
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewContainer"]>.main,
+        [data-testid="stMain"]{
+          width:100%!important;
+          max-width:none!important;
+          margin-left:0!important;
+          padding-left:0!important;
+          flex:1 1 100%!important;
+        }
+        div[data-testid="stSpinner"]{
+          position:fixed!important;inset:0!important;z-index:999999!important;
+          display:flex!important;align-items:center!important;justify-content:center!important;
+          flex-direction:column!important;gap:.8rem!important;
+          background:rgba(255,250,247,.78)!important;
+          backdrop-filter:blur(10px) saturate(1.08)!important;
+          color:#4a2b25!important;font-weight:850!important;
+        }
+        div[data-testid="stSpinner"]:before{
+          content:"⌛";display:block;font-size:3.1rem;line-height:1;
+          filter:drop-shadow(0 10px 14px rgba(117,58,43,.18));
+          animation:hourglass-turn 1.35s ease-in-out infinite;
+        }
+        div[data-testid="stSpinner"] svg{display:none!important}
         .st-key-page_scq_demonstrator,
         .st-key-page_map{
           animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
           transform-origin:50% 0;
+        }
+        .st-key-nav_switcher{
+          width:min(960px,88%)!important;
+          margin:-.65rem auto 1.55rem auto!important;
+          position:relative;z-index:20;
         }
         .guided-hero,.map-search-hero{
           position:relative;isolation:isolate;overflow:hidden;
@@ -3536,6 +3614,10 @@ def render_page_switcher(page: str) -> None:
             inset 0 -18px 35px rgba(186,71,52,.07),
             0 28px 58px rgba(143,68,50,.18),
             0 7px 16px rgba(95,49,39,.08)!important;
+        }
+        .shared-hero-logo{
+          width:190px;max-width:21%;max-height:180px;object-fit:contain;
+          flex:0 0 auto;filter:drop-shadow(0 12px 22px rgba(75,36,25,.18));
         }
         .guided-hero:after,.map-search-hero:after{
           content:"";position:absolute;z-index:-1;inset:-35% -12% auto auto;
@@ -3591,6 +3673,11 @@ def render_page_switcher(page: str) -> None:
           from{opacity:0;transform:translateY(18px) scale(.992)}
           to{opacity:1;transform:translateY(0) scale(1)}
         }
+        @keyframes hourglass-turn{
+          0%,35%{transform:rotate(0deg) translateY(0)}
+          50%,85%{transform:rotate(180deg) translateY(-2px)}
+          100%{transform:rotate(360deg) translateY(0)}
+        }
         @media (prefers-reduced-motion:reduce){
           html{scroll-behavior:auto}
           *,*:before,*:after{
@@ -3603,7 +3690,8 @@ def render_page_switcher(page: str) -> None:
         """,
         unsafe_allow_html=True,
     )
-    pad_left, scq, map_col, pad_right = st.columns([1, 2.2, 2.2, 1])
+    nav_shell = st.container(key="nav_switcher")
+    pad_left, scq, map_col, pad_right = nav_shell.columns([.05, 1, 1, .05])
     with scq:
         st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
@@ -8021,14 +8109,16 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
       display:none!important}
     [data-testid="stAppViewContainer"]>.main{
       margin-left:0!important;width:100%!important}
-    .guided-hero{max-width:980px;margin:1.1rem auto 1.45rem;text-align:center;
-      padding:2.25rem 1.5rem;border-radius:28px;
+    .guided-hero{width:100%;max-width:none;min-height:238px;margin:1.1rem 0 1.45rem;
+      display:flex;align-items:center;gap:2rem;text-align:left;
+      padding:1.8rem 2.2rem;border-radius:28px;
       background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);
       box-shadow:0 22px 55px rgba(185,76,55,.18)}
     .guided-hero h1{font-size:clamp(2rem,4vw,3.35rem);line-height:1.05;
       letter-spacing:-.045em;margin:0;color:#fff;font-weight:850}
     .guided-hero p{font-size:1.02rem;color:#fff7f2;margin:.65rem auto 0;
       max-width:620px;line-height:1.55}
+    .guided-hero-copy{flex:1;text-align:center}
     .guided-card{background:white;border:1px solid #e8eaf0;border-radius:22px;
       padding:1.1rem 1.25rem .35rem;box-shadow:0 12px 34px rgba(15,23,42,.07)}
     .guided-sentence{font-size:1.15rem;font-weight:750;color:#4a2b25;
@@ -8069,10 +8159,14 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
       min-height:3.3rem;padding-left:1.25rem;border:1px solid #dfe3ea;
       box-shadow:0 10px 28px rgba(15,23,42,.06)}
     </style>
-    <div class="guided-hero"><h1>Ask the Welsh place knowledge graph</h1>
+    <div class="guided-hero">
+    """ + wales_logo_html() + """
+    <div class="guided-hero-copy"><h1>Ask the Welsh place knowledge graph</h1>
     <p>Explore how LSOAs and administrative areas touch, intersect, contain
-    or lie near one another. Schools appear in the areas returned.</p></div>
+    or lie near one another. Schools appear in the areas returned.</p></div></div>
     """, unsafe_allow_html=True)
+
+    render_page_switcher("SCQ Demonstrator")
 
     cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
     try:
@@ -8197,6 +8291,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         state_key = "guided_has_run"
         if run:
             st.session_state[state_key] = True
+            st.session_state["guided_scroll_to_results"] = True
         if not st.session_state.get(state_key):
             return
 
@@ -8222,7 +8317,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         else:
             query = guided_result_query(kind, relation, result_type)
         try:
-            result = run_cypher(cfg, query, params)
+            with st.spinner("Building the spatial answer…"):
+                result = run_cypher(cfg, query, params)
         except Exception:
             st.error(
                 "We could not complete this search. Try another place or "
@@ -8250,6 +8346,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 "No area satisfies this relationship for the selected place."
             )
             return
+        if st.session_state.pop("guided_scroll_to_results", False):
+            scroll_to_rendered_map()
         if result_type == "LSOA":
             lsoa_col = next(
                 (c for c in ("lsoa_code", "code") if c in result.columns),
@@ -11811,9 +11909,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
 
 def page_map(cfg: Dict[str, str]) -> None:
     st.markdown(
-        "<style>[data-testid='stMainBlockContainer']{max-width:1600px!important;"
-        "padding-left:2.2rem!important;padding-right:2.2rem!important}"
-        ".map-search-hero{max-width:1120px;margin:1rem auto 1.45rem;"
+        "<style>.map-search-hero{width:100%;max-width:none;min-height:238px;margin:1.1rem 0 1.45rem;"
         "display:flex;align-items:center;gap:2rem;text-align:left;"
         "padding:1.8rem 2.2rem;border-radius:28px;"
         "background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);"
@@ -11821,8 +11917,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         ".map-search-hero h1{font-size:clamp(2rem,4vw,3.2rem);"
         "letter-spacing:-.04em;line-height:1.08;margin:0;color:#fff;"
         "font-weight:850}.map-search-hero p{font-size:1rem;color:#fff7f2;"
-        "margin:.55rem 0 0}.map-hero-logo{width:190px;max-height:180px;"
-        "object-fit:contain;flex:0 0 auto;filter:drop-shadow(0 12px 22px rgba(75,36,25,.18))}"
+        "margin:.55rem 0 0}"
         ".map-hero-copy{flex:1;text-align:center}"
         "div[data-testid='stTextInput'] input,div[data-testid='stNumberInput'] input{"
         "border-radius:14px!important;min-height:3.15rem;padding-left:1rem;"
@@ -11851,14 +11946,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         unsafe_allow_html=True,
     )
     hero_shell = st.container(key="map_search_hero")
-    logo_path = Path(__file__).with_name("wales_education_kg.png")
-    logo_html = ""
-    if logo_path.exists():
-        logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
-        logo_html = (
-            "<img class='map-hero-logo' alt='Wales Education KG' "
-            f"src='data:image/png;base64,{logo_b64}'>"
-        )
+    logo_html = wales_logo_html()
     hero_shell.markdown(
         "<div class='map-search-hero'>" + logo_html
         + "<div class='map-hero-copy'><h1>Explore Welsh schools by place</h1>"
@@ -11866,6 +11954,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         "areas connected to each result.</p></div></div>",
         unsafe_allow_html=True,
     )
+    render_page_switcher("Map")
 
     la_opts = safe_options(cfg, """
     MATCH (s:School)
@@ -12303,7 +12392,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     if not st.session_state.get("map_has_run"):
         return
     st.markdown(
-        "<style>.st-key-map_search_hero,.st-key-map_search_builder{"
+        "<style>.st-key-map_search_builder{"
         "display:none!important}</style>",
         unsafe_allow_html=True,
     )
@@ -12867,8 +12956,9 @@ ORDER BY cluster_size DESC, cluster_id
     ORDER BY coalesce(s.fsm_pct, -1) DESC, school
     """
     try:
-        summary_df = run_cypher(cfg, count_cypher, params)
-        df = run_cypher(cfg, cypher, params)
+        with st.spinner("Finding schools and preparing the map…"):
+            summary_df = run_cypher(cfg, count_cypher, params)
+            df = run_cypher(cfg, cypher, params)
     except Exception as e:
         st.error(f"Map query failed: {e}")
         return
@@ -13332,25 +13422,7 @@ ORDER BY cluster_size DESC, cluster_id
         )
     st.markdown("<div id='school-map-results'></div>", unsafe_allow_html=True)
     if st.session_state.pop("map_scroll_to_results", False):
-        components.html(
-            """
-            <script>
-            let attempts = 0;
-            const timer = setInterval(() => {
-              const doc = window.parent.document;
-              const target = doc.querySelector('[data-testid="stDeckGlJsonChart"]');
-              attempts += 1;
-              if (target) {
-                target.scrollIntoView({behavior:'smooth', block:'start'});
-                clearInterval(timer);
-              } else if (attempts > 40) {
-                clearInterval(timer);
-              }
-            }, 100);
-            </script>
-            """,
-            height=0,
-        )
+        scroll_to_rendered_map()
     clicked_region = render_school_map(
         map_df, selected_school, polygon_df, cluster_only, admin_polygon_df
     )
@@ -13486,7 +13558,6 @@ def main() -> None:
         # the subtree, only without the stable identity.
         body = st.container()
     with body:
-        render_page_switcher(page)
         if page == "SCQ Demonstrator":
             page_guided_spatial_search(cfg)
         elif page == "Map":
