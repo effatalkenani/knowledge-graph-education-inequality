@@ -485,11 +485,8 @@ UI_TEXT: Dict[str, Dict[str, str]] = {
         "dir_lsoa": "LSOA \u2192 results are Wards / Communities",
         "dir_admin": "Ward / Community \u2192 results are LSOAs",
         "direction_caption": (
-            "INTERSECTS is the Geometry-origin, non-disjoint polygon "
-            "relation across administrative and statistical divisions. "
-            "Boundary-only contact therefore qualifies; it is not WITHIN "
-            "or containment. The edge is stored AdminUnit to LSOA, while "
-            "the interface can read the same fact from either side."
+            "The stored INTERSECTS relation is symmetric: both directions "
+            "read the same facts, only the fixed side changes."
         ),
         "scq7_select_lsoa": "Select LSOA \u2014 returns intersecting wards/communities",
         "scq8_select_lsoa": "Select LSOA \u2014 returns nearby wards/communities",
@@ -1829,9 +1826,6 @@ _FILTERABLE_FORMS = ("LENS", "SCHOOL_LENS")
 
 
 _LENS_MODE_PHRASES = [
-    # Negated adjacency is a real spatial form, not a positive TOUCHES
-    # question with an ignored word.  It must precede "touches" because the
-    # phrase "not touch" also contains the positive token "touch".
     ("not_touches", ("not touch", "does not touch", "do not touch",
                      "not touching", "not adjacent", "non-adjacent",
                      "does not border", "do not border")),
@@ -1861,15 +1855,11 @@ _UNIT_TYPE_WORDS = [
     ("UnitaryAuthority", ("unitary authority", "unitary authorities",
                           "county borough", "\u0633\u0644\u0637\u0629",
                           "\u0645\u062d\u0627\u0641\u0638\u0629")),
-    ("CommunityWard", ("community ward", "community wards")),
-    ("CivilParishorCommunity", ("civil parish", "civil parishes",
-                                 "parish or community")),
     ("Community", ("community", "communities",
                    "\u0645\u062c\u062a\u0645\u0639",
                    "\u0645\u062c\u062a\u0645\u0639\u0627\u062a")),
     ("Ward", ("ward", "wards", "\u062f\u0627\u0626\u0631\u0629",
               "\u062f\u0648\u0627\u0626\u0631")),
-    ("EuropeanRegion", ("european region", "european regions")),
 ]
 
 
@@ -2528,21 +2518,7 @@ def render_nl_search(
     # The question's own answer is parked here, complete and independent of
     # the manual panel. It carries everything the query needs, so the answer
     # can be produced without a single widget being created.
-    # "LSOAs near Cathays Community" crosses from administrative to
-    # statistical geography.  It is SCQ8 (INTERSECTS then GRAPH_NEAR), not
-    # the administrative two-TOUCHES lens used by "Communities near
-    # Cathays".  Keeping the two routes separate prevents identical-looking
-    # answers from two questions with different domains and provenance.
-    _low_text = (parsed.get("text") or "").lower()
-    if (
-        parsed.get("admin")
-        and not parsed.get("areas")
-        and scq == "SCQ2"
-        and re.search(r"\blsoas?\b|lower super output area", _low_text)
-    ):
-        scq = "SCQ8"
-        changed.append("SCQ8: LSOAs graph-near an administrative unit")
-
+    _question_low = (parsed.get("text") or "").lower()
     _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
     if not _lens and has_negation(parsed.get("text", "")):
         _candidate_lens = parse_lens_intent(
@@ -2572,8 +2548,7 @@ def render_nl_search(
     # the question goes there instead of dying in a form that cannot take
     # it. Whether the answer is units or schools is decided by the sentence.
     _want_units = bool(
-        _lens
-        and not any(w in _low_text for w in _SCHOOL_WORDS)
+        _lens and not any(w in _question_low for w in _SCHOOL_WORDS)
     )
     if (
         not _lens
@@ -2998,15 +2973,12 @@ def lens_unit_types(cfg):
 # disjoint, with a path of two touches edges.
 LENS_UNIT_CYPHER = {
     'not_touches': (
-        'MATCH (anchor:AdminUnit {uri:$admin})\n'
-        'MATCH (nbr:AdminUnit)\n'
+        'MATCH (anchor:AdminUnit {uri:$admin})\nMATCH (nbr:AdminUnit)\n'
         'WHERE nbr <> anchor\n'
         '  AND nbr.type = coalesce($nbr_type, anchor.type)\n'
         '  AND NOT (anchor)-[:TOUCHES]-(nbr)\n'
-        # INTERSECTS-to-LSOA scopes the complement to the represented Welsh
-        # geography rather than returning every non-neighbour in YAGO2geo.
         '  AND EXISTS { MATCH (nbr)-[:INTERSECTS]->(:LSOA) }\n'
-        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    nbr.uri                       AS unit_uri,\n    coalesce(nbr.name, nbr.uri)   AS unit,\n    nbr.type                      AS unit_type,\n    count(DISTINCT l)             AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s)             AS schools,\n    round(avg(s.fsm_pct), 1)      AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
+        '\nWITH DISTINCT nbr\nOPTIONAL MATCH (nbr)-[:INTERSECTS]->(l:LSOA)\nOPTIONAL MATCH (l)<-[:LOCATED_IN]-(s:School)\nRETURN\n    nbr.uri AS unit_uri,\n    coalesce(nbr.name, nbr.uri) AS unit,\n    nbr.type AS unit_type,\n    count(DISTINCT l) AS lsoas,\n    collect(DISTINCT l.code)[0..60] AS lsoa_codes,\n    count(DISTINCT s) AS schools,\n    round(avg(s.fsm_pct), 1) AS avg_fsm_pct,\n    round(avg(s.attendance_pct),1) AS avg_attendance_pct\nORDER BY unit\nLIMIT $limit\n'
     ),
     'touches': (
         'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(nbr:AdminUnit)\nWHERE ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
@@ -3035,15 +3007,14 @@ LENS_MODES["near"] = (
 LENS_MODES["not_touches"] = (
     "Units of the same division that do NOT TOUCH this one",
     "AdminUnit --NOT TOUCHES-- AdminUnit --INTERSECTS--> LSOA",
-    "Query-derived complement of Native TOUCHES, scoped to Welsh units",
+    "Query-derived DISJOINT complement of Native TOUCHES",
 )
 LENS_CYPHER["near"] = (
     'MATCH (anchor:AdminUnit {uri:$admin})-[:TOUCHES]-(mid:AdminUnit)-[:TOUCHES]-(nbr:AdminUnit)\nWHERE mid.type = anchor.type\n  AND nbr.type = anchor.type\n  AND nbr <> anchor\n  AND NOT (anchor)-[:TOUCHES]-(nbr)\n  AND ($nbr_type IS NULL OR nbr.type = $nbr_type)\n'
     + _LENS_TAIL.replace("__VIA__", _LENS_NBR).replace("__VIATYPE__", "nbr.type")
 )
 LENS_CYPHER["not_touches"] = (
-    'MATCH (anchor:AdminUnit {uri:$admin})\n'
-    'MATCH (nbr:AdminUnit)\n'
+    'MATCH (anchor:AdminUnit {uri:$admin})\nMATCH (nbr:AdminUnit)\n'
     'WHERE nbr <> anchor\n'
     '  AND nbr.type = coalesce($nbr_type, anchor.type)\n'
     '  AND NOT (anchor)-[:TOUCHES]-(nbr)\n'
@@ -4808,20 +4779,6 @@ def _detail_metric(label: str, value: str, colour: str, note: str = "") -> str:
     )
 
 
-@st.cache_data(show_spinner=False, ttl=600)
-def lsoa_admin_context(
-    cfg_key: Tuple[str, str, str, str], lsoa_code: str
-) -> pd.DataFrame:
-    """Administrative units whose polygons intersect the selected LSOA."""
-    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
-           "password": cfg_key[2], "database": cfg_key[3]}
-    return run_cypher(cfg, """
-    MATCH (a:AdminUnit)-[:INTERSECTS]->(l:LSOA {code:$code})
-    RETURN DISTINCT coalesce(a.name, a.uri) AS unit, a.type AS unit_type
-    ORDER BY unit_type, unit
-    """, {"code": lsoa_code})
-
-
 def render_lsoa_school_panel(
     cfg: Dict[str, str], lsoa_code: str
 ) -> None:
@@ -4841,24 +4798,6 @@ def render_lsoa_school_panel(
     except Exception as exc:
         st.warning(f"Could not load the schools for {lsoa_code}: {exc}")
         return
-
-    try:
-        admin_ctx = lsoa_admin_context(
-            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
-            str(lsoa_code),
-        )
-    except Exception:
-        admin_ctx = pd.DataFrame()
-    if not admin_ctx.empty:
-        labels = ", ".join(
-            f"{r['unit']} ({r['unit_type']})"
-            for _, r in admin_ctx.head(12).iterrows()
-        )
-        st.caption(
-            f"Administrative polygons intersecting {lsoa_code}: {labels}. "
-            "This is INTERSECTS (Geometry-origin), not a claim that the "
-            "whole LSOA is contained in each unit."
-        )
 
     DEP_LABEL = {
         "high_deprivation": "High",
@@ -5439,18 +5378,17 @@ def render_school_map(
     # Administrative boundaries are a second, deliberately unfilled layer.
     # They explain the graph path without replacing the LSOA deprivation
     # polygons underneath or obscuring the school pins above them.
-    admin_layer = None
+    admin_fill_layer = None
+    admin_line_layer = None
     if admin_polygon_df is not None and not admin_polygon_df.empty:
         admin_rows = []
         for _, arow in admin_polygon_df.iterrows():
             role = str(arow.get("role") or "result")
-            unit_type = arow.get("unit_type") or "AdminUnit"
-            unit_base = admin_colour(unit_type)
             for ring in _wkt_rings(arow.get("wkt")):
                 admin_rows.append({
                     "polygon": ring,
                     "name": arow.get("name") or arow.get("uri"),
-                    "unit_type": unit_type,
+                    "unit_type": arow.get("unit_type") or "AdminUnit",
                     "role": role,
                     # The deck uses one tooltip template for every layer.
                     # Populate its school-card fields with administrative
@@ -5458,7 +5396,7 @@ def render_school_map(
                     # itself rather than the LSOA drawn underneath it.
                     "school": arow.get("name") or arow.get("uri"),
                     "local_authority": "Administrative boundary",
-                    "school_type": unit_type,
+                    "school_type": arow.get("unit_type") or "AdminUnit",
                     "language_medium": (
                         "Chosen area" if role == "anchor"
                         else "Related administrative unit"
@@ -5475,17 +5413,27 @@ def render_school_map(
                     "address": str(role).replace("_", " ").title(),
                     "postcode": "",
                     "line": [124, 58, 237, 245] if role == "anchor"
-                            else unit_base + [235],
+                            else [14, 116, 144, 220],
                     "fill": [124, 58, 237, 42] if role == "anchor"
-                            else unit_base + [42],
+                            else [14, 116, 144, 24],
                 })
         if admin_rows:
-            admin_layer = pdk.Layer(
+            # The filled administrative polygon is deliberately not
+            # pickable. If it captures the whole interior, the LSOA beneath
+            # can never receive hover/click events. Its boundary is a
+            # separate pickable path, so the three objects remain reachable:
+            # school pin, LSOA interior, administrative boundary.
+            admin_fill_layer = pdk.Layer(
                 "PolygonLayer", id="administrative-scope",
                 data=admin_rows, get_polygon="polygon",
                 get_fill_color="fill", get_line_color="line",
-                line_width_min_pixels=4, stroked=True, filled=True,
-                pickable=True,
+                line_width_min_pixels=0, stroked=False, filled=True,
+                pickable=False,
+            )
+            admin_line_layer = pdk.Layer(
+                "PathLayer", id="administrative-scope-boundaries",
+                data=admin_rows, get_path="polygon", get_color="line",
+                get_width=5, width_min_pixels=4, pickable=True,
             )
     if polygon_df is not None and not polygon_df.empty:
         DEP_FILL = {
@@ -5500,10 +5448,41 @@ def render_school_map(
             "low_deprivation": "Low",
             "unknown": "Unknown",
         }
+        lsoa_summary: Dict[str, Dict[str, Any]] = {}
+        if "lsoa_code" in chart_df.columns:
+            for code, group in chart_df.groupby(
+                chart_df["lsoa_code"].fillna("").astype(str)
+            ):
+                if not code:
+                    continue
+                def _avg(column: str, suffix: str = "") -> str:
+                    vals = pd.to_numeric(
+                        group.get(column, pd.Series(dtype=float)),
+                        errors="coerce",
+                    ).dropna()
+                    return (
+                        f"{vals.mean():.1f}{suffix}" if not vals.empty else "N/A"
+                    )
+                pupils = pd.to_numeric(
+                    group.get("pupils", pd.Series(dtype=float)),
+                    errors="coerce",
+                ).dropna()
+                lsoa_summary[code] = {
+                    "schools": int(len(group)),
+                    "fsm": _avg("fsm_pct", "%"),
+                    "attendance": _avg("attendance_pct", "%"),
+                    "performance": _avg("capped9_score"),
+                    "pupils": (
+                        f"{int(pupils.sum()):,}" if not pupils.empty else "N/A"
+                    ),
+                    "ptr": _avg("pupil_teacher_ratio"),
+                    "budget": _avg("budget_per_pupil_gbp"),
+                }
         poly_rows = []
         for _, prow in polygon_df.iterrows():
             dep_key = str(prow.get("deprivation") or "unknown")
             base = DEP_FILL.get(dep_key, DEP_FILL["unknown"])
+            summary = lsoa_summary.get(str(prow.get("code")), {})
             for ring in _wkt_rings(prow.get("wkt")):
                 # Deeper red for bigger clusters, in the manner of a
                 # choropleth: the shade encodes cluster size.
@@ -5529,21 +5508,23 @@ def render_school_map(
                             else "N/A"
                         ),
                         "fill": base + [150],
-                        # The standard-map tooltip is shared with school
-                        # pins.  Supplying these fields lets the LSOA itself
-                        # be identified and clicked without disguising it as
-                        # a school.
                         "school": prow.get("name") or prow.get("code"),
                         "local_authority": "LSOA statistical area",
                         "school_type": prow.get("code"),
-                        "language_medium": "Click for area and school detail",
-                        "fsm_label": prow.get("fsm_avg", "N/A"),
-                        "attendance_label": prow.get("att_avg", "N/A"),
-                        "pupils_label": "N/A",
-                        "ptr_label": "N/A",
-                        "budget_label": "N/A",
-                        "nearest_stop_label": "N/A",
-                        "perf_summary": prow.get("schools_basis", "LSOA"),
+                        "language_medium": "Click for LSOA and school details",
+                        "fsm_label": summary.get("fsm", prow.get("fsm_avg", "N/A")),
+                        "attendance_label": summary.get(
+                            "attendance", prow.get("att_avg", "N/A")
+                        ),
+                        "pupils_label": summary.get("pupils", "N/A"),
+                        "ptr_label": summary.get("ptr", "N/A"),
+                        "budget_label": summary.get("budget", "N/A"),
+                        "nearest_stop_label": (
+                            f"{summary.get('schools', 0)} schools in this answer"
+                        ),
+                        "perf_summary": (
+                            "Mean Capped 9 " + summary.get("performance", "N/A")
+                        ),
                         "address": "LSOA boundary",
                         "postcode": "",
                     }
@@ -5567,8 +5548,10 @@ def render_school_map(
             )
     # Put the administrative outline above the filled LSOA layer and below
     # the pins, otherwise the LSOA fill can hide the explanation boundary.
-    if admin_layer is not None:
-        layers.append(admin_layer)
+    if admin_fill_layer is not None:
+        layers.append(admin_fill_layer)
+    if admin_line_layer is not None:
+        layers.append(admin_line_layer)
     if not polygons_only:
         layers.append(pin_layer)
 
@@ -5639,7 +5622,8 @@ def render_school_map(
         parameters={"clearColor": [0.972, 0.980, 0.992, 1]},
     )
     picked_region = deck_chart_with_click(
-        deck, key="cluster_map" if polygons_only else "standard_school_map"
+        deck,
+        key="cluster_map" if polygons_only else "standard_school_map",
     )
 
     if admin_polygon_df is not None and not admin_polygon_df.empty:
@@ -5647,10 +5631,10 @@ def render_school_map(
         st.markdown(
             "<div class='map-note'><b>Administrative-scope legend:</b> "
             "<span style='color:#7c3aed;font-size:18px;'>&#9632;</span> "
-                "selected source unit"
+            "selected source unit"
             + (
-                " &nbsp; related target units use distinct colours by "
-                "administrative type"
+                " &nbsp; <span style='color:#0e7490;font-size:18px;'>"
+                "&#9632;</span> related target units"
                 if has_results else ""
             )
             + " &nbsp;&middot;&nbsp; red / orange / green polygons are "
@@ -6717,30 +6701,6 @@ ADMIN_DEPTH = {
 }
 
 
-def admin_colour(unit_type: Any) -> List[int]:
-    """Stable colour for every administrative vocabulary spelling."""
-    raw = str(unit_type or "Unknown")
-    key = re.sub(r"^OS_", "", raw, flags=re.IGNORECASE)
-    compact = re.sub(r"[^a-z]", "", key.lower())
-    aliases = {
-        "community": "Community",
-        "ward": "Ward",
-        "communityward": "CommunityWard",
-        "civilparishorcommunity": "CivilParishorCommunity",
-        "unitaryauthority": "UnitaryAuthority",
-        "europeanregion": "EuropeanRegion",
-    }
-    return ADMIN_FILL.get(aliases.get(compact, key), ADMIN_FILL["Unknown"])
-
-
-def admin_depth(unit_type: Any) -> int:
-    base = admin_colour(unit_type)
-    for key, colour in ADMIN_FILL.items():
-        if colour == base:
-            return ADMIN_DEPTH.get(key, ADMIN_DEPTH["Unknown"])
-    return ADMIN_DEPTH["Unknown"]
-
-
 @st.cache_data(show_spinner=False, ttl=600)
 def admin_unit_school_counts(
     cfg_key: Tuple[str, str, str, str], uris: Tuple[str, ...]
@@ -6799,29 +6759,6 @@ def unit_school_detail(
     """, {"uri": uri})
 
 
-@st.cache_data(show_spinner=False, ttl=600)
-def admin_unit_hierarchy_context(
-    cfg_key: Tuple[str, str, str, str], uri: str
-) -> Dict[str, Any]:
-    """Direct native WITHIN parents and the number of direct children."""
-    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
-           "password": cfg_key[2], "database": cfg_key[3]}
-    parents = run_cypher(cfg, """
-    MATCH (a:AdminUnit {uri:$uri})-[:WITHIN]->(p:AdminUnit)
-    RETURN DISTINCT coalesce(p.name, p.uri) AS name, p.type AS type
-    ORDER BY type, name
-    """, {"uri": uri})
-    children = scalar(
-        cfg,
-        "MATCH (:AdminUnit)-[:WITHIN]->(a:AdminUnit {uri:$uri}) "
-        "RETURN count(*)",
-        {"uri": uri},
-        default=0,
-    )
-    return {"parents": parents.to_dict("records"),
-            "children": int(children or 0)}
-
-
 def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
     """The clicked unit, its schools and their deprivation split."""
     uri = str(unit.get("uri") or "")
@@ -6836,16 +6773,6 @@ def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
     except Exception:
         st.caption("The school detail for this unit could not be read.")
         return
-    try:
-        hierarchy = admin_unit_hierarchy_context(
-            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]), uri
-        )
-    except Exception:
-        hierarchy = {"parents": [], "children": 0}
-    parent_text = ", ".join(
-        f"{p.get('name')} ({p.get('type')})"
-        for p in hierarchy.get("parents", [])
-    ) or "No direct WITHIN parent is represented"
 
     counts = (
         df["deprivation"].fillna("unknown").astype(str)
@@ -6873,9 +6800,6 @@ def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
         f"{escape(name)}</div>"
         f"<div style='font-size:11px;color:{C_MUTED};margin:2px 0 8px;'>"
         f"{escape(utype)}</div>"
-        f"<div style='font-size:10.5px;color:{C_MUTED};margin-bottom:8px;'>"
-        f"<b>Within:</b> {escape(parent_text)} &middot; "
-        f"<b>Direct children:</b> {int(hierarchy.get('children', 0))}</div>"
         f"<div style='font-size:22px;font-weight:900;color:{C_HEAD};"
         f"line-height:1;'>{int(unit.get('lsoas') or 0)}</div>"
         f"<div style='font-size:10px;font-weight:800;color:{C_MUTED};"
@@ -6978,8 +6902,8 @@ def render_admin_answer_map(
     lats: List[float] = []
     for _, prow in polys.iterrows():
         utype = str(prow.get("type") or "Unknown")
-        base = admin_colour(utype)
-        depth = admin_depth(utype)
+        base = ADMIN_FILL.get(utype, ADMIN_FILL["Unknown"])
+        depth = ADMIN_DEPTH.get(utype, ADMIN_DEPTH["Unknown"])
         for ring in _wkt_rings(prow.get("wkt")):
             if len(ring) > 400:
                 ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
@@ -6988,7 +6912,7 @@ def render_admin_answer_map(
             rows.append({
                 "polygon": ring,
                 "fill": base + [depth],
-                "line": base + [245],
+                "line": [17, 24, 39, 220],
                 "width": 2,
                 "uri": str(prow.get("uri") or ""),
                 "name": prow.get("name") or prow.get("uri"),
@@ -7009,7 +6933,7 @@ def render_admin_answer_map(
                     lons.append(pt[0]); lats.append(pt[1])
                 rows.append({
                     "polygon": ring,
-                    "fill": [250, 204, 21, 100],
+                    "fill": [124, 58, 237, 45],
                     "line": [124, 58, 237, 255],
                     "width": 6,
                     "uri": str(arow.get("uri") or ""),
@@ -7102,12 +7026,12 @@ def render_admin_answer_map(
     st.markdown(
         "<div class='small-muted' style='margin-top:.35rem'>"
         + (
-            "The purple-outlined shape is the chosen source unit; "
+            "The purple outline is the chosen administrative unit; "
             if focus_admin else
             "The yellow shape is the selected LSOA; "
         )
-        + "returned administrative units use a distinct colour for each "
-        "unit type. Hover one for its name and type."
+        + "the returned administrative units are the exact query answer. "
+        "Hover one for its name and type."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -7180,7 +7104,7 @@ def render_admin_containment_map(
         # Whoever does the containing is drawn pale, regardless of which
         # side of the question it sits on.
         is_container = is_focus if focus_contains else (uri in row_set)
-        base = admin_colour(prow.get("type"))
+        base = ADMIN_FILL.get(str(prow.get("type")), ADMIN_FILL["Unknown"])
         for ring in _wkt_rings(prow.get("wkt")):
             if len(ring) > 400:
                 ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
@@ -7203,7 +7127,9 @@ def render_admin_containment_map(
                     else "Inside the selected unit"
                 ),
             }
-            depth = admin_depth(prow.get("type"))
+            depth = ADMIN_DEPTH.get(
+                str(prow.get("type")), ADMIN_DEPTH["Unknown"]
+            )
             if is_focus:
                 # The user's selection uses one consistent colour across
                 # SCQ1-SCQ8, irrespective of its administrative level.
@@ -7223,7 +7149,7 @@ def render_admin_containment_map(
                 containers.append(item)
             else:
                 item["fill"] = base + [depth]
-                item["line"] = base + [245]
+                item["line"] = [17, 24, 39, 220]
                 item["width"] = 2
                 contained.append(item)
 
@@ -7675,19 +7601,6 @@ def page_scq_demonstrator(
         st.caption(t("scq3_interp"))
 
     elif param_type.startswith("admin"):
-        if param_type == "admin_child":
-            st.caption(
-                "SCQ5 travels upward: the list contains units that have a "
-                "direct native WITHIN parent."
-            )
-        elif param_type == "admin_parent":
-            st.caption(
-                "SCQ6 travels downward: the list contains only units that "
-                "have at least one direct native WITHIN child. Cathays will "
-                "therefore not appear here if no child unit is represented "
-                "inside it; it remains available in SCQ5 and cross-division "
-                "questions."
-            )
         admin_units = admin_options(
             cfg,
             param_type,
@@ -9137,7 +9050,7 @@ RETURN coalesce(a.name, a.uri) AS name, a.type AS type,
         # selected anchor's LSOAs and therefore showed Cathays' statistical
         # footprint for a question whose answer was its touching Communities.
         picked_admin = render_admin_answer_map(
-            cfg, df, None, key="nl_answer_admin_units", focus_admin=admin
+            cfg, df, None, key="nl_answer_admin_units"
         )
         if picked_admin:
             render_unit_school_card(cfg, picked_admin)
@@ -9439,11 +9352,11 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                         "for this LSOA."
                     )               
                 else:
-                    picked7 = render_admin_answer_map(
+                    clicked7 = render_answer_map(
                         cfg, df7, selected7[0], key="map_cross_scq7"
                     )
-                    if picked7:
-                        render_unit_school_card(cfg, picked7)
+                    if clicked7:
+                        render_lsoa_school_panel(cfg, clicked7)
                     display_df(df7)
 
             else:
@@ -9499,11 +9412,11 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
                     if df8.empty:
                         st.info(t("no_results_8"))
                     else:
-                        picked8 = render_admin_answer_map(
+                        clicked8 = render_answer_map(
                             cfg, df8, selected8[0], key="map_cross_scq8"
                         )
-                        if picked8:
-                            render_unit_school_card(cfg, picked8)
+                        if clicked8:
+                            render_lsoa_school_panel(cfg, clicked8)
                         display_df(df8)
                     if SHOW_QUERIES:
                         with st.expander(t("show_query")):
@@ -9720,42 +9633,143 @@ MAP_NL_RULES: List[Tuple[str, List[str]]] = [
 ]
 
 _ADMIN_TYPE_WORDS = {
+    "community ward": "CommunityWard",
+    "civil parish or community": "CivilParishorCommunity",
+    "civil parish": "CivilParishorCommunity",
+    "european region": "EuropeanRegion",
     "community": "Community", "cymuned": "Community",
     "ward": "Ward", "electoral ward": "Ward",
     "unitary authority": "UnitaryAuthority", "county": "UnitaryAuthority",
     "local authority": "UnitaryAuthority",
 }
 
+_MAP_ADMIN_TYPES = {
+    "Community", "Ward", "CommunityWard", "CivilParishorCommunity",
+    "UnitaryAuthority", "EuropeanRegion",
+}
+
+# Possible topological relations in the dissertation's class-pair table.
+# This governs semantic validity; it does not claim that YAGO2geo stores the
+# relation. Provenance is decided separately (Native, Geometry-origin or
+# Query-derived). Ward is the application's normalised COMMUNITYWARD label.
+_PAIR_RELATIONS = {
+    ("UnitaryAuthority", "UnitaryAuthority"): {"disjoint", "touches"},
+    ("Community", "Community"): {"disjoint", "touches"},
+    ("CommunityWard", "CommunityWard"): {"disjoint", "touches"},
+    ("CivilParishorCommunity", "CivilParishorCommunity"): {"disjoint", "touches"},
+    ("Community", "CommunityWard"): {"disjoint", "touches", "within", "contains"},
+    ("Community", "UnitaryAuthority"): {"disjoint", "within", "contains"},
+    ("CommunityWard", "UnitaryAuthority"): {"disjoint", "within", "contains"},
+    ("CivilParishorCommunity", "UnitaryAuthority"): {"disjoint", "touches", "within", "contains"},
+    ("CommunityWard", "CivilParishorCommunity"): {"disjoint", "within", "contains"},
+    ("UnitaryAuthority", "EuropeanRegion"): {"disjoint", "within", "contains"},
+    ("Community", "EuropeanRegion"): {"disjoint", "within", "contains"},
+    ("CommunityWard", "EuropeanRegion"): {"disjoint", "within", "contains"},
+    ("CivilParishorCommunity", "EuropeanRegion"): {"disjoint", "within", "contains"},
+    ("LSOA", "LSOA"): {"disjoint", "touches"},
+    ("LSOA", "UnitaryAuthority"): {"disjoint", "within", "contains"},
+    ("LSOA", "CommunityWard"): {"disjoint", "intersects"},
+    ("LSOA", "Community"): {"disjoint", "intersects"},
+    ("LSOA", "CivilParishorCommunity"): {"disjoint", "intersects"},
+}
+
+
+def _eval_class(unit_type: str) -> str:
+    return "CommunityWard" if unit_type == "Ward" else unit_type
+
+
+def _possible_pair_relations(domain: str, range_: str) -> set[str]:
+    d, r = _eval_class(domain), _eval_class(range_)
+    return set(
+        _PAIR_RELATIONS.get((d, r), _PAIR_RELATIONS.get((r, d), set()))
+    )
+
+
+def _map_requested_result(text: str) -> Tuple[str, str | None]:
+    """Return the geography explicitly requested before the relation word."""
+    low = (text or "").lower()
+    prefix = re.split(
+        r"\b(?:does\s+not|do\s+not|not)?\s*(?:touch(?:es|ing)?|"
+        r"intersect(?:s|ing)?|inside|within|contains?|near)\b",
+        low,
+        maxsplit=1,
+    )[0]
+    if re.search(r"\blsoas?\b|lower layer super output areas?", prefix):
+        return "LSOA", "LSOA"
+    # Longer labels first so "community ward" is not read as Community.
+    for phrase, utype in sorted(
+        _ADMIN_TYPE_WORDS.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        plural = phrase + "s" if not phrase.endswith("y") else phrase[:-1] + "ies"
+        if re.search(rf"\b(?:{re.escape(phrase)}|{re.escape(plural)})\b", prefix):
+            return "AdminUnit", utype
+    return "Schools", None
+
+
+def _map_explicit_relation(text: str) -> str:
+    """Read relation words in precedence order; negation always wins."""
+    low = (text or "").lower()
+    if re.search(
+        r"\b(?:not|does\s+not|do\s+not)\s+(?:touch|touches|border)\b|"
+        r"\b(?:non[- ]adjacent|not\s+adjacent)\b", low
+    ):
+        return "not_touches"
+    if re.search(r"\b(?:intersect|intersects|intersecting)\b", low):
+        return "intersects"
+    if re.search(r"\b(?:contains?|containing|parent\s+of)\b", low):
+        return "contains"
+    if re.search(r"\b(?:inside|within|contained\s+in)\b", low):
+        return "inside"
+    if (
+        re.search(r"\b(?:graph[- ]?near|two\s+hops?|2\s+hops?)\b", low)
+        or re.search(
+            r"\b(?:wards?|communities|unitary\s+authorities|lsoas?)\s+near\b",
+            low,
+        )
+    ):
+        return "graph_near"
+    if re.search(
+        r"\b(?:touch|touches|touching|adjacent|neighbouring|neighboring)\b",
+        low,
+    ):
+        return "touches"
+    return "direct"
+
 
 def _map_admin_hint(text: str) -> Dict[str, str] | None:
     """Read only explicit administrative wording in the offline parser."""
     low = (text or "").lower()
-    unit_type = next((v for k, v in _ADMIN_TYPE_WORDS.items() if k in low), None)
+    unit_type = next(
+        (v for k, v in sorted(
+            _ADMIN_TYPE_WORDS.items(), key=lambda item: len(item[0]), reverse=True
+        ) if k in low),
+        None,
+    )
     if not unit_type:
         return None
-    relation = "direct"
-    if (
-        any(x in low for x in ("graph near", "graph-near", "two hops", "2 hops"))
-        or re.search(
-            r"\b(?:wards?|communities|unitary authorities)\s+near\b", low
-        )
-    ):
-        relation = "graph_near"
-    elif any(x in low for x in ("touching", "touches", "adjacent", "neighbouring", "neighboring")):
-        relation = "touches"
+    relation = _map_explicit_relation(text)
+    result_kind, requested_type = _map_requested_result(text)
     # Accept the common natural forms "in/near X community/ward". Resolution
     # against Neo4j below is authoritative; this is merely a candidate name.
     words = "|".join(re.escape(k) for k, v in _ADMIN_TYPE_WORDS.items() if v == unit_type)
     match = re.search(
-        rf"(?:in|inside|within|near|around|touching)\s+(.+?)\s+(?:{words})(?:\b|$)",
+        rf"(?:in|inside|within|near|around|touching|touch|touches|"
+        rf"intersect|intersects|contains|not\s+touch|does\s+not\s+touch)"
+        rf"\s+(.+?)\s+(?:{words})(?:\b|$)",
         text, re.IGNORECASE,
     )
     if not match:
         return {"anchor_name": "", "anchor_type": unit_type,
-                "relation": relation, "target_type": unit_type}
+                "relation": relation,
+                "target_type": requested_type or unit_type,
+                "result_kind": result_kind,
+                "spatial_only": result_kind != "Schools"}
     name = re.sub(r"^(?:the)\s+", "", match.group(1).strip(), flags=re.I)
     return {"anchor_name": name, "anchor_type": unit_type,
-            "relation": relation, "target_type": unit_type}
+            "relation": relation,
+            "target_type": requested_type or unit_type,
+            "result_kind": result_kind,
+            "spatial_only": result_kind != "Schools"}
 
 
 def resolve_map_admin_scope(
@@ -9774,18 +9788,68 @@ def resolve_map_admin_scope(
     unit_type = str(scope.get("anchor_type") or "")
     relation = str(scope.get("relation") or "direct")
     target_type = str(scope.get("target_type") or unit_type)
-    if not name or unit_type not in {"Community", "Ward", "UnitaryAuthority"}:
+    result_kind = str(scope.get("result_kind") or "Schools")
+    spatial_only = bool(scope.get("spatial_only"))
+    if not name or unit_type not in _MAP_ADMIN_TYPES:
         return None, ["Name the administrative unit as well as its type."]
-    if target_type not in {"Community", "Ward", "UnitaryAuthority"}:
+    if target_type not in _MAP_ADMIN_TYPES and target_type != "LSOA":
         target_type = unit_type
-    if relation not in {"direct", "touches", "graph_near"}:
-        relation = "direct"
+    valid_relations = {
+        "direct", "intersects", "touches", "not_touches", "graph_near",
+        "inside", "contains",
+    }
+    if relation not in valid_relations:
+        return None, [f"The relation {relation} is not supported by the map."]
+
+    # Domain/range validation.  TOUCHES is defined within one geography;
+    # AdminUnit--LSOA uses the geometry-origin INTERSECTS bridge instead.
+    if result_kind == "LSOA" and relation in {
+        "touches", "not_touches", "inside", "contains"
+    }:
+        return None, [
+            f"{relation.replace('_', ' ').upper()} is not represented between "
+            f"LSOA and {unit_type}. The available cross-geography relation "
+            "is INTERSECTS; GRAPH_NEAR is available through INTERSECTS then "
+            "LSOA GRAPH_NEAR. The question was not converted to TOUCHES."
+        ]
+    if result_kind == "LSOA" and relation == "direct":
+        relation = "intersects"
+    if result_kind == "AdminUnit" and relation == "intersects":
+        return None, [
+            "Administrative-to-administrative INTERSECTS is not stored in "
+            "this graph. Use TOUCHES for adjacency or WITHIN/CONTAINS for "
+            "the native hierarchy."
+        ]
+
+    domain_type = "LSOA" if result_kind == "LSOA" else target_type
+    possible = _possible_pair_relations(domain_type, unit_type)
+    table_relation = {
+        "not_touches": "disjoint",
+        "inside": "within",
+    }.get(relation, relation)
+    # NEAR is a graph-derived competency relation rather than a row in the
+    # topological completeness table. It is valid only where same-level
+    # TOUCHES supplies its two-hop graph.
+    if relation == "graph_near":
+        compatible = (
+            _eval_class(domain_type) == _eval_class(unit_type)
+            and "touches" in possible
+        ) or result_kind == "LSOA"
+    else:
+        compatible = table_relation in possible
+    if spatial_only and not compatible:
+        available = ", ".join(sorted(possible)) or "none"
+        return None, [
+            f"{relation.replace('_', ' ').upper()} is not a possible "
+            f"relationship for {domain_type} → {unit_type} in the "
+            f"evaluated class-pair model. Available: {available}. The app "
+            "did not replace it with another relationship."
+        ]
 
     anchors = run_cypher(cfg, """
     MATCH (a:AdminUnit)
     WHERE a.type = $anchor_type
       AND toLower(coalesce(a.name, '')) = toLower($anchor_name)
-      AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
     RETURN a.uri AS uri, a.name AS name, a.type AS unit_type, a.wkt AS wkt
     ORDER BY a.uri
     LIMIT 3
@@ -9794,10 +9858,9 @@ def resolve_map_admin_scope(
         alternatives = run_cypher(cfg, """
         MATCH (a:AdminUnit)
         WHERE toLower(coalesce(a.name, '')) = toLower($anchor_name)
-          AND a.type IN ['Community', 'Ward', 'UnitaryAuthority']
-          AND EXISTS { MATCH (a)-[:INTERSECTS]->(:LSOA) }
+          AND a.type IN $admin_types
         RETURN DISTINCT a.type AS unit_type ORDER BY unit_type
-        """, {"anchor_name": name})
+        """, {"anchor_name": name, "admin_types": sorted(_MAP_ADMIN_TYPES)})
         found = alternatives.get("unit_type", pd.Series(dtype=str)).dropna().astype(str).tolist()
         suffix = (
             " It exists as " + " / ".join(found) + "; the requested type "
@@ -9811,7 +9874,7 @@ def resolve_map_admin_scope(
         return None, [f"{name} is ambiguous for type {unit_type}; use a more specific name."]
     anchor_uri = str(anchors.iloc[0]["uri"])
 
-    if relation == "direct":
+    if relation in {"direct", "intersects"}:
         path = """
         MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(l:LSOA)
         RETURN DISTINCT l.code AS lsoa_code, a.uri AS unit_uri,
@@ -9825,6 +9888,51 @@ def resolve_map_admin_scope(
         RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
           u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
         """
+    elif relation == "not_touches":
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})
+        MATCH (u:AdminUnit)
+        WHERE u.type = $target_type AND u <> a
+          AND NOT (a)-[:TOUCHES]-(u)
+          AND (
+            EXISTS { MATCH (u)-[:INTERSECTS]->(:LSOA) }
+            OR EXISTS {
+              MATCH (u)-[:WITHIN*1..3]->(p:AdminUnit)-[:INTERSECTS]->(:LSOA)
+            }
+            OR EXISTS {
+              MATCH (c:AdminUnit)-[:WITHIN*1..3]->(u)
+              WHERE EXISTS { MATCH (c)-[:INTERSECTS]->(:LSOA) }
+            }
+          )
+        OPTIONAL MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
+          u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
+        """
+    elif relation == "inside":
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})
+        MATCH (u:AdminUnit)-[:WITHIN]->(a)
+        WHERE u.type = $target_type
+        OPTIONAL MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
+          u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
+        """
+    elif relation == "contains":
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})-[:WITHIN]->(u:AdminUnit)
+        WHERE u.type = $target_type
+        OPTIONAL MATCH (u)-[:INTERSECTS]->(l:LSOA)
+        RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
+          u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
+        """
+    elif result_kind == "LSOA":
+        path = """
+        MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(base:LSOA)
+        MATCH (base)-[:GRAPH_NEAR]-(l:LSOA)
+        WHERE NOT (a)-[:INTERSECTS]->(l)
+        RETURN DISTINCT l.code AS lsoa_code, null AS unit_uri,
+          null AS unit_name, 'LSOA' AS unit_type, null AS unit_wkt
+        """
     else:
         path = """
         MATCH (a:AdminUnit {uri:$anchor_uri})-[:TOUCHES]-(m:AdminUnit)-[:TOUCHES]-(u:AdminUnit)
@@ -9836,9 +9944,32 @@ def resolve_map_admin_scope(
         """
     rows = run_cypher(cfg, path, {"anchor_uri": anchor_uri,
                                   "target_type": target_type})
+    if rows.empty or (
+        result_kind == "LSOA"
+        and rows.get("lsoa_code", pd.Series(dtype=str)).dropna().empty
+    ) or (
+        result_kind == "AdminUnit"
+        and rows.get("unit_uri", pd.Series(dtype=str)).dropna().empty
+    ):
+        return None, [
+            f"No {relation.replace('_', ' ').upper()} relationship was found "
+            f"from {name} ({unit_type}) to {target_type}. The graph was "
+            "queried without substituting another relation."
+        ]
     result = {
         "anchor": anchors.iloc[0].to_dict(), "relation": relation,
         "target_type": target_type,
+        "result_kind": result_kind,
+        "spatial_only": spatial_only,
+        "provenance": {
+            "touches": "Native YAGO2geo",
+            "inside": "Native YAGO2geo WITHIN",
+            "contains": "Inverse reading of Native YAGO2geo WITHIN",
+            "not_touches": "Query-derived DISJOINT complement",
+            "intersects": "Geometry-origin",
+            "graph_near": "Graph-derived",
+            "direct": "Geometry-origin INTERSECTS bridge",
+        }.get(relation, "Represented graph relation"),
         "disjointness_applied": False,
         "lsoa_codes": sorted(set(rows.get("lsoa_code", pd.Series(dtype=str)).dropna().astype(str))),
         "units": rows,
@@ -9940,9 +10071,29 @@ def parse_map_question(text: str) -> Dict[str, Any]:
         "text": raw, "conditions": [], "params": {},
         "chips": [], "unmatched": [], "parser": "rule-based",
         "admin_scope": _map_admin_hint(raw),
+        "spatial_relation_failed": False,
     }
     if not raw:
         return out
+
+    # A same-level LSOA request with no named administrative anchor is still
+    # validated against the class-pair table. This prevents phrases such as
+    # "LSOA inside LSOA" from falling through to an all-schools map.
+    if len(re.findall(r"\blsoas?\b", low)) >= 2:
+        relation = _map_explicit_relation(raw)
+        table_relation = {
+            "not_touches": "disjoint", "inside": "within"
+        }.get(relation, relation)
+        possible = _possible_pair_relations("LSOA", "LSOA")
+        if table_relation not in possible and relation != "graph_near":
+            out["spatial_relation_failed"] = True
+            out["unmatched"].append(
+                f"{relation.replace('_', ' ').upper()} is not possible for "
+                "LSOA → LSOA. Available topological relations are "
+                "DISJOINT and TOUCHES; GRAPH_NEAR is additionally derived "
+                "from two LSOA_TOUCHES steps."
+            )
+            return out
 
     hits = {name for name, phrases in MAP_NL_RULES
             if any(p in low for p in phrases)}
@@ -10121,9 +10272,13 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"medium": "welsh" | "english"\n'
             '"authority": local authority or town name, e.g. "Cardiff"\n'
             '"anchor_name": exact administrative place name\n'
-            '"anchor_type": "Community" | "Ward" | "UnitaryAuthority"\n'
-            '"relation": "direct" | "touches" | "graph_near"\n'
-            '"target_type": "Community" | "Ward" | "UnitaryAuthority"\n'
+            '"anchor_type": "Community" | "Ward" | "CommunityWard" | '
+            '"CivilParishorCommunity" | "UnitaryAuthority" | '
+            '"EuropeanRegion"\n'
+            '"relation": "direct" | "touches" | "not_touches" | '
+            '"graph_near" | "intersects" | "inside" | "contains"\n'
+            '"result_kind": "Schools" | "LSOA" | "AdminUnit"\n'
+            '"target_type": one of the same administrative types or "LSOA"\n'
             '"admin_scopes": [{"anchor_name": place, "anchor_type": type, '
             '"relation": relation, "target_type": type}]\n'
             '"admin_operator": "AND" | "OR"\n'
@@ -10179,6 +10334,8 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         "chips": [], "unmatched": [],
         "parser": f"LLM ({_nl_llm_model()})",
         "admin_scope": None, "admin_scopes": [], "admin_operator": "AND",
+        "result_kind": "Schools", "spatial_only": False,
+        "spatial_relation_failed": False,
     }
 
     anchor_type = str(data.get("anchor_type") or "")
@@ -10187,7 +10344,15 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     # prevents the model from collapsing explicit NEAR into TOUCHES. Transport
     # proximity is excluded because it is a separate DISTANCE_NEAR condition.
     low_text = (text or "").lower()
-    if re.search(
+    local_hint = _map_admin_hint(text)
+    if local_hint:
+        anchor_type = str(local_hint.get("anchor_type") or anchor_type)
+        relation = str(local_hint.get("relation") or relation)
+        out["result_kind"] = str(
+            local_hint.get("result_kind") or "Schools"
+        )
+        out["spatial_only"] = bool(local_hint.get("spatial_only"))
+    elif re.search(
         r"\b(?:wards?|communities|unitary authorities)\s+"
         r"(?:exactly\s+)?(?:graph[- ]?)?near\b",
         low_text,
@@ -10199,9 +10364,21 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         low_text,
     ):
         relation = "touches"
-    target_type = str(data.get("target_type") or anchor_type)
-    valid_admin_types = {"Community", "Ward", "UnitaryAuthority"}
-    valid_relations = {"direct", "touches", "graph_near"}
+    target_type = str(
+        (local_hint or {}).get("target_type")
+        or data.get("target_type")
+        or anchor_type
+    )
+    anchor_name = str(
+        (local_hint or {}).get("anchor_name")
+        or data.get("anchor_name")
+        or ""
+    ).strip()
+    valid_admin_types = set(_MAP_ADMIN_TYPES)
+    valid_relations = {
+        "direct", "touches", "not_touches", "graph_near", "intersects",
+        "inside", "contains",
+    }
     for raw_scope in (data.get("admin_scopes") or []):
         if not isinstance(raw_scope, dict):
             continue
@@ -10225,20 +10402,24 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
                     if scope_target_type in valid_admin_types
                     else scope_anchor_type
                 ),
+                "result_kind": out["result_kind"],
+                "spatial_only": out["spatial_only"],
             })
 
     if anchor_type in valid_admin_types:
         out["admin_scope"] = {
-            "anchor_name": str(data.get("anchor_name") or "").strip(),
+            "anchor_name": anchor_name,
             "anchor_type": anchor_type, "relation": relation,
             "target_type": target_type,
+            "result_kind": out["result_kind"],
+            "spatial_only": out["spatial_only"],
         }
         if not out["admin_scopes"]:
             out["admin_scopes"] = [dict(out["admin_scope"])]
         elif len(out["admin_scopes"]) == 1:
             # The explicit local NEAR/TOUCH correction above is authoritative
             # for a single scope even if the model mislabeled that list item.
-            out["admin_scopes"][0]["relation"] = relation
+            out["admin_scopes"][0].update(out["admin_scope"])
 
     admin_operator = str(data.get("admin_operator") or "").upper()
     if admin_operator not in {"AND", "OR"}:
@@ -10251,7 +10432,10 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         compound_relations: List[str] = []
         if re.search(r"\b(?:in|inside|within)\b", low_text):
             compound_relations.append("direct")
-        if re.search(r"\b(?:touch|touches|touching|adjacent)\b", low_text):
+        if (
+            relation != "not_touches"
+            and re.search(r"\b(?:touch|touches|touching|adjacent)\b", low_text)
+        ):
             compound_relations.append("touches")
         if re.search(r"\b(?:graph[- ]?near|near)\b", low_text) and not re.search(
             r"\b(?:near|close to)\s+transport\b", low_text
@@ -10450,6 +10634,24 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     else:
         parsed = parse_map_question(question)
 
+    if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
+        relation = _map_explicit_relation(question)
+        table_relation = {
+            "not_touches": "disjoint", "inside": "within"
+        }.get(relation, relation)
+        if (
+            table_relation not in _possible_pair_relations("LSOA", "LSOA")
+            and relation != "graph_near"
+        ):
+            parsed["spatial_relation_failed"] = True
+            message = (
+                f"{relation.replace('_', ' ').upper()} is not possible for "
+                "LSOA → LSOA. Available: DISJOINT and TOUCHES; "
+                "GRAPH_NEAR is derived from two LSOA_TOUCHES steps."
+            )
+            if message not in parsed["unmatched"]:
+                parsed["unmatched"].append(message)
+
     # The model/rules identify only a constrained intent. Neo4j resolves the
     # exact unit and executes one of three fixed parameterised graph paths.
     parsed["resolved_admin_scope"] = None
@@ -10484,6 +10686,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
                     f"anchor type = {a.get('unit_type')}",
                     f"relation = {resolved['relation']}",
                     f"target type = {resolved['target_type']}",
+                    f"provenance = {resolved.get('provenance')}",
                 ])
         except Exception as exc:
             parsed["admin_scope_failed"] = True
@@ -11009,6 +11212,14 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     nl_map = render_map_nl(cfg)
 
+    if nl_map.get("spatial_relation_failed"):
+        st.info(
+            "The map was not run because the requested Domain–Range pair "
+            "does not support that spatial relationship. No alternative "
+            "relationship or all-schools fallback was used."
+        )
+        return
+
     # A named administrative scope is part of the meaning of the question.
     # Falling back to every Welsh school after resolution fails would return
     # a confident-looking answer to a different question.
@@ -11028,6 +11239,56 @@ def page_map(cfg: Dict[str, str]) -> None:
     conditions.extend(nl_map["conditions"])
     params.update(nl_map["params"])
     admin_scope = nl_map.get("resolved_admin_scope")
+    if admin_scope and admin_scope.get("spatial_only"):
+        anchor = admin_scope["anchor"]
+        relation = str(admin_scope.get("relation") or "")
+        result_kind = str(admin_scope.get("result_kind") or "")
+        units = admin_scope.get("units", pd.DataFrame())
+        if result_kind == "LSOA":
+            codes = sorted(set(admin_scope.get("lsoa_codes") or []))
+            spatial_df = pd.DataFrame({"lsoa_code": codes})
+            st.metric("LSOAs returned", len(codes))
+            st.caption(
+                f"{relation.upper()} from {anchor.get('name')} "
+                f"({anchor.get('unit_type')}). The map shows the spatial "
+                "answer itself; click an LSOA for its code, deprivation and "
+                "schools."
+            )
+            clicked_lsoa = render_answer_map(
+                cfg,
+                spatial_df,
+                focus_code=None,
+                key="map_spatial_lsoa_answer",
+                focus_admin=str(anchor.get("uri") or ""),
+            )
+            if clicked_lsoa:
+                render_lsoa_school_panel(cfg, clicked_lsoa)
+            display_df(spatial_df)
+        else:
+            unit_df = (
+                units.dropna(subset=["unit_uri"])
+                .drop_duplicates(subset=["unit_uri"])
+                if isinstance(units, pd.DataFrame) and not units.empty
+                else pd.DataFrame()
+            )
+            st.metric("Administrative units returned", len(unit_df))
+            st.caption(
+                f"{relation.replace('_', ' ').upper()} from "
+                f"{anchor.get('name')} ({anchor.get('unit_type')}). "
+                "These polygons are the exact administrative answer; school "
+                "pins are not substituted for the requested units."
+            )
+            picked_unit = render_admin_answer_map(
+                cfg,
+                unit_df,
+                None,
+                key="map_spatial_admin_answer",
+                focus_admin=str(anchor.get("uri") or ""),
+            )
+            if picked_unit and picked_unit.get("uri") != anchor.get("uri"):
+                render_unit_school_card(cfg, picked_unit)
+            display_df(unit_df)
+        return
     if admin_scope:
         conditions.append("l.code IN $nl_admin_lsoa_codes")
         params["nl_admin_lsoa_codes"] = admin_scope["lsoa_codes"]
