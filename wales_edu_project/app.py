@@ -6765,7 +6765,9 @@ def unit_school_detail(
         coalesce(l.deprivation, s.deprivation) AS deprivation,
         s.fsm_pct AS fsm_pct,
         s.attendance_pct AS attendance_pct,
-        coalesce(s.pupils_2025, s.pupils) AS pupils
+        coalesce(s.pupils_2025, s.pupils) AS pupils,
+        s.latitude AS latitude,
+        s.longitude AS longitude
     ORDER BY school
     """, {"uri": uri})
 
@@ -6784,6 +6786,29 @@ def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
     except Exception:
         st.caption("The school detail for this unit could not be read.")
         return
+
+    # INTERSECTS supplies candidate LSOAs only.  Confirm each school point is
+    # inside the selected boundary so the card reports schools in the unit,
+    # not schools in the outside portion of a boundary-crossing LSOA.
+    try:
+        boundary = admin_polygons(
+            (cfg["uri"], cfg["user"], cfg["password"], cfg["database"]),
+            (uri,),
+        )
+        rings = []
+        for _, boundary_row in boundary.iterrows():
+            rings.extend(_wkt_rings(boundary_row.get("wkt")))
+        if rings and not df.empty:
+            df = df[
+                df.apply(
+                    lambda row: _point_in_admin_rings(
+                        row.get("longitude"), row.get("latitude"), rings
+                    ),
+                    axis=1,
+                )
+            ].copy()
+    except Exception:
+        pass
 
     counts = (
         df["deprivation"].fillna("unknown").astype(str)
@@ -6812,30 +6837,32 @@ def render_unit_school_card(cfg: Dict[str, str], unit: Dict[str, Any]) -> None:
         f"<div style='font-size:11px;color:{C_MUTED};margin:2px 0 8px;'>"
         f"{escape(utype)}</div>"
         f"<div style='font-size:22px;font-weight:900;color:{C_HEAD};"
-        f"line-height:1;'>{int(unit.get('lsoas') or 0)}</div>"
+        f"line-height:1;'>{int(df['lsoa'].nunique()) if not df.empty else 0}</div>"
         f"<div style='font-size:10px;font-weight:800;color:{C_MUTED};"
         "text-transform:uppercase;letter-spacing:.04em;'>"
         "LSOAs intersecting this unit</div>"
         f"<div style='margin-top:7px;font-size:12.5px;font-weight:700;"
-        f"color:{C_HEAD};'>{len(df)} schools sit in those LSOAs</div>"
+        f"color:{C_HEAD};'>{len(df)} schools inside this boundary</div>"
         f"<div style='font-size:10px;color:{C_MUTED};margin-top:1px;"
-        "line-height:1.45;'>Not a count of schools in the unit. Across "
-        "Wales each school falls inside the intersecting LSOAs of 4.9 "
-        "Communities on average, so this figure double-counts with every "
-        "neighbour.</div>"
+        "line-height:1.45;'>School coordinates are checked against the "
+        "selected administrative polygon after the intersecting LSOAs are "
+        "used to find candidates.</div>"
         f"<div style='margin-top:7px;'>{chips}</div>"
         f"<div style='margin-top:9px;font-size:10px;color:{C_MUTED};"
         "line-height:1.45;'>Provenance: INTERSECTS (Geometry-origin) then "
         "LOCATED_IN (Derived); neither hop is asserted by native YAGO2geo. "
-        "INTERSECTS is overlap, not containment, so an LSOA straddling the "
-        "boundary contributes all of its schools. Read this as an upper "
-        "bound, not as a count of schools within the unit."
+        "INTERSECTS supplies candidates; point-in-polygon confirms final "
+        "school membership."
         "</div></div>",
         unsafe_allow_html=True,
     )
     if not df.empty:
         with st.expander(f"School detail for {name}", expanded=False):
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                df.drop(columns=["latitude", "longitude"], errors="ignore"),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def render_admin_answer_map(
@@ -6844,6 +6871,7 @@ def render_admin_answer_map(
     focus_lsoa: str | None,
     key: str = "admin_answer_map",
     focus_admin: str | None = None,
+    selected_admin: str | None = None,
 ) -> Dict[str, Any] | None:
     """Draw an answer whose rows are administrative units, not LSOAs.
 
@@ -6917,6 +6945,8 @@ def render_admin_answer_map(
         utype = str(prow.get("type") or "Unknown")
         base = ADMIN_FILL.get(utype, ADMIN_FILL["Unknown"])
         depth = ADMIN_DEPTH.get(utype, ADMIN_DEPTH["Unknown"])
+        is_selected = bool(selected_admin and polygon_uri == selected_admin)
+        has_selection = bool(selected_admin)
         for ring in _wkt_rings(prow.get("wkt")):
             answer_rings.setdefault(polygon_uri, []).append(ring)
             if len(ring) > 400:
@@ -6925,13 +6955,17 @@ def render_admin_answer_map(
                 lons.append(pt[0]); lats.append(pt[1])
             rows.append({
                 "polygon": ring,
-                "fill": base + [depth],
-                "line": [17, 24, 39, 220],
-                "width": 2,
+                "fill": base + ([215] if is_selected else [32] if has_selection else [depth]),
+                "line": (
+                    [17, 24, 39, 255] if is_selected
+                    else base + [85] if has_selection
+                    else [17, 24, 39, 220]
+                ),
+                "width": 6 if is_selected else 1 if has_selection else 2,
                 "uri": str(prow.get("uri") or ""),
                 "name": prow.get("name") or prow.get("uri"),
                 "type": utype,
-                "role": "In the answer",
+                "role": "Selected answer area" if is_selected else "In the answer",
             })
 
     if focus_admin:
@@ -7033,6 +7067,10 @@ def render_admin_answer_map(
     # candidate LSOAs, then the point-in-polygon check prevents a school in
     # the outside part of a boundary-crossing LSOA being assigned to a unit.
     answer_uris = tuple(sorted(set(str(u) for u in polys["uri"].dropna())))
+    if selected_admin and selected_admin in answer_uris:
+        # Once an authority is selected, its schools are the relevant detail.
+        # Removing the other pins also makes the selected boundary readable.
+        answer_uris = (selected_admin,)
     try:
         school_points = run_cypher(cfg, """
         MATCH (u:AdminUnit)-[:INTERSECTS]->(l:LSOA)<-[:LOCATED_IN]-(s:School)
@@ -7070,7 +7108,7 @@ def render_admin_answer_map(
             "IconLayer", id="admin-answer-schools", data=school_points,
             get_icon="icon", get_position=["longitude", "latitude"],
             get_size=3.7, size_scale=10, size_min_pixels=15,
-            size_max_pixels=58, pickable=True, alpha_cutoff=-1,
+            size_max_pixels=48, pickable=False, alpha_cutoff=-1,
         ))
 
     picked = deck_chart_with_click(
@@ -7353,6 +7391,7 @@ GUIDED_RELATION_LABELS = {
 def clear_guided_result() -> None:
     """A changed input invalidates the answer until Search is pressed."""
     st.session_state.pop("guided_has_run", None)
+    st.session_state.pop("guided_selected_admin", None)
 
 
 def guided_admin_kind_expr(alias: str) -> str:
@@ -7859,11 +7898,17 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 on_change=clear_guided_result,
             )
 
-        sentence = (
-            f"Find {GUIDED_TYPE_LABELS.get(result_type, result_type)} areas "
-            f"that {GUIDED_RELATION_LABELS[relation]} {anchor[1]}"
-            + (f" and {second[1]}" if second else "")
-        )
+        result_label = GUIDED_TYPE_LABELS.get(result_type, result_type)
+        if relation == "contains":
+            sentence = f"Find {result_label} areas within {anchor[1]}"
+        elif relation == "within":
+            sentence = f"Find {result_label} areas that contain {anchor[1]}"
+        else:
+            sentence = (
+                f"Find {result_label} areas that "
+                f"{GUIDED_RELATION_LABELS[relation]} {anchor[1]}"
+                + (f" and {second[1]}" if second else "")
+            )
         st.markdown(
             f"<div class='guided-sentence'>{escape(sentence)}</div>",
             unsafe_allow_html=True,
@@ -7926,14 +7971,87 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             if clicked and re.match(r"^W\d{8}$", clicked):
                 render_lsoa_school_panel(cfg, clicked)
         else:
+            selected_admin = st.session_state.get("guided_selected_admin")
+            valid_result_uris = set(
+                str(v) for v in result.get("unit_uri", pd.Series(dtype=str)).dropna()
+            )
+            if selected_admin not in valid_result_uris:
+                selected_admin = None
+                st.session_state.pop("guided_selected_admin", None)
             picked = render_admin_answer_map(
                 cfg, result, None,
                 focus_admin=anchor[0] if kind != "LSOA" else None,
+                selected_admin=selected_admin,
                 key="guided_admin_map",
             )
-            if picked:
-                render_unit_school_card(cfg, picked)
-        display_df(result)
+            picked_uri = str((picked or {}).get("uri") or "")
+            if picked_uri and picked_uri in valid_result_uris:
+                if picked_uri != selected_admin:
+                    st.session_state["guided_selected_admin"] = picked_uri
+                    st.rerun()
+
+            st.caption(
+                "Select a row to focus that area. Its boundary stays strong, "
+                "the other answers fade, and only its school pins remain."
+            )
+            table_result = result.reset_index(drop=True)
+            visible_cols = [
+                c for c in ("unit_name", "unit_type", "unit_uri")
+                if c in table_result.columns
+            ] or list(table_result.columns)
+            try:
+                table_event = st.dataframe(
+                    table_result[visible_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="guided_admin_results_table",
+                )
+                selected_rows = list(table_event.selection.rows)
+            except TypeError:
+                # Older Streamlit versions keep the result usable through a
+                # searchable selector instead of silently losing selection.
+                selected_rows = []
+                table_choice = st.selectbox(
+                    "Explore an area",
+                    list(range(len(table_result))),
+                    format_func=lambda i: str(
+                        table_result.iloc[i].get("unit_name")
+                        or table_result.iloc[i].get("unit_uri")
+                    ),
+                    index=None,
+                    placeholder="Choose an answer area",
+                    key="guided_admin_result_fallback",
+                )
+                if table_choice is not None:
+                    selected_rows = [int(table_choice)]
+                display_df(table_result[visible_cols])
+            if selected_rows:
+                row = table_result.iloc[int(selected_rows[0])]
+                row_uri = str(row.get("unit_uri") or "")
+                if row_uri and row_uri != selected_admin:
+                    st.session_state["guided_selected_admin"] = row_uri
+                    st.rerun()
+
+            selected_admin = st.session_state.get("guided_selected_admin")
+            if selected_admin:
+                selected_row = table_result[
+                    table_result["unit_uri"].astype(str) == selected_admin
+                ]
+                if not selected_row.empty:
+                    chosen = selected_row.iloc[0].to_dict()
+                    render_unit_school_card(
+                        cfg,
+                        {
+                            **chosen,
+                            "uri": chosen.get("unit_uri"),
+                            "name": chosen.get("unit_name"),
+                            "type": chosen.get("unit_type"),
+                        },
+                    )
+        if result_type == "LSOA":
+            display_df(result)
         if SHOW_QUERIES:
             with st.expander("Cypher"):
                 st.code(query.strip(), language="cypher")
