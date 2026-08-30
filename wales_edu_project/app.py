@@ -3251,26 +3251,6 @@ def set_page(page_name: str) -> None:
     st.session_state.page = page_name
 
 
-def edit_map_search() -> None:
-    """Return from the map result to its two search routes."""
-    st.session_state["map_has_run"] = False
-
-
-def render_map_edit_button() -> None:
-    """Keep the return action identical for filter and natural searches."""
-    source = st.session_state.get("map_last_search_source", "filters")
-    label = "Back to question" if source == "words" else "Back to filters"
-    edit_left, edit_mid, edit_right = st.columns([5, 1.35, 5])
-    with edit_mid:
-        st.button(
-            label,
-            key="map_edit_search",
-            use_container_width=True,
-            type="primary",
-            on_click=edit_map_search,
-        )
-
-
 def clear_map_spatial_selection() -> None:
     """Reset row emphasis without discarding the natural-language answer."""
     st.session_state.pop("map_spatial_selected_lsoas", None)
@@ -7633,8 +7613,20 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     if asked:
         st.session_state.pop("place_nl_scope", None)
         st.session_state.pop("place_nl_error", None)
-        hint = _map_spatial_hint(text)
-        if not text.strip() or not hint or not hint.get("anchor_name"):
+        intent = llm_parse_map_question(text) if text.strip() else {}
+        requested_scopes = intent.get("admin_scopes") or (
+            [intent["admin_scope"]] if intent.get("admin_scope") else []
+        )
+        # The deterministic reader is the safe fallback and also protects
+        # explicit codes/relation words from an incorrect model paraphrase.
+        if not requested_scopes:
+            hint = _map_spatial_hint(text)
+            requested_scopes = [hint] if hint else []
+        if (
+            not text.strip()
+            or not requested_scopes
+            or not requested_scopes[0].get("anchor_name")
+        ):
             st.session_state["place_nl_error"] = (
                 "We could not identify the place, area type and spatial "
                 "relationship. Try the example shown in the search box."
@@ -7642,7 +7634,11 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         else:
             try:
                 with st.spinner("Understanding the place question…"):
-                    scope, scope_warnings = resolve_map_admin_scope(cfg, hint)
+                    scope, scope_warnings = resolve_map_admin_scopes(
+                        cfg,
+                        requested_scopes,
+                        str(intent.get("admin_operator") or "AND").upper(),
+                    )
             except Exception:
                 scope = None
                 scope_warnings = []
@@ -11529,7 +11525,8 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
 
         client = OpenAI(api_key=_nl_llm_key(), base_url=_nl_llm_base_url())
         system = (
-            "You read a question about schools in Wales and return JSON "
+            "You read a natural-language question about Welsh schools and "
+            "Welsh geographic areas and return one executable intent as JSON "
             "only, no prose and no code fence. Fields, all optional:\n"
             '"deprivation": "high" | "medium" | "low"\n'
             '"phases": subset of ["primary","secondary","special"]\n'
@@ -11552,6 +11549,11 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             '"ranges": [{"field": f, "min": n, "max": n}]\n'
             '"comparisons": [{"field": f, "op": ">=" or "<=", "value": n}]\n'
             'For an LSOA anchor, put its W-code in anchor_name. '
+            'The same intent schema serves both the SCQ search and Map. '
+            'Preserve every explicit school condition and every explicit '
+            'spatial relation in the question; complex questions may contain '
+            'both. Use result_kind Schools only when the requested answer is '
+            'schools. Use LSOA or AdminUnit when the requested answer is areas. '
             'Never change NEAR to TOUCHES. Never invent a relationship to '
             'make a question executable. '
             'where f is one of "fsm", "attendance", "capped9", "budget", '
@@ -11561,8 +11563,11 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             'the user explicitly says community, ward, county or unitary '
             'authority, use the four administrative fields instead. direct '
             'means its intersecting LSOAs; touches means adjacent units; '
-            'graph_near means units exactly two TOUCHES steps away. Schools '
-            'are never directly assigned to an administrative unit: the '
+            'graph_near means units exactly two TOUCHES steps away. '
+            'GRAPH_NEAR returns every qualifying two-hop result; it has no '
+            'numeric result limit. BETWEEN is different: it returns the '
+            'interior nodes of a shortest same-layer TOUCHES path. '
+            'Schools are never directly assigned to an administrative unit: the '
             'application always crosses through AdminUnit INTERSECTS LSOA '
             'and School LOCATED_IN LSOA. For explicit administrative wording, '
             'near means graph_near (exactly two TOUCHES steps), while touch '
@@ -11855,12 +11860,26 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         # before the text box is created. Writing to a widget's state after
         # the widget exists is refused by Streamlit.
         st.session_state["map_nl_clear"] = True
+        st.session_state.pop("map_nl_parsed_intent", None)
+        st.session_state.pop("map_nl_parsed_text", None)
         st.rerun()
 
-    # Keep parser mechanics out of the interface. The deterministic parser
-    # is used here so temporary model demand or missing credentials can never
-    # replace the user's result with a technical status message.
-    parsed = parse_map_question(question)
+    # Interpret once per submitted question.  Keeping the validated intent in
+    # session state prevents a Gemini call on every Streamlit rerun caused by
+    # a row selection, map click or tab change.  If the model is unavailable,
+    # llm_parse_map_question falls back to the deterministic parser.
+    cached_text = st.session_state.get("map_nl_parsed_text")
+    cached_intent = st.session_state.get("map_nl_parsed_intent")
+    if asked:
+        parsed = llm_parse_map_question(question)
+        st.session_state["map_nl_parsed_text"] = question
+        st.session_state["map_nl_parsed_intent"] = parsed
+    elif cached_text == question and isinstance(cached_intent, dict):
+        parsed = cached_intent
+    else:
+        # Before Search is pressed, use the local reader only to keep the form
+        # responsive. It cannot execute until submitted below.
+        parsed = parse_map_question(question)
     parsed["submitted"] = bool(asked)
 
     if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
@@ -12449,9 +12468,6 @@ def page_map(cfg: Dict[str, str]) -> None:
     if build_run or nl_map.get("submitted"):
         st.session_state["map_has_run"] = True
         st.session_state["map_scroll_to_results"] = True
-        st.session_state["map_last_search_source"] = (
-            "words" if nl_map.get("submitted") else "filters"
-        )
         st.session_state.pop("map_spatial_selected_lsoas", None)
         st.session_state.pop("map_spatial_selected_admins", None)
         st.session_state["map_spatial_selection_version"] = (
@@ -12459,13 +12475,6 @@ def page_map(cfg: Dict[str, str]) -> None:
         )
     if not st.session_state.get("map_has_run"):
         return
-    st.markdown(
-        "<style>.st-key-map_search_builder{"
-        "display:none!important}</style>",
-        unsafe_allow_html=True,
-    )
-    render_map_edit_button()
-
     if nl_map.get("spatial_relation_failed"):
         st.info(
             "The map was not run because the requested Domain–Range pair "
