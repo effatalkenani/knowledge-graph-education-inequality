@@ -3414,12 +3414,10 @@ def sidebar_config() -> Dict[str, str]:
         inject_segmented_css()
     st.session_state["ui_lang"] = "English"
 
-    cfg["dark_theme"] = st.sidebar.toggle(
-        t("dark_theme"),
-        value=st.session_state.get("dark_theme", False),
-        help="Switch the dashboard background and map tiles between light and deep-blue themes.",
-    )
-    st.session_state.dark_theme = cfg["dark_theme"]
+    # One deliberately light visual system. The former dark-mode toggle was
+    # removed because it split the demonstrator into two partly matched skins.
+    cfg["dark_theme"] = False
+    st.session_state.dark_theme = False
 
     try:
         # Connection is only surfaced when it FAILS. A healthy connection is
@@ -3449,28 +3447,37 @@ def sidebar_config() -> Dict[str, str]:
     # function remains below for reproducibility, while the SCQ mapping stays
     # available through the SCQ Demonstrator.
     pages = ["SCQ Demonstrator", "Map"]
-    labels = {
-        "SCQ Demonstrator": "SCQ Demonstrator",
-        "Map": "Map Explorer",
-    }
-    icons = {
-        "SCQ Demonstrator": "Place relationships",
-        "Map": "Schools map",
-    }
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = "SCQ Demonstrator"
 
-    def _set_page(page_name: str) -> None:
-        st.session_state.page = page_name
-
-    for p in pages:
-        active = st.session_state.page == p
-        label = icons[p]
-        # one click only: the callback updates session state before the rerun
-        st.sidebar.button(label, key=f"nav_{p}", type="primary" if active else "secondary", use_container_width=True, on_click=_set_page, args=(p,))
-
     cfg["page"] = st.session_state.page
     return cfg
+
+
+def set_page(page_name: str) -> None:
+    """Switch between the two public experiences before the next rerun."""
+    st.session_state.page = page_name
+
+
+def render_page_switcher(page: str) -> None:
+    """A visible, two-way SCQ/Map switcher modelled on a hero carousel."""
+    left, scq, map_col, right = st.columns([.55, 2.2, 2.2, .55])
+    with left:
+        st.button("←", key="page_previous", help="Back to SCQ search",
+                  disabled=page == "SCQ Demonstrator", use_container_width=True,
+                  on_click=set_page, args=("SCQ Demonstrator",))
+    with scq:
+        st.button("SCQ Search", key="page_scq", use_container_width=True,
+                  type="primary" if page == "SCQ Demonstrator" else "secondary",
+                  on_click=set_page, args=("SCQ Demonstrator",))
+    with map_col:
+        st.button("Map Explorer", key="page_map", use_container_width=True,
+                  type="primary" if page == "Map" else "secondary",
+                  on_click=set_page, args=("Map",))
+    with right:
+        st.button("→", key="page_next", help="Open Map Explorer",
+                  disabled=page == "Map", use_container_width=True,
+                  on_click=set_page, args=("Map",))
 
 
 def apply_dashboard_theme(dark_theme: bool) -> None:
@@ -6127,6 +6134,7 @@ def render_answer_map(
     focus_admin: str | None = None,
     show_gap: bool = False,
     show_excluded_neighbours: bool = False,
+    selected_codes: Any = None,
 ) -> str | None:
     """Draw the LSOAs in an SCQ answer as coloured regions.
 
@@ -6169,6 +6177,13 @@ def render_answer_map(
             focus_code if isinstance(focus_code, (list, tuple, set)) else [focus_code]
         )
         if c
+    }
+    selected_set = {
+        str(c) for c in (
+            selected_codes
+            if isinstance(selected_codes, (list, tuple, set))
+            else [selected_codes]
+        ) if c
     }
     codes.extend(focus_set)
 
@@ -6259,14 +6274,18 @@ def render_answer_map(
         base = DEP_FILL.get(dep, DEP_FILL["unknown"])
         is_focus = str(prow["code"]) in focus_set
         is_excluded = str(prow["code"]) in excluded
+        is_selected = str(prow["code"]) in selected_set
+        has_selection = bool(selected_set)
         if is_focus:
             # Keep the selected LSOA visually independent from the answer
             # palette so it remains obvious on every SCQ map.
             fill = [250, 204, 21, 225]
+        elif is_selected:
+            fill = base + [225]
         elif is_excluded:
             fill = [255, 255, 255, 40]
         else:
-            fill = base + [120]
+            fill = base + ([34] if has_selection else [120])
         for ring in _wkt_rings(prow.get("wkt")):
             # With hundreds of regions on screen the browser chokes on full
             # boundary detail, so rings are decimated. Shape is preserved at
@@ -6287,10 +6306,11 @@ def render_answer_map(
                     "line": (
                         [17, 24, 39, 255]
                         if is_focus
+                        else [255, 255, 255, 255] if is_selected
                         else [124, 58, 237, 235] if is_excluded
-                        else base + [200]
+                        else base + ([75] if has_selection else [200])
                     ),
-                    "width": 4 if is_focus else 3 if is_excluded else 1,
+                    "width": 4 if is_focus else 5 if is_selected else 3 if is_excluded else 1,
                     "name": prow.get("name") or prow.get("code"),
                     "code": prow.get("code"),
                     "dep_label": DEP_LABEL.get(dep, "Unknown"),
@@ -6300,8 +6320,9 @@ def render_answer_map(
                         else "N/A"
                     ),
                     "role": (
-                        "Chosen area"
+                        "Selected domain"
                         if is_focus
+                        else "Selected answer area" if is_selected
                         else "Excluded — it borders your LSOA"
                         if is_excluded
                         else "In the answer"
@@ -6416,7 +6437,7 @@ def render_answer_map(
                    nearest_stop_distance_m
             ORDER BY school
             """,
-            {"codes": codes},
+            {"codes": sorted(selected_set) if selected_set else codes},
         )
     except Exception:
         school_points = pd.DataFrame()
@@ -6872,6 +6893,7 @@ def render_admin_answer_map(
     key: str = "admin_answer_map",
     focus_admin: str | None = None,
     selected_admin: str | None = None,
+    selected_admins: Any = None,
 ) -> Dict[str, Any] | None:
     """Draw an answer whose rows are administrative units, not LSOAs.
 
@@ -6936,6 +6958,13 @@ def render_admin_answer_map(
     if polys is None or polys.empty:
         return None
 
+    selected_set = {
+        str(u) for u in (
+            selected_admins
+            if isinstance(selected_admins, (list, tuple, set))
+            else [selected_admin or selected_admins]
+        ) if u
+    }
     rows: List[Dict[str, Any]] = []
     answer_rings: Dict[str, List[List[List[float]]]] = {}
     lons: List[float] = []
@@ -6945,8 +6974,8 @@ def render_admin_answer_map(
         utype = str(prow.get("type") or "Unknown")
         base = ADMIN_FILL.get(utype, ADMIN_FILL["Unknown"])
         depth = ADMIN_DEPTH.get(utype, ADMIN_DEPTH["Unknown"])
-        is_selected = bool(selected_admin and polygon_uri == selected_admin)
-        has_selection = bool(selected_admin)
+        is_selected = polygon_uri in selected_set
+        has_selection = bool(selected_set)
         for ring in _wkt_rings(prow.get("wkt")):
             answer_rings.setdefault(polygon_uri, []).append(ring)
             if len(ring) > 400:
@@ -7006,7 +7035,7 @@ def render_admin_answer_map(
                     "fill": [250, 204, 21, 225],
                     "line": [17, 24, 39, 255],
                     "width": 5,
-                    "uri": "",
+                    "uri": str(focus_lsoa),
                     "name": arow.get("name") or str(focus_lsoa),
                     "type": "LSOA",
                     "role": "Chosen area",
@@ -7042,7 +7071,7 @@ def render_admin_answer_map(
             f"<div style='font-size:13.5px;font-weight:900;color:{C_HEAD};'>"
             "{name}</div>"
             f"<div style='font-size:10.5px;color:{C_MUTED};margin-top:2px;'>"
-            "{type}</div>"
+            "{type} &middot; {uri}</div>"
             f"<div style='font-size:12px;font-weight:700;color:{C_WIMD};"
             "margin-top:6px;'>{role}</div></div>"
         ),
@@ -7067,10 +7096,10 @@ def render_admin_answer_map(
     # candidate LSOAs, then the point-in-polygon check prevents a school in
     # the outside part of a boundary-crossing LSOA being assigned to a unit.
     answer_uris = tuple(sorted(set(str(u) for u in polys["uri"].dropna())))
-    if selected_admin and selected_admin in answer_uris:
+    if selected_set:
         # Once an authority is selected, its schools are the relevant detail.
         # Removing the other pins also makes the selected boundary readable.
-        answer_uris = (selected_admin,)
+        answer_uris = tuple(u for u in answer_uris if u in selected_set)
     try:
         school_points = run_cypher(cfg, """
         MATCH (u:AdminUnit)-[:INTERSECTS]->(l:LSOA)<-[:LOCATED_IN]-(s:School)
@@ -7392,6 +7421,17 @@ def clear_guided_result() -> None:
     """A changed input invalidates the answer until Search is pressed."""
     st.session_state.pop("guided_has_run", None)
     st.session_state.pop("guided_selected_admin", None)
+    st.session_state.pop("guided_selected_admins", None)
+    st.session_state.pop("guided_selected_lsoas", None)
+
+
+def clear_guided_selection() -> None:
+    """Clear map emphasis without discarding the query and its answer."""
+    st.session_state.pop("guided_selected_admin", None)
+    st.session_state.pop("guided_selected_admins", None)
+    st.session_state.pop("guided_selected_lsoas", None)
+    st.session_state.pop("guided_lsoa_results_table", None)
+    st.session_state.pop("guided_admin_results_table", None)
 
 
 def guided_admin_kind_expr(alias: str) -> str:
@@ -7786,15 +7826,24 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     """Clean, progressive spatial search for a first-time user."""
     st.markdown("""
     <style>
-    .guided-hero{max-width:850px;margin:1.1rem auto 1.45rem;text-align:center}
+    .guided-hero{max-width:980px;margin:1.1rem auto 1.45rem;text-align:center;
+      padding:2.25rem 1.5rem;border-radius:28px;
+      background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);
+      box-shadow:0 22px 55px rgba(185,76,55,.18)}
     .guided-hero h1{font-size:clamp(2rem,4vw,3.35rem);line-height:1.05;
-      letter-spacing:-.045em;margin:0;color:#172033;font-weight:850}
-    .guided-hero p{font-size:1.02rem;color:#667085;margin:.65rem auto 0;
+      letter-spacing:-.045em;margin:0;color:#fff;font-weight:850}
+    .guided-hero p{font-size:1.02rem;color:#fff7f2;margin:.65rem auto 0;
       max-width:620px;line-height:1.55}
     .guided-card{background:white;border:1px solid #e8eaf0;border-radius:22px;
       padding:1.1rem 1.25rem .35rem;box-shadow:0 12px 34px rgba(15,23,42,.07)}
-    .guided-sentence{font-size:1.15rem;font-weight:750;color:#25324a;
-      padding:.85rem 1rem;background:#f7f8fb;border-radius:14px;margin:.6rem 0 1rem}
+    .guided-sentence{font-size:1.15rem;font-weight:750;color:#4a2b25;
+      padding:.85rem 1rem;background:#fff3ec;border:1px solid #ffd9c8;
+      border-radius:14px;margin:.6rem 0 1rem}
+    div[data-testid="stSelectbox"]>div>div{min-height:3.15rem;border-radius:14px!important}
+    div[data-testid="stButton"] button{border-radius:999px!important;min-height:2.8rem}
+    div[data-testid="stButton"] button[kind="primary"]{
+      background:linear-gradient(120deg,#ff6877,#ff9b69)!important;
+      box-shadow:0 10px 24px rgba(255,104,119,.22)!important}
     div[data-testid="stTextInput"] input{border-radius:999px!important;
       min-height:3.3rem;padding-left:1.25rem;border:1px solid #dfe3ea;
       box-shadow:0 10px 28px rgba(15,23,42,.06)}
@@ -7819,7 +7868,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         render_guided_natural_search(cfg)
 
     with guided:
-        c1, c2 = st.columns([1, 1.65])
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             kind = st.selectbox(
                 "Area type", kinds,
@@ -7868,7 +7917,6 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             r for r in GUIDED_RELATION_LABELS
             if r in set(caps["relation"].astype(str))
         ]
-        c3, c4 = st.columns(2)
         with c3:
             relation = st.selectbox(
                 "Relationship", relations,
@@ -7903,6 +7951,16 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             sentence = f"Find {result_label} areas within {anchor[1]}"
         elif relation == "within":
             sentence = f"Find {result_label} areas that contain {anchor[1]}"
+        elif relation == "near":
+            sentence = f"Find {result_label} areas near {anchor[1]}"
+        elif relation == "intersects":
+            sentence = f"Find {result_label} areas that intersect {anchor[1]}"
+        elif relation == "touches":
+            sentence = f"Find {result_label} areas that touch {anchor[1]}"
+        elif relation == "not_touches":
+            sentence = f"Find {result_label} areas that do not touch {anchor[1]}"
+        elif relation == "between":
+            sentence = f"Find {result_label} areas between {anchor[1]} and {second[1]}"
         else:
             sentence = (
                 f"Find {result_label} areas that "
@@ -7954,42 +8012,69 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             return
 
         st.markdown("### Results")
-        st.metric("Areas found", len(result))
+        metric_col, reset_col = st.columns([4, 1])
+        with metric_col:
+            st.metric("Areas found", len(result))
+        with reset_col:
+            st.button(
+                "Reset selection", key="guided_reset_selection",
+                use_container_width=True, on_click=clear_guided_selection,
+            )
         if result.empty:
             st.info(
                 "No area satisfies this relationship for the selected place."
             )
             return
         if result_type == "LSOA":
+            lsoa_col = next(
+                (c for c in ("lsoa_code", "code") if c in result.columns),
+                None,
+            )
+            selected_lsoas = set(st.session_state.get("guided_selected_lsoas", []))
+            table_result = result.reset_index(drop=True)
+            if lsoa_col:
+                try:
+                    table_event = st.dataframe(
+                        table_result, use_container_width=True, hide_index=True,
+                        on_select="rerun", selection_mode="multi-row",
+                        key="guided_lsoa_results_table",
+                    )
+                    selected_rows = list(table_event.selection.rows)
+                    selected_lsoas = {
+                        str(table_result.iloc[int(i)][lsoa_col])
+                        for i in selected_rows
+                    }
+                    st.session_state["guided_selected_lsoas"] = sorted(selected_lsoas)
+                except TypeError:
+                    display_df(table_result)
             clicked = render_answer_map(
                 cfg, result,
-                focus_code=anchor[0] if kind == "LSOA" else None,
+                focus_code=(
+                    [anchor[0], second[0]]
+                    if kind == "LSOA" and relation == "between" and second
+                    else anchor[0] if kind == "LSOA" else None
+                ),
                 focus_admin=anchor[0] if kind != "LSOA" else None,
                 show_excluded_neighbours=(relation == "not_touches"),
+                selected_codes=selected_lsoas,
                 key="guided_lsoa_map",
             )
             if clicked and re.match(r"^W\d{8}$", clicked):
                 render_lsoa_school_panel(cfg, clicked)
         else:
-            selected_admin = st.session_state.get("guided_selected_admin")
+            selected_admins = set(
+                st.session_state.get("guided_selected_admins", [])
+            )
             valid_result_uris = set(
                 str(v) for v in result.get("unit_uri", pd.Series(dtype=str)).dropna()
             )
-            if selected_admin not in valid_result_uris:
-                selected_admin = None
-                st.session_state.pop("guided_selected_admin", None)
+            selected_admins &= valid_result_uris
             picked = render_admin_answer_map(
-                cfg, result, None,
+                cfg, result, anchor[0] if kind == "LSOA" else None,
                 focus_admin=anchor[0] if kind != "LSOA" else None,
-                selected_admin=selected_admin,
+                selected_admins=selected_admins,
                 key="guided_admin_map",
             )
-            picked_uri = str((picked or {}).get("uri") or "")
-            if picked_uri and picked_uri in valid_result_uris:
-                if picked_uri != selected_admin:
-                    st.session_state["guided_selected_admin"] = picked_uri
-                    st.rerun()
-
             st.caption(
                 "Select a row to focus that area. Its boundary stays strong, "
                 "the other answers fade, and only its school pins remain."
@@ -8005,7 +8090,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
-                    selection_mode="single-row",
+                    selection_mode="multi-row",
                     key="guided_admin_results_table",
                 )
                 selected_rows = list(table_event.selection.rows)
@@ -8027,15 +8112,18 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 if table_choice is not None:
                     selected_rows = [int(table_choice)]
                 display_df(table_result[visible_cols])
-            if selected_rows:
-                row = table_result.iloc[int(selected_rows[0])]
-                row_uri = str(row.get("unit_uri") or "")
-                if row_uri and row_uri != selected_admin:
-                    st.session_state["guided_selected_admin"] = row_uri
-                    st.rerun()
+            table_selected_admins = {
+                str(table_result.iloc[int(i)].get("unit_uri") or "")
+                for i in selected_rows
+            } - {""}
+            if table_selected_admins != selected_admins:
+                st.session_state["guided_selected_admins"] = sorted(
+                    table_selected_admins
+                )
+                st.rerun()
 
-            selected_admin = st.session_state.get("guided_selected_admin")
-            if selected_admin:
+            selected_admins = set(st.session_state.get("guided_selected_admins", []))
+            for selected_admin in sorted(selected_admins):
                 selected_row = table_result[
                     table_result["unit_uri"].astype(str) == selected_admin
                 ]
@@ -8050,7 +8138,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                             "type": chosen.get("unit_type"),
                         },
                     )
-        if result_type == "LSOA":
+        if result_type == "LSOA" and lsoa_col is None:
             display_df(result)
         if SHOW_QUERIES:
             with st.expander("Cypher"):
@@ -12993,7 +13081,7 @@ ORDER BY cluster_size DESC, cluster_id
 
 def main() -> None:
     cfg = sidebar_config()
-    apply_dashboard_theme(bool(cfg.get("dark_theme")))
+    apply_dashboard_theme(False)
     page = cfg.pop("page")
     # Each page is drawn inside its own keyed container. Without this the
     # pages share element slots, so a widget from the previous page
@@ -13006,6 +13094,7 @@ def main() -> None:
         # the subtree, only without the stable identity.
         body = st.container()
     with body:
+        render_page_switcher(page)
         if page == "SCQ Demonstrator":
             page_guided_spatial_search(cfg)
         elif page == "Map":
