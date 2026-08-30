@@ -2362,41 +2362,7 @@ def render_nl_search(
     answer a reader sees is always produced by the same code path as the
     manual route. Nothing is hidden behind the sentence.
     """
-    st.markdown(
-        "<div class='nl-wrap' style='margin-top:2.6rem;"
-        "margin-bottom:1.1rem;border-radius:14px'>"
-        "<div class='nl-title'>Ask in your own words</div>"
-        "<div class='nl-sub'>The question sets the controls below. "
-        "Rule-based and offline: no model, no API key, same answer every "
-        "time.</div></div>",
-        unsafe_allow_html=True,
-    )
-
-    # The examples come before the box on purpose. Streamlit refuses to write
-    # to a widget's state after that widget has been created in the same run,
-    # so a button that fills the box has to be drawn first.
-    # The suggestions come from the same library the warrant document holds,
-    # grouped by the relation they exercise. Grouping matters: it shows that
-    # each relation answers a family of questions rather than one, which is
-    # the point the eight-form framework is making.
-    # Examples must be drawn before the input: Streamlit refuses to write to
-    # a widget's state after that widget exists in the same run. Each one
-    # exercises a different relation and a different provenance, so clicking
-    # through them walks the reader across the boundary the project is about.
-    # Examples must be drawn before the input: Streamlit refuses to write to
-    # a widget's state after that widget exists in the same run. They are
-    # collapsed by default so the box stays the first thing a reader meets.
-    # The second group is the honest half: questions the box cannot parse,
-    # named rather than hidden, with the control that can answer them.
-
-    # One short line instead of a suggestion list: it says what the box
-    # reads and what it refuses, which is the part a reader needs.
-    st.caption(
-        "The box reads the relation and the place in a sentence, and a "
-        "numeric threshold where one is given. A negated sentence is "
-        "refused rather than half-matched, and a sentence naming more than "
-        "one relation is matched on the first and the rest reported."
-    )
+    st.markdown("### Search in your own words")
 
     col_input, col_go = st.columns([6, 1])
     with col_input:
@@ -2404,52 +2370,17 @@ def render_nl_search(
             "Question",
             key="nl_question",
             placeholder=(
-                "What schools are near Cathays community with attendance "
-                "below 90?"
+                "Try: Which Communities touch Cathays Community?"
             ),
             label_visibility="collapsed",
         )
     with col_go:
-        asked = st.button("Ask", type="primary", use_container_width=True)
+        asked = st.button("Search", type="primary", use_container_width=True)
 
     if st.session_state.pop("nl_autorun", False):
         asked = True
 
-    # Both options are always visible, whether or not a key is configured.
-    # Hiding the model option would leave a reader unable to see that the
-    # system has two parsers and that one of them was chosen; showing it
-    # disabled, with the reason stated, makes the choice part of the
-    # interface rather than something buried in the write-up.
-    llm_ready = nl_llm_available()
-    mode = st.radio(
-        "Parser",
-        ["Rule-based", "LLM"],
-        horizontal=True,
-        index=1 if llm_ready else 0,
-        key="nl_parser_mode",
-        help=(
-            "The model path opens first because it reads free wording and "
-            "place names the rule tables do not cover, and it falls back to "
-            "the rule-based parser whenever it is unreachable. Rule-based is "
-            "deterministic, runs offline, needs no key, and is the mode the "
-            "evaluation figures in this report were produced with."
-        ),
-    )
-    if mode != "Rule-based" and not llm_ready:
-        st.markdown(
-            "<div class='nl-warn'>The model parser is not active: no API key "
-            "is configured for this deployment. The rule-based engine "
-            "answers the question below, and the interpretation shown is "
-            "its own. Add <code>OPENAI_API_KEY</code> under the app secrets "
-            "to enable the comparison.</div>",
-            unsafe_allow_html=True,
-        )
-        mode = "Rule-based"
-    elif mode == "Rule-based":
-        st.caption(
-            "Deterministic, offline, no key. This is the mode the "
-            "evaluation figures were produced with."
-        )
+    mode = "Rule-based"
 
     if not (asked and question):
         return
@@ -3523,8 +3454,8 @@ def sidebar_config() -> Dict[str, str]:
         "Map": "Map Explorer",
     }
     icons = {
-        "SCQ Demonstrator": "SCQ Demonstrator",
-        "Map": "Map Explorer",
+        "SCQ Demonstrator": "Place relationships",
+        "Map": "Schools map",
     }
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = "SCQ Demonstrator"
@@ -3537,15 +3468,6 @@ def sidebar_config() -> Dict[str, str]:
         label = icons[p]
         # one click only: the callback updates session state before the rerun
         st.sidebar.button(label, key=f"nav_{p}", type="primary" if active else "secondary", use_container_width=True, on_click=_set_page, args=(p,))
-    st.sidebar.divider()
-
-    try:
-        counts = cached_counts(cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
-        st.sidebar.markdown("<div style='font-size:.78rem;color:#9a3412;font-weight:800;margin:.2rem 0 .35rem;'>GRAPH SUMMARY</div>", unsafe_allow_html=True)
-        for name in ["AdminUnit", "LSOA", "School", "TransportStop"]:
-            st.sidebar.markdown(f"<div style='display:flex;justify-content:space-between;font-size:.82rem;margin:.28rem 0;'><span>{name}</span><b>{counts.get(name,0):,}</b></div>", unsafe_allow_html=True)
-    except Exception:
-        pass
 
     cfg["page"] = st.session_state.page
     return cfg
@@ -6461,6 +6383,89 @@ def render_answer_map(
     # list only ever held LSOA codes. It is drawn on top, dark and outlined,
     # so the unit the question was asked about is visible beside its answer.
     map_layers = [layer]
+
+    # Schools are evidence attached to the spatial answer, not a condition
+    # for deciding which LSOAs belong to it.  Fetch them only after the full
+    # answer set has been resolved, then draw them above the polygons.  This
+    # restores the school pins without dropping answer regions that contain
+    # no school.
+    try:
+        school_points = run_cypher(
+            cfg,
+            """
+            MATCH (l:LSOA)<-[:LOCATED_IN]-(s:School)
+            WHERE l.code IN $codes
+              AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+            OPTIONAL MATCH (s)-[near:DISTANCE_NEAR]->(:TransportStop)
+            WITH l, s, min(near.distance_m) AS nearest_stop_distance_m
+            RETURN DISTINCT
+                   coalesce(s.name, s.school_name, s.code) AS school,
+                   s.code AS school_code,
+                   s.latitude AS latitude,
+                   s.longitude AS longitude,
+                   l.code AS lsoa_code,
+                   coalesce(l.deprivation, s.deprivation, 'unknown') AS deprivation,
+                   l.wimd_decile AS wimd_decile,
+                   coalesce(s.phase_group, s.phase, s.school_type) AS school_type,
+                   coalesce(s.local_authority_name, s.local_authority,
+                            l.local_authority) AS local_authority,
+                   s.fsm_pct AS fsm_pct,
+                   s.attendance_pct AS attendance_pct,
+                   s.capped9_score AS capped9_score,
+                   coalesce(s.pupils_2025, s.pupils) AS pupils,
+                   nearest_stop_distance_m
+            ORDER BY school
+            """,
+            {"codes": codes},
+        )
+    except Exception:
+        school_points = pd.DataFrame()
+
+    school_pin_layer = None
+    if not school_points.empty:
+        school_points = school_points.copy()
+        school_points["deprivation"] = (
+            school_points["deprivation"].fillna("unknown").astype(str)
+        )
+        school_points["icon"] = school_points["deprivation"].map(
+            lambda d: PIN_ICONS.get(d, PIN_ICONS["unknown"])
+        )
+        school_points["name"] = school_points["school"]
+        school_points["code"] = school_points["school_code"].fillna(
+            school_points["lsoa_code"]
+        )
+        school_points["role"] = (
+            "School in answer area " + school_points["lsoa_code"].astype(str)
+        )
+        school_points["dep_label"] = school_points["deprivation"].map(
+            DEP_LABEL
+        ).fillna("Unknown")
+        school_points["wimd_label"] = school_points["wimd_decile"].map(
+            lambda v: "N/A" if pd.isna(v) else f"decile {int(float(v))}"
+        )
+        for field, source in (
+            ("school_count", None), ("fsm_avg", "fsm_pct"),
+            ("att_avg", "attendance_pct"), ("cap_avg", "capped9_score"),
+        ):
+            school_points[field] = (
+                1 if source is None else school_points[source]
+            )
+        school_points["fsm_n"] = school_points["fsm_pct"].notna().astype(int)
+        school_points["att_n"] = school_points["attendance_pct"].notna().astype(int)
+        school_points["cap_n"] = school_points["capped9_score"].notna().astype(int)
+        school_pin_layer = pdk.Layer(
+            "IconLayer",
+            id="answer-schools",
+            data=school_points,
+            get_icon="icon",
+            get_position=["longitude", "latitude"],
+            get_size=3.7,
+            size_scale=10,
+            size_min_pixels=15,
+            size_max_pixels=58,
+            pickable=True,
+            alpha_cutoff=-1,
+        )
     if focus_admin:
         try:
             anchor = admin_polygons(
@@ -6578,6 +6583,12 @@ def render_answer_map(
                 pickable=True,
             ))
 
+    # Pins must be last: deck.gl resolves hover/click from the topmost layer.
+    # Administrative polygons drawn after them would otherwise make the pins
+    # visible but impossible to inspect.
+    if school_pin_layer is not None:
+        map_layers.append(school_pin_layer)
+
     picked = deck_chart_with_click(
         pdk.Deck(
             layers=map_layers,
@@ -6597,8 +6608,8 @@ def render_answer_map(
         "<span style='color:#94a3b8;font-size:16px;'>&#9679;</span> Unknown"
         "&nbsp;&middot;&nbsp; the yellow region is the selected area; "
         "regions outlined in purple and left unfilled are excluded from the "
-        "answer. Hover a region for its figures, or click it to open the "
-        "schools inside it."
+        "answer. School pins are drawn above the complete spatial result; "
+        "they do not filter it. Hover a pin or region for details."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -6898,13 +6909,16 @@ def render_admin_answer_map(
         return None
 
     rows: List[Dict[str, Any]] = []
+    answer_rings: Dict[str, List[List[List[float]]]] = {}
     lons: List[float] = []
     lats: List[float] = []
     for _, prow in polys.iterrows():
+        polygon_uri = str(prow.get("uri") or "")
         utype = str(prow.get("type") or "Unknown")
         base = ADMIN_FILL.get(utype, ADMIN_FILL["Unknown"])
         depth = ADMIN_DEPTH.get(utype, ADMIN_DEPTH["Unknown"])
         for ring in _wkt_rings(prow.get("wkt")):
+            answer_rings.setdefault(polygon_uri, []).append(ring)
             if len(ring) > 400:
                 ring = ring[:: len(ring) // 400 + 1] + [ring[-1]]
             for pt in ring:
@@ -7001,21 +7015,67 @@ def render_admin_answer_map(
         "style": {"backgroundColor": "transparent"},
     }
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
+    admin_layers = [pdk.Layer(
+        "PolygonLayer",
+        id="admin-answer",
+        data=rows,
+        get_polygon="polygon",
+        get_fill_color="fill",
+        get_line_color="line",
+        get_line_width="width",
+        line_width_min_pixels=1,
+        stroked=True, filled=True, pickable=True,
+        auto_highlight=True,
+        highlight_color=[124, 58, 237, 190],
+    )]
+
+    # Put school pins back on administrative answers too.  INTERSECTS finds
+    # candidate LSOAs, then the point-in-polygon check prevents a school in
+    # the outside part of a boundary-crossing LSOA being assigned to a unit.
+    answer_uris = tuple(sorted(set(str(u) for u in polys["uri"].dropna())))
+    try:
+        school_points = run_cypher(cfg, """
+        MATCH (u:AdminUnit)-[:INTERSECTS]->(l:LSOA)<-[:LOCATED_IN]-(s:School)
+        WHERE u.uri IN $uris
+          AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+        RETURN DISTINCT u.uri AS unit_uri,
+               coalesce(s.name, s.school_name, s.code) AS school,
+               s.code AS school_code, s.latitude AS latitude,
+               s.longitude AS longitude,
+               coalesce(l.deprivation, s.deprivation, 'unknown') AS deprivation
+        ORDER BY school
+        """, {"uris": list(answer_uris)})
+    except Exception:
+        school_points = pd.DataFrame()
+    if not school_points.empty:
+        school_points = school_points[
+            school_points.apply(
+                lambda r: _point_in_admin_rings(
+                    r.get("longitude"), r.get("latitude"),
+                    answer_rings.get(str(r.get("unit_uri")), []),
+                ),
+                axis=1,
+            )
+        ].drop_duplicates(subset=["school_code", "latitude", "longitude"])
+    if not school_points.empty:
+        school_points = school_points.copy()
+        school_points["icon"] = school_points["deprivation"].map(
+            lambda d: PIN_ICONS.get(str(d), PIN_ICONS["unknown"])
+        )
+        school_points["name"] = school_points["school"]
+        school_points["type"] = "School"
+        school_points["role"] = "School inside an answer area"
+        school_points["uri"] = ""
+        admin_layers.append(pdk.Layer(
+            "IconLayer", id="admin-answer-schools", data=school_points,
+            get_icon="icon", get_position=["longitude", "latitude"],
+            get_size=3.7, size_scale=10, size_min_pixels=15,
+            size_max_pixels=58, pickable=True, alpha_cutoff=-1,
+        ))
+
     picked = deck_chart_with_click(
         pdk.Deck(
-            layers=[pdk.Layer(
-                "PolygonLayer",
-                id="admin-answer",
-                data=rows,
-                get_polygon="polygon",
-                get_fill_color="fill",
-                get_line_color="line",
-                get_line_width="width",
-                line_width_min_pixels=1,
-                stroked=True, filled=True, pickable=True,
-                auto_highlight=True,
-                highlight_color=[124, 58, 237, 190],
-            )],
+            layers=admin_layers,
             initial_view_state=view,
             map_style="light",
             tooltip=tooltip,
@@ -7031,7 +7091,7 @@ def render_admin_answer_map(
             "The yellow shape is the selected LSOA; "
         )
         + "the returned administrative units are the exact query answer. "
-        "Hover one for its name and type."
+        "School pins are an information layer and do not filter the areas."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -7255,6 +7315,438 @@ def render_admin_containment_map(
     if drawn_note:
         st.caption(drawn_note)
     return picked_unit
+
+
+GUIDED_TYPE_LABELS = {
+    "LSOA": "LSOA (statistical area)",
+    "Community": "Community",
+    "Ward": "Community ward",
+    "CommunityWard": "Community ward",
+    "CivilParishorCommunity": "Civil parish or community",
+    "UnitaryAuthority": "Unitary authority",
+    "EuropeanRegion": "European region",
+}
+
+GUIDED_RELATION_LABELS = {
+    "touches": "touches",
+    "near": "is near",
+    "not_touches": "does not touch",
+    "within": "is within",
+    "contains": "contains",
+    "intersects": "intersects",
+    "between": "lies between",
+}
+
+
+def clear_guided_result() -> None:
+    """A changed input invalidates the answer until Search is pressed."""
+    st.session_state.pop("guided_has_run", None)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def guided_entity_types(
+    cfg_key: Tuple[str, str, str, str]
+) -> Tuple[str, ...]:
+    """Only expose geographic types that actually exist in this graph."""
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    rows = run_cypher(cfg, """
+    MATCH (n)
+    WHERE n:LSOA OR n:AdminUnit
+    RETURN DISTINCT CASE WHEN n:LSOA THEN 'LSOA' ELSE n.type END AS kind
+    ORDER BY kind
+    """)
+    if rows.empty:
+        return ()
+    preferred = [
+        "LSOA", "Community", "Ward", "CommunityWard",
+        "CivilParishorCommunity", "UnitaryAuthority", "EuropeanRegion",
+    ]
+    found = {str(v) for v in rows["kind"].dropna().tolist()}
+    return tuple(k for k in preferred if k in found)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def guided_anchor_options(
+    cfg_key: Tuple[str, str, str, str], kind: str
+) -> Tuple[Tuple[str, str], ...]:
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    if kind == "LSOA":
+        query = """
+        MATCH (n:LSOA)
+        RETURN n.code AS value,
+               coalesce(n.name, n.code) + ' · ' + n.code AS label
+        ORDER BY label
+        """
+    else:
+        query = """
+        MATCH (n:AdminUnit)
+        WHERE n.type = $kind
+        RETURN n.uri AS value, coalesce(n.name, n.uri) AS label
+        ORDER BY label
+        """
+    rows = run_cypher(cfg, query, {"kind": kind})
+    if rows.empty:
+        return ()
+    return tuple(
+        (str(r["value"]), str(r["label"])) for _, r in rows.iterrows()
+        if pd.notna(r.get("value"))
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=180)
+def guided_capabilities(
+    cfg_key: Tuple[str, str, str, str], kind: str, anchor: str
+) -> pd.DataFrame:
+    """Relations and result types that return data for this exact anchor."""
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    if kind == "LSOA":
+        query = """
+        MATCH (a:LSOA {code:$anchor})
+        CALL {
+          WITH a MATCH (a)-[:LSOA_TOUCHES]-(b:LSOA)
+          RETURN 'touches' AS relation, 'LSOA' AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (a)-[:GRAPH_NEAR]-(b:LSOA)
+          RETURN 'near' AS relation, 'LSOA' AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (b:LSOA)
+          WHERE b <> a AND NOT (a)-[:LSOA_TOUCHES]-(b)
+          RETURN 'not_touches' AS relation, 'LSOA' AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (u:AdminUnit)-[:INTERSECTS]->(a)
+          RETURN 'intersects' AS relation, u.type AS result_type,
+                 count(DISTINCT u) AS n
+          UNION
+          WITH a MATCH (a)-[:LSOA_TOUCHES]-(:LSOA)
+          RETURN 'between' AS relation, 'LSOA' AS result_type,
+                 count(*) AS n
+        }
+        WITH relation, result_type, n WHERE n > 0
+        RETURN relation, result_type, n
+        """
+    else:
+        query = """
+        MATCH (a:AdminUnit {uri:$anchor})
+        CALL {
+          WITH a MATCH (a)-[:TOUCHES]-(b:AdminUnit)
+          RETURN 'touches' AS relation, b.type AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (a)-[:TOUCHES]-(m:AdminUnit)-[:TOUCHES]-(b:AdminUnit)
+          WHERE b <> a AND b.type = a.type AND NOT (a)-[:TOUCHES]-(b)
+          RETURN 'near' AS relation, b.type AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (b:AdminUnit)
+          WHERE b.type = a.type AND b <> a AND NOT (a)-[:TOUCHES]-(b)
+          RETURN 'not_touches' AS relation, b.type AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (a)-[:WITHIN]->(b:AdminUnit)
+          RETURN 'within' AS relation, b.type AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (b:AdminUnit)-[:WITHIN]->(a)
+          RETURN 'contains' AS relation, b.type AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (a)-[:INTERSECTS]->(b:LSOA)
+          RETURN 'intersects' AS relation, 'LSOA' AS result_type,
+                 count(DISTINCT b) AS n
+          UNION
+          WITH a MATCH (a)-[:TOUCHES]-(b:AdminUnit)
+          WHERE b.type = a.type
+          RETURN 'between' AS relation, a.type AS result_type,
+                 count(DISTINCT b) AS n
+        }
+        WITH relation, result_type, n WHERE n > 0
+        RETURN relation, result_type, n
+        """
+    return run_cypher(cfg, query, {"anchor": anchor})
+
+
+def guided_result_query(
+    kind: str, relation: str, result_type: str
+) -> str:
+    """Cypher for one validated guided-search combination."""
+    if kind == "LSOA":
+        queries = {
+            "touches": """
+                MATCH (a:LSOA {code:$anchor})-[:LSOA_TOUCHES]-(b:LSOA)
+                RETURN DISTINCT b.code AS lsoa_code,
+                       coalesce(b.name,b.code) AS name, 'LSOA' AS result_type
+                ORDER BY name""",
+            "near": """
+                MATCH (a:LSOA {code:$anchor})-[:GRAPH_NEAR]-(b:LSOA)
+                RETURN DISTINCT b.code AS lsoa_code,
+                       coalesce(b.name,b.code) AS name, 'LSOA' AS result_type
+                ORDER BY name""",
+            "not_touches": """
+                MATCH (a:LSOA {code:$anchor}), (b:LSOA)
+                WHERE b <> a AND NOT (a)-[:LSOA_TOUCHES]-(b)
+                RETURN DISTINCT b.code AS lsoa_code,
+                       coalesce(b.name,b.code) AS name, 'LSOA' AS result_type
+                ORDER BY name""",
+            "intersects": """
+                MATCH (u:AdminUnit)-[:INTERSECTS]->(a:LSOA {code:$anchor})
+                WHERE u.type = $result_type
+                RETURN DISTINCT u.uri AS unit_uri, coalesce(u.name,u.uri) AS unit_name,
+                       u.type AS unit_type ORDER BY unit_name""",
+        }
+        return queries[relation]
+
+    queries = {
+        "touches": """
+            MATCH (a:AdminUnit {uri:$anchor})-[:TOUCHES]-(b:AdminUnit)
+            WHERE b.type = $result_type
+            RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
+                   b.type AS unit_type ORDER BY unit_name""",
+        "near": """
+            MATCH (a:AdminUnit {uri:$anchor})-[:TOUCHES]-(m:AdminUnit)
+                  -[:TOUCHES]-(b:AdminUnit)
+            WHERE b <> a AND b.type = $result_type
+              AND NOT (a)-[:TOUCHES]-(b)
+            RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
+                   b.type AS unit_type ORDER BY unit_name""",
+        "not_touches": """
+            MATCH (a:AdminUnit {uri:$anchor}), (b:AdminUnit)
+            WHERE b.type = $result_type AND b <> a
+              AND NOT (a)-[:TOUCHES]-(b)
+            RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
+                   b.type AS unit_type ORDER BY unit_name""",
+        "within": """
+            MATCH (a:AdminUnit {uri:$anchor})-[:WITHIN]->(b:AdminUnit)
+            WHERE b.type = $result_type
+            RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
+                   b.type AS unit_type ORDER BY unit_name""",
+        "contains": """
+            MATCH (b:AdminUnit)-[:WITHIN]->(a:AdminUnit {uri:$anchor})
+            WHERE b.type = $result_type
+            RETURN DISTINCT b.uri AS unit_uri, coalesce(b.name,b.uri) AS unit_name,
+                   b.type AS unit_type ORDER BY unit_name""",
+        "intersects": """
+            MATCH (a:AdminUnit {uri:$anchor})-[:INTERSECTS]->(b:LSOA)
+            RETURN DISTINCT b.code AS lsoa_code, coalesce(b.name,b.code) AS name,
+                   'LSOA' AS result_type ORDER BY name""",
+    }
+    return queries[relation]
+
+
+def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
+    """Clean, progressive spatial search for a first-time user."""
+    st.markdown("""
+    <style>
+    .guided-hero{max-width:850px;margin:1.1rem auto 1.45rem;text-align:center}
+    .guided-hero h1{font-size:clamp(2rem,4vw,3.35rem);line-height:1.05;
+      letter-spacing:-.045em;margin:0;color:#172033;font-weight:850}
+    .guided-hero p{font-size:1.02rem;color:#667085;margin:.65rem auto 0;
+      max-width:620px;line-height:1.55}
+    .guided-card{background:white;border:1px solid #e8eaf0;border-radius:22px;
+      padding:1.1rem 1.25rem .35rem;box-shadow:0 12px 34px rgba(15,23,42,.07)}
+    .guided-sentence{font-size:1.15rem;font-weight:750;color:#25324a;
+      padding:.85rem 1rem;background:#f7f8fb;border-radius:14px;margin:.6rem 0 1rem}
+    div[data-testid="stTextInput"] input{border-radius:999px!important;
+      min-height:3.3rem;padding-left:1.25rem;border:1px solid #dfe3ea;
+      box-shadow:0 10px 28px rgba(15,23,42,.06)}
+    </style>
+    <div class="guided-hero"><h1>Ask the Welsh place knowledge graph</h1>
+    <p>Explore how LSOAs and administrative areas touch, intersect, contain
+    or lie near one another. Schools appear in the areas returned.</p></div>
+    """, unsafe_allow_html=True)
+
+    cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
+    try:
+        kinds = guided_entity_types(cfg_key)
+    except Exception:
+        st.error("The place data could not be loaded. Please try again.")
+        return
+    if not kinds:
+        st.info("No geographic areas are available in the current graph.")
+        return
+
+    guided, words = st.tabs(["Build a search", "Write in your own words"])
+    with words:
+        # Retain the existing natural-language route as an optional route,
+        # while keeping its technical parser controls out of the main flow.
+        try:
+            nl_lsoas = lsoa_options(cfg, "lsoa_touch")
+            nl_admin = nl_admin_options(cfg)
+        except Exception:
+            nl_lsoas, nl_admin = [], []
+        render_nl_search(nl_lsoas, nl_admin)
+        render_question_answer(cfg)
+
+    with guided:
+        c1, c2 = st.columns([1, 1.65])
+        with c1:
+            kind = st.selectbox(
+                "Area type", kinds,
+                format_func=lambda k: GUIDED_TYPE_LABELS.get(k, k),
+                key="guided_kind",
+                on_change=clear_guided_result,
+            )
+        try:
+            anchors = guided_anchor_options(cfg_key, kind)
+        except Exception:
+            st.error("Places for this area type could not be loaded.")
+            return
+        if not anchors:
+            st.info("No places are available for this area type.")
+            return
+        with c2:
+            anchor = st.selectbox(
+                "Place", anchors, format_func=lambda x: x[1],
+                key=f"guided_anchor_{kind}",
+                on_change=clear_guided_result,
+            )
+
+        try:
+            caps = guided_capabilities(cfg_key, kind, anchor[0])
+        except Exception:
+            st.error("Relationships for this place could not be loaded.")
+            return
+        if caps.empty:
+            st.info(
+                "No spatial relationship is currently represented for this "
+                "place and area type."
+            )
+            return
+        semantic_relation = {
+            "near": "touches", "between": "touches",
+            "not_touches": "disjoint",
+        }
+        caps = caps[
+            caps.apply(
+                lambda row: semantic_relation.get(
+                    str(row["relation"]), str(row["relation"])
+                ) in _possible_pair_relations(
+                    kind, str(row["result_type"])
+                ),
+                axis=1,
+            )
+        ].copy()
+        if caps.empty:
+            st.info("No valid spatial relationship is available for this selection.")
+            return
+        relations = [
+            r for r in GUIDED_RELATION_LABELS
+            if r in set(caps["relation"].astype(str))
+        ]
+        c3, c4 = st.columns(2)
+        with c3:
+            relation = st.selectbox(
+                "Relationship", relations,
+                format_func=lambda r: GUIDED_RELATION_LABELS[r],
+                key="guided_relation",
+                on_change=clear_guided_result,
+            )
+        valid_types = [
+            str(v) for v in caps.loc[
+                caps["relation"].astype(str) == relation, "result_type"
+            ].dropna().drop_duplicates().tolist()
+        ]
+        with c4:
+            result_type = st.selectbox(
+                "Find", valid_types,
+                format_func=lambda k: GUIDED_TYPE_LABELS.get(k, k),
+                key="guided_result_type",
+                on_change=clear_guided_result,
+            )
+
+        second = None
+        if relation == "between":
+            second_options = [x for x in anchors if x[0] != anchor[0]]
+            second = st.selectbox(
+                "Second place", second_options, format_func=lambda x: x[1],
+                key=f"guided_second_{kind}",
+                on_change=clear_guided_result,
+            )
+
+        sentence = (
+            f"Find {GUIDED_TYPE_LABELS.get(result_type, result_type)} areas "
+            f"that {GUIDED_RELATION_LABELS[relation]} {anchor[1]}"
+            + (f" and {second[1]}" if second else "")
+        )
+        st.markdown(
+            f"<div class='guided-sentence'>{escape(sentence)}</div>",
+            unsafe_allow_html=True,
+        )
+        run = st.button("Search", type="primary", use_container_width=True,
+                        key="guided_run")
+        state_key = "guided_has_run"
+        if run:
+            st.session_state[state_key] = True
+        if not st.session_state.get(state_key):
+            return
+
+        params = {"anchor": anchor[0], "result_type": result_type}
+        if relation == "between":
+            if not second:
+                return
+            edge = "LSOA_TOUCHES" if kind == "LSOA" else "TOUCHES"
+            node = "LSOA" if kind == "LSOA" else "AdminUnit"
+            key_prop = "code" if kind == "LSOA" else "uri"
+            type_guard = "" if kind == "LSOA" else "AND b.type = $result_type"
+            query = f"""
+            MATCH (a:{node} {{{key_prop}:$anchor}}),
+                  (b:{node} {{{key_prop}:$second}})
+            WHERE a <> b {type_guard}
+            MATCH p = shortestPath((a)-[:{edge}*..12]-(b))
+            UNWIND CASE WHEN length(p) > 1 THEN nodes(p)[1..-1] ELSE [] END AS x
+            RETURN DISTINCT x.{key_prop} AS {'lsoa_code' if kind == 'LSOA' else 'unit_uri'},
+                   coalesce(x.name, x.{key_prop}) AS {'name' if kind == 'LSOA' else 'unit_name'},
+                   {'\'LSOA\'' if kind == 'LSOA' else 'x.type'} AS {'result_type' if kind == 'LSOA' else 'unit_type'}
+            """
+            params["second"] = second[0]
+        else:
+            query = guided_result_query(kind, relation, result_type)
+        try:
+            result = run_cypher(cfg, query, params)
+        except Exception:
+            st.error(
+                "We could not complete this search. Try another place or "
+                "relationship."
+            )
+            if SHOW_QUERIES:
+                st.code(query, language="cypher")
+            return
+
+        st.markdown("### Results")
+        st.metric("Areas found", len(result))
+        if result.empty:
+            st.info(
+                "No area satisfies this relationship for the selected place."
+            )
+            return
+        if result_type == "LSOA":
+            clicked = render_answer_map(
+                cfg, result,
+                focus_code=anchor[0] if kind == "LSOA" else None,
+                focus_admin=anchor[0] if kind != "LSOA" else None,
+                show_excluded_neighbours=(relation == "not_touches"),
+                key="guided_lsoa_map",
+            )
+            if clicked and re.match(r"^W\d{8}$", clicked):
+                render_lsoa_school_panel(cfg, clicked)
+        else:
+            picked = render_admin_answer_map(
+                cfg, result, None,
+                focus_admin=anchor[0] if kind != "LSOA" else None,
+                key="guided_admin_map",
+            )
+            if picked:
+                render_unit_school_card(cfg, picked)
+        display_df(result)
+        if SHOW_QUERIES:
+            with st.expander("Cypher"):
+                st.code(query.strip(), language="cypher")
+                st.json(params)
 
 
 def page_scq_demonstrator(
@@ -10543,53 +11035,14 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
 
 def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     """Question box for the map. Returns extra conditions for the query."""
-    st.markdown(
-        "<div class='nl-wrap'>"
-        "<div class='nl-title'>Ask in your own words</div>"
-        "<div class='nl-sub'>Describe the schools you want to see. The "
-        "sentence adds conditions to the map query and shows each one.</div>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    with st.expander("Question library", expanded=False):
-        groups = list(MAP_QUESTION_LIBRARY)
-        for tab, group in zip(st.tabs(groups), groups):
-            entry = MAP_QUESTION_LIBRARY[group]
-            with tab:
-                st.markdown(
-                    f"<div class='ql-head {entry['colour']}'>"
-                    f"<span class='ql-rel'>{escape(group)}</span>"
-                    f"<span class='ql-inst'>{escape(entry['note'])}</span>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-                current = st.session_state.get("map_nl_question", "")
-                cols = st.columns(2)
-                for i, question_text in enumerate(entry["questions"]):
-                    chosen = question_text == current
-                    # The chosen question is marked and its button becomes the
-                    # primary one, so a reader can see at a glance which of
-                    # the library produced what is on the map. Pressing it
-                    # again clears the question and the results with it.
-                    if cols[i % 2].button(
-                        ("\u2713  " if chosen else "") + question_text,
-                        key=f"map_q_{group}_{i}",
-                        use_container_width=True,
-                        type="primary" if chosen else "secondary",
-                    ):
-                        st.session_state["map_nl_question"] = (
-                            "" if chosen else question_text
-                        )
-                        st.session_state.pop("map_nl_applied", None)
-                        st.rerun()
+    st.markdown("### Search in your own words")
 
     col_q, col_go, col_clear = st.columns([6, 1, 1])
     with col_q:
         question = st.text_input(
             "Map question",
             key="map_nl_question",
-            placeholder="Secondary schools in high-deprivation areas",
+            placeholder="Try: Secondary schools in high-deprivation areas",
             label_visibility="collapsed",
         )
     with col_go:
@@ -10606,33 +11059,10 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         st.session_state["map_nl_clear"] = True
         st.rerun()
 
-    llm_ready = nl_llm_available()
-    map_mode = st.radio(
-        "Parser",
-        ["Rule-based", "LLM"],
-        horizontal=True,
-        index=1 if llm_ready else 0,
-        key="map_nl_parser_mode",
-        help=(
-            "The model path opens first because only it resolves place "
-            "names such as Cardiff. Either way every condition is rebuilt "
-            "locally and bound as a parameter, so the sentence cannot alter "
-            "the query text and the model never reaches the database."
-        ),
-    )
-    if map_mode != "Rule-based" and not llm_ready:
-        st.markdown(
-            "<div class='nl-warn'>The model parser is not active: no API key "
-            "is configured for this deployment. The rule-based engine reads "
-            "the question below. Add <code>OPENAI_API_KEY</code> under the "
-            "app secrets to enable it.</div>",
-            unsafe_allow_html=True,
-        )
-
-    if map_mode == "LLM" and llm_ready and question:
-        parsed = llm_parse_map_question(question)
-    else:
-        parsed = parse_map_question(question)
+    # Keep parser mechanics out of the interface. The deterministic parser
+    # is used here so temporary model demand or missing credentials can never
+    # replace the user's result with a technical status message.
+    parsed = parse_map_question(question)
 
     if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
         relation = _map_explicit_relation(question)
@@ -10724,53 +11154,35 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
             unsafe_allow_html=True,
         )
 
-    if question:
-        st.markdown(
-            "<div class='nl-driven'>Current question: <b>"
-            + escape(question)
-            + "</b></div>",
-            unsafe_allow_html=True,
-        )
-
-    if parsed["chips"] or parsed["unmatched"]:
-        chips = "".join(
-            f"<span class='nl-chip nl-chip-focus'>{escape(c)}</span>"
-            for c in parsed["chips"]
-        )
-        warn = "".join(
-            f"<div class='nl-warn'>{escape(u)}</div>"
-            for u in parsed["unmatched"]
-        )
-        st.markdown(
-            "<div class='nl-read'>"
-            + (
-                "<div class='nl-src nl-src-llm'>Parsed by "
-                + escape(str(parsed.get("parser")))
-                + " &middot; every condition rebuilt locally and bound as a "
-                "parameter</div>"
-                if str(parsed.get("parser", "")).startswith("LLM")
-                else "<div class='nl-src nl-src-rule'>Parsed by rule-based "
-                "&middot; deterministic, offline, no key</div>"
-            )
-            +
-            "<div class='nl-read-title'>Conditions added</div>"
-            f"<div class='nl-chips'>{chips or '&mdash;'}</div>"
-            + warn + "</div>",
-            unsafe_allow_html=True,
+    if (
+        question
+        and not parsed["conditions"]
+        and not parsed.get("resolved_admin_scope")
+        and not parsed.get("spatial_relation_failed")
+    ):
+        st.info(
+            "We could not match that request to the available school or "
+            "spatial filters. Try a place, school phase, deprivation level, "
+            "FSM, attendance or transport condition."
         )
     return parsed
 
 
 def page_map(cfg: Dict[str, str]) -> None:
-    hero()
-    task_badge(
-        "Map Explorer",
-        (
-            "Explore schools across Wales with LSOA deprivation, FSM, "
-            "attendance, secondary performance, and transport access — "
-            "by school, by metric range, or by adjacency cluster."
-        ),
-        "Supporting view",
+    st.markdown(
+        "<style>.map-search-hero{max-width:850px;margin:1rem auto 1.3rem;"
+        "text-align:center}.map-search-hero h1{font-size:clamp(2rem,4vw,3.2rem);"
+        "letter-spacing:-.04em;line-height:1.08;margin:0;color:#172033;"
+        "font-weight:850}.map-search-hero p{font-size:1rem;color:#667085;"
+        "margin:.55rem 0 0}div[data-testid='stTextInput'] input{"
+        "border-radius:999px!important;min-height:3.3rem;padding-left:1.25rem;"
+        "border:1px solid #dfe3ea;box-shadow:0 10px 28px rgba(15,23,42,.06)}"
+        "</style>"
+        "<div class='map-search-hero'><h1>Explore Welsh schools by place</h1>"
+        "<p>Search schools, compare local indicators and view the geographic "
+        "areas connected to each result.</p>"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
     la_opts = safe_options(cfg, """
@@ -10804,7 +11216,9 @@ def page_map(cfg: Dict[str, str]) -> None:
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
-    st.sidebar.markdown("### Search type")
+    st.markdown("## Find schools")
+    st.caption("Choose a search type. Only the filters that apply will appear.")
+    controls = st.container()
     if st.session_state.pop("map_nl_clear", False):
         st.session_state["map_nl_question"] = ""
         st.session_state.pop("map_nl_applied", None)
@@ -10812,7 +11226,7 @@ def page_map(cfg: Dict[str, str]) -> None:
     if st.session_state.pop("map_force_standard", False):
         st.session_state["map_search_mode"] = "Standard search"
 
-    search_mode = st.sidebar.radio(
+    search_mode = controls.radio(
         "Search type",
         [
             "Standard search",
@@ -10867,14 +11281,14 @@ def page_map(cfg: Dict[str, str]) -> None:
     cluster_depth = 4
     min_cluster_size = 3
     if search_mode == "Cluster search":
-        st.sidebar.markdown("### Adjacency cluster")
-        st.sidebar.caption(
+        controls.markdown("### Adjacency cluster")
+        controls.caption(
             "Geometry-origin. LSOA_TOUCHES is computed from boundary "
             "geometry, not asserted by YAGO2geo, so cluster results do not "
             "count towards native model completeness. This is also not the "
             "statistical hot-spot cluster used by Sandu et al."
         )
-        cluster_variable = st.sidebar.selectbox(
+        cluster_variable = controls.selectbox(
             "Cluster on",
             CLUSTER_VARIABLES,
             index=CLUSTER_VARIABLES.index("School FSM average"),
@@ -10897,7 +11311,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             integer: bool = False,
         ) -> float | None:
             """Optional typed bound. Blank or All means no bound on this side."""
-            raw = st.sidebar.text_input(
+            raw = controls.text_input(
                 label, value=default_text, placeholder="All", key=key
             )
             text = str(raw).strip()
@@ -10906,11 +11320,11 @@ def page_map(cfg: Dict[str, str]) -> None:
             try:
                 value = float(text)
             except ValueError:
-                st.sidebar.error(f"{label}: enter a number or All.")
+                controls.error(f"{label}: enter a number or All.")
                 st.session_state["_cluster_input_error"] = True
                 return None
             if value < lo or value > hi:
-                st.sidebar.error(
+                controls.error(
                     f"{label}: {value:g} is outside the data range "
                     f"({lo:g}\u2013{hi:g})."
                 )
@@ -10919,12 +11333,12 @@ def page_map(cfg: Dict[str, str]) -> None:
             return float(int(value)) if integer else value
 
         st.session_state["_cluster_input_error"] = False
-        st.sidebar.caption(
+        controls.caption(
             "Type exact bounds; leave a box as All to drop that side. The "
             "exact values you type are what goes in the research log."
         )
         if cluster_variable == "Deprivation level":
-            cluster_dep_levels = st.sidebar.multiselect(
+            cluster_dep_levels = controls.multiselect(
                 "Levels to include",
                 ["High", "Medium", "Low"],
                 default=["High"],
@@ -10935,10 +11349,10 @@ def page_map(cfg: Dict[str, str]) -> None:
                 ),
             )
             if not cluster_dep_levels:
-                st.sidebar.error("Pick at least one deprivation level.")
+                controls.error("Pick at least one deprivation level.")
                 st.session_state["_cluster_input_error"] = True
         elif cluster_variable == "Deprivation rank":
-            cluster_domain_label = st.sidebar.selectbox(
+            cluster_domain_label = controls.selectbox(
                 "Which deprivation measure",
                 list(WIMD_DOMAIN_PROPS.keys()),
                 index=0,
@@ -10955,7 +11369,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             cluster_rank_max = cluster_bound(
                 "Domain rank to", "382", 1, 1909, "cl_rank_max", integer=True
             )
-            st.sidebar.caption(
+            controls.caption(
                 "Rank 1 = most deprived of 1,909. 'to 382' is the most "
                 "deprived quintile. Ranks come from wimd_2019.xlsx via "
                 "load_wimd() (RUN_WIMD_LOAD = True)."
@@ -10967,7 +11381,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             cluster_fsm_max = cluster_bound(
                 "Mean school FSM % to", "All", 0.0, 71.8, "cl_fsm_max"
             )
-            st.sidebar.caption(
+            controls.caption(
                 "Mean over the schools LOCATED_IN each LSOA; FSM coverage "
                 "is 96.6% of schools."
             )
@@ -10978,7 +11392,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             cluster_cap_max = cluster_bound(
                 "Mean Capped 9 to", "300", 245.1, 453.1, "cl_cap_max"
             )
-            st.sidebar.warning(
+            controls.warning(
                 "Capped 9 exists for 205 of 1,453 schools (14.1%, secondary "
                 "only), so very few LSOAs carry a value and even fewer touch "
                 "each other. Expect small, scattered clusters. Report these "
@@ -10992,7 +11406,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             cluster_att_max = cluster_bound(
                 "Mean attendance % to", "92", 79.1, 98.1, "cl_att_max"
             )
-            st.sidebar.caption(
+            controls.caption(
                 "The official Welsh Government persistent-absence line is "
                 "90%. Attendance coverage is 96.7% of schools."
             )
@@ -11009,7 +11423,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             cluster_att_max = cluster_bound(
                 "Mean attendance % to", "92", 79.1, 98.1, "cl_c_att_max"
             )
-            st.sidebar.caption(
+            controls.caption(
                 "The compound pool needs both metrics inside their bounds "
                 "at once: deprivation pressure (FSM) and low attendance."
             )
@@ -11020,7 +11434,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             (cluster_cap_min, cluster_cap_max, "Capped 9"),
         ):
             if low is not None and high is not None and low > high:
-                st.sidebar.error(f"{label}: From is above To.")
+                controls.error(f"{label}: From is above To.")
                 st.session_state["_cluster_input_error"] = True
         cluster_inputs_ok = not st.session_state.get(
             "_cluster_input_error", False
@@ -11037,7 +11451,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         # depth to choose. This value is only used by the fallback query if
         # APOC is unavailable on the target database.
         cluster_depth = 4
-        min_cluster_size = st.sidebar.number_input(
+        min_cluster_size = controls.number_input(
             "Smallest cluster to show (LSOAs)",
             min_value=1,
             max_value=50,
@@ -11063,14 +11477,14 @@ def page_map(cfg: Dict[str, str]) -> None:
         # so the general filter is hidden to avoid two competing controls.
         dep_choice = dep_options[0]
     else:
-        dep_choice = st.sidebar.selectbox(
+        dep_choice = controls.selectbox(
             "Deprivation",
             dep_options,
             format_func=lambda x: x[1],
         )
     dep = dep_choice[0]
     dep_label = dep_choice[1]
-    transport = st.sidebar.selectbox(
+    transport = controls.selectbox(
         "Transport access",
         [
             "All",
@@ -11086,7 +11500,7 @@ def page_map(cfg: Dict[str, str]) -> None:
             "scoring."
         ),
     )
-    school_filters = st.sidebar.expander("School filters", expanded=False)
+    school_filters = controls.expander("More school filters", expanded=False)
     la = school_filters.selectbox(
         "Local authority", las, format_func=lambda x: x[1]
     )
@@ -11204,10 +11618,10 @@ def page_map(cfg: Dict[str, str]) -> None:
         (capped9_min, capped9_max, "Capped 9"),
     ):
         if low is not None and high is not None and low > high:
-            st.sidebar.error(f"{label}: the From value is above the To value.")
+            controls.error(f"{label}: the From value is above the To value.")
             range_order_ok = False
     if not range_order_ok:
-        st.info("Swap the From and To values marked in red in the sidebar.")
+        st.info("Swap the From and To values marked in red above.")
         return
 
     nl_map = render_map_nl(cfg)
@@ -12307,7 +12721,7 @@ def main() -> None:
         body = st.container()
     with body:
         if page == "SCQ Demonstrator":
-            page_scq_demonstrator(cfg)
+            page_guided_spatial_search(cfg)
         elif page == "Map":
             page_map(cfg)
 
