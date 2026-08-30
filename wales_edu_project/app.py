@@ -53,223 +53,24 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-.block-container {padding-top: 1.5rem;}
-.hero {
-  background: linear-gradient(135deg,#5e0d1c,#9e1b32 55%,#b8283f);
-  color: white; padding: 1.4rem 1.7rem; border-radius: 14px; margin-bottom: 1.1rem;
-  box-shadow: 0 5px 18px rgba(94,13,28,.20);
+/* Shared public-page foundation. Page-specific SCQ and Map styling is kept
+   beside those pages so later rules do not silently fight legacy skins. */
+.block-container {
+  max-width: 100%;
+  padding: .75rem 1.1rem 1.5rem;
 }
-.hero h1 {font-size:1.45rem; margin:0 0 .35rem 0;}
-.hero p {margin:.18rem 0; opacity:.92; font-size:.88rem;}
-.task-card {
-  border:1px solid #dbe3ef; border-left:5px solid #0066cc; border-radius:12px;
-  background:#ffffff; padding:1rem 1.05rem; margin:.55rem 0; box-shadow:0 2px 9px rgba(15,23,42,.04);
+.badge {
+  display: inline-block;
+  padding: .2rem .58rem;
+  border-radius: 999px;
+  font-size: .76rem;
+  font-weight: 750;
+  margin-right: .28rem;
 }
-.task-card h3 {margin:0 0 .4rem 0; font-size:1.03rem; color:#0f172a;}
-.task-key {font-weight:700; color:#003366;}
-.subtask {background:#f8fafc; border-radius:9px; padding:.55rem .7rem; margin:.3rem 0; border:1px solid #e6edf5;}
-.badge {display:inline-block; padding:.2rem .55rem; border-radius:999px; font-size:.78rem; font-weight:700; margin-right:.25rem;}
-.done {background:#e8f7ee; color:#12672f;}
-.current {background:#fff7db; color:#946200;}
-.next {background:#eef2ff; color:#3730a3;}
-.native {background:#e8f7ee; color:#166534;}
-.geometry {background:#fff3d6; color:#b45309;}
-.derived {background:#eaf2ff; color:#1d4ed8;}
-.warningbox {background:#fffbe6; border-left:5px solid #f59e0b; padding:.75rem 1rem; border-radius:9px;}
-.successbox {background:#ecfdf5; border-left:5px solid #10b981; padding:.75rem 1rem; border-radius:9px;}
-.solutionbox {background:#eef6ff; border-left:5px solid #2563eb; padding:.85rem 1rem; border-radius:10px; margin:.7rem 0;}
-.solutionbox b {color:#003366;}
-.codebox {background:#f8fafc; border:1px solid #e5e7eb; border-radius:10px; padding:.9rem; font-size:.84rem;}
-.small-muted {font-size:.84rem; color:#64748b;}
-
-/* ======================= Evaluator-ready visual system ======================= */
-.visual-card {
-  background:#ffffff; border:1px solid #dbe7f3; border-radius:18px;
-  padding:1.05rem 1.15rem; margin:.9rem 0; box-shadow:0 10px 26px rgba(15,23,42,.06);
-}
-.visual-card h3 {margin:.1rem 0 .45rem 0; color:#0b2a5b; font-size:1.08rem;}
-.visual-note {background:#f0f7ff; border:1px solid #bfdbfe; border-left:5px solid #2563eb; border-radius:12px; padding:.75rem .9rem; color:#17324d; margin:.6rem 0;}
-.grid {display:grid; gap:.75rem;}
-.grid-2 {grid-template-columns:repeat(2,minmax(0,1fr));}
-.grid-3 {grid-template-columns:repeat(3,minmax(0,1fr));}
-.grid-4 {grid-template-columns:repeat(4,minmax(0,1fr));}
-.grid-5 {grid-template-columns:repeat(5,minmax(0,1fr));}
-@media(max-width: 900px){.grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:1fr;}}
-.task-step {background:linear-gradient(180deg,#ffffff,#f8fbff); border:1px solid #dbe7f3; border-radius:16px; padding:.85rem; text-align:center; min-height:118px;}
-.step-num {width:44px; height:44px; border-radius:14px; margin:0 auto .45rem; display:flex; align-items:center; justify-content:center; font-weight:900; color:white; font-size:1.05rem;}
-.step-blue{background:#2563eb}.step-green{background:#16a34a}.step-orange{background:#f97316}.step-purple{background:#7c3aed}.step-teal{background:#0891b2}.step-pink{background:#db2777}
-.step-title2{font-weight:900;color:#0b2a5b;font-size:.9rem}.step-text{font-size:.76rem;color:#526174;line-height:1.22rem;margin-top:.25rem}
-.flow-box{background:#ffffff;border:1px solid #dbe7f3;border-radius:14px;padding:.72rem;text-align:center;min-height:92px;position:relative}
-.flow-box b{color:#0b2a5b}.flow-box small{color:#526174}
-.flow-row{display:flex; gap:.45rem; align-items:center; justify-content:center; flex-wrap:wrap}.flow-arrow{color:#2563eb;font-weight:900;font-size:1.35rem}
-.coverage-card{background:linear-gradient(180deg,#ffffff,#f7fbff);border:1px solid #dbe7f3;border-radius:16px;padding:1rem}.big-score{font-size:2.05rem;font-weight:900;color:#0b2a5b}.score-label{font-size:.82rem;color:#526174}.bar-track{height:16px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:.55rem 0}.bar-native{height:100%;width:50%;background:linear-gradient(90deg,#f59e0b,#fb923c)}.bar-demo{height:100%;width:100%;background:linear-gradient(90deg,#22c55e,#86efac)}
-.scq-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:.5rem}@media(max-width:1100px){.scq-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}@media(max-width:700px){.scq-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
-.scq-tile{border-radius:15px;padding:.75rem .45rem;text-align:center;border:1px solid #dbe7f3;background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.04)}.scq-tile h4{margin:.05rem 0;color:#0b2a5b}.scq-tile p{margin:.2rem 0;font-size:.74rem;color:#526174;line-height:1.12rem}.native-border{border-top:5px solid #16a34a}.geo-border{border-top:5px solid #f97316}.derived-border{border-top:5px solid #2563eb}.mix-border{border-top:5px solid #7c3aed}
-.bridge-wrap{display:grid;grid-template-columns:1fr 130px 1fr;gap:.75rem;align-items:center}.bridge-side{border:1px solid #bfdbfe;border-radius:16px;background:#eff6ff;padding:.95rem;text-align:center}.bridge-side.right{border-color:#bbf7d0;background:#f0fdf4}.bridge-mid-light{text-align:center;color:#0b2a5b;font-weight:900}.bridge-mid-light div{background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;padding:.25rem .45rem;margin:.25rem 0;color:#c2410c}
-.pyramid-light{display:flex;flex-direction:column;align-items:center;gap:5px;margin:.6rem auto;max-width:520px}.pyr{height:54px;color:white;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:900;border-radius:10px;line-height:1.1rem}.pyr small{font-weight:700;opacity:.95}.p1{width:42%;background:#22c55e}.p2{width:60%;background:#3b82f6}.p3{width:78%;background:#8b5cf6}.p4{width:96%;background:#f97316}
-.final-box{background:linear-gradient(135deg,#0f766e,#16a34a);color:#fff;border-radius:18px;padding:1rem 1.1rem;margin:.8rem 0;box-shadow:0 8px 22px rgba(22,163,74,.18)}.final-box b{color:#fef9c3}.mini-legend span{display:inline-block;margin:.15rem .35rem .15rem 0;padding:.22rem .55rem;border-radius:999px;font-size:.76rem;font-weight:800}.lg-native{background:#dcfce7;color:#166534}.lg-geo{background:#ffedd5;color:#9a3412}.lg-derived{background:#dbeafe;color:#1d4ed8}.lg-missing{background:#f1f5f9;color:#475569}
-
-/* ======================= Policy page: clean evaluator visuals ======================= */
-.clean-title {font-size:1.55rem; font-weight:900; color:#0b1f49; margin:.2rem 0 .15rem;}
-.clean-subtitle {font-size:.95rem; color:#334155; margin-bottom:.8rem;}
-.evaluator-panel {background:#ffffff;border:1px solid #dbeafe;border-radius:20px;padding:1rem 1.15rem;margin:.85rem 0;box-shadow:0 10px 28px rgba(15,23,42,.055);}
-.evaluator-panel h3 {margin:.05rem 0 .25rem;color:#0b2a5b;font-size:1.08rem;}
-.path-grid {display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.62rem;align-items:stretch;}
-@media(max-width:1100px){.path-grid{grid-template-columns:repeat(3,minmax(0,1fr));}} @media(max-width:750px){.path-grid{grid-template-columns:1fr;}}
-.path-step {border:1px solid #dbe7f3;border-radius:18px;background:linear-gradient(180deg,#fff,#f8fbff);padding:.85rem;text-align:center;min-height:124px;position:relative;}
-.path-step:after {content:'→';position:absolute;right:-.53rem;top:45%;font-weight:900;color:#2563eb;background:#fff;border-radius:99px;padding:.05rem .2rem;}
-.path-step:last-child:after {content:'';}
-.path-num {width:30px;height:30px;border-radius:999px;margin:0 auto .45rem;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:.86rem;}
-.path-step b {color:#0b2a5b;font-size:.88rem;display:block;}.path-step small {color:#475569;font-size:.75rem;line-height:1.08rem;display:block;margin-top:.22rem;}
-.scq-principle {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin-top:.7rem;} @media(max-width:900px){.scq-principle{grid-template-columns:1fr;}}
-.principle-card {border:1px solid #e2e8f0;border-radius:16px;padding:.78rem .85rem;background:#fff;min-height:110px;}
-.principle-card b{display:block;color:#0b2a5b;margin-bottom:.25rem}.principle-card p{margin:0;color:#475569;font-size:.8rem;line-height:1.2rem;}
-.graph-panel {display:grid;grid-template-columns:1fr 1fr 0.9fr;gap:.75rem;align-items:stretch;} @media(max-width:1100px){.graph-panel{grid-template-columns:1fr;}}
-.graph-card {background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:.75rem;min-height:330px;}
-.graph-card h4{margin:.2rem 0 .25rem;color:#0b2a5b}.graph-note{border-radius:13px;padding:.6rem .7rem;margin-top:.45rem;font-size:.8rem;line-height:1.2rem;}
-.note-red{background:#fff1f2;border:1px solid #fecdd3;color:#7f1d1d}.note-blue{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}.note-green{background:#ecfdf5;border:1px solid #bbf7d0;color:#14532d}
-.relation-list{display:grid;gap:.35rem;margin-top:.7rem}.relation-row{display:grid;grid-template-columns:1.5fr 60px 60px;gap:.4rem;align-items:center;border-bottom:1px solid #edf2f7;padding:.34rem 0;font-size:.82rem}.rel-line{display:inline-block;width:36px;height:4px;border-radius:99px;margin-right:.45rem}.rel-native{background:#16a34a}.rel-geo{background:#2563eb}.rel-derived{background:#f97316}.rel-missing{background:#94a3b8;border-top:2px dashed #94a3b8;height:0}.policy-table-wrap .stDataFrame{border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;}
-.final-strip {background:linear-gradient(135deg,#ecfdf5,#f0f9ff);border:1px solid #bfdbfe;border-left:6px solid #10b981;border-radius:16px;padding:.9rem 1rem;margin:.85rem 0;color:#17324d;font-size:.92rem;}
-.final-strip b{color:#065f46}.warning-strip{background:#fff7ed;border:1px solid #fed7aa;border-left:6px solid #f97316;border-radius:16px;padding:.82rem 1rem;margin:.75rem 0;color:#7c2d12;font-size:.9rem;}
-
-
-/* ======================= Warm evaluator skin override ======================= */
-.stApp {background:linear-gradient(180deg,#fffaf4 0%,#ffffff 42%,#fff7ed 100%);} 
-.block-container {max-width: 1450px; padding-top: 1.25rem;}
-.hero {background:linear-gradient(135deg,#5e0d1c,#9e1b32 55%,#b8283f); color:white; border:0; border-radius:14px; box-shadow:0 8px 20px rgba(94,13,28,.18);} 
-.hero h1 {color:white;} .hero p {color:white; opacity:.94;}
-div[data-testid="stSidebar"] {background:#f2f4f8; border-right:1px solid #d9dde7;}
-div[data-testid="stSidebar"] button {
-  border-radius:14px !important; border:1px solid #fed7aa !important;
-  font-weight:800 !important; color:#431407 !important; background:#fffaf4 !important;
-  min-height:2.5rem; transition:all .12s ease-in-out;
-}
-div[data-testid="stSidebar"] button:hover {transform:translateY(-1px); border-color:#fb923c !important; color:#9a3412 !important; box-shadow:0 5px 14px rgba(249,115,22,.12);}
-div[data-testid="stSidebar"] button[kind="primary"] {background:linear-gradient(135deg,#ff4f79,#ff8a00) !important; border-color:#ff4f79 !important; color:white !important; box-shadow:0 6px 16px rgba(255,79,121,.16);} 
-
-/* Range pairs (From/To) in the sidebar: force the two columns to sit side
-   by side instead of wrapping, and slim the number inputs so they fit. */
-section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
-  flex-wrap: nowrap !important; gap: .55rem !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
-  min-width: 0 !important; flex: 1 1 0 !important;
-}
-section[data-testid="stSidebar"] [data-testid="stNumberInput"] button {
-  display: none !important;               /* hide +/- steppers: typing only */
-}
-section[data-testid="stSidebar"] [data-testid="stNumberInput"] input {
-  padding: .3rem .5rem !important; font-size: .86rem !important;
-}
-section[data-testid="stSidebar"] [data-testid="stNumberInput"] label {
-  font-size: .74rem !important; margin-bottom: .12rem !important;
-}
-
-/* Sidebar radio groups (Search for, Cluster view): clean rectangular card.
-   Overrides the segmented-pill CSS, which is meant for the horizontal
-   language/direction toggles in the main area only. */
-section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogroup"] {
-  display: flex !important; flex-direction: column !important;
-  gap: 4px !important; width: 100%;
-  background: var(--field-bg) !important;
-  border: 1px solid var(--field-border) !important;
-  border-radius: 10px !important; padding: 6px !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
-  width: 100%; display: flex !important; align-items: center;
-  border-radius: 7px !important; padding: .34rem .65rem !important;
-  margin: 0 !important; cursor: pointer;
-  transition: background .15s ease;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
-  background: var(--option-hover) !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) {
-  background: var(--accent-grad) !important;
-  box-shadow: none !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has(input:checked) p {
-  color: #ffffff !important; font-weight: 700;
-}
-
-/* Warmer field styling: amber-tinted borders and darker warm labels so the
-   sidebar controls read as part of the theme rather than cold grey. */
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div,
-section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div,
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div,
-section[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div {
-  border: 1px solid var(--field-border) !important;
-  border-radius: 8px !important;
-  background: var(--field-bg) !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div:focus-within,
-section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div:focus-within,
-section[data-testid="stSidebar"] [data-testid="stTextInput"] > div > div:focus-within {
-  border-color: var(--field-focus) !important;
-  box-shadow: 0 0 0 2px var(--field-glow) !important;
-}
-section[data-testid="stSidebar"] label p {
-  color: var(--field-label) !important; font-weight: 650 !important;
-}
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
-  background: var(--accent-grad) !important;
-  color: #fff !important; border-radius: 6px !important;
-}
-
-/* Orange interactive details: carets, expander arrows, dropdown highlights,
-   and switch tracks pick up the theme instead of default grey. */
-section[data-testid="stSidebar"] [data-baseweb="select"] svg {
-  color: var(--field-focus) !important; fill: var(--field-focus) !important;
-}
-[data-testid="stExpander"] summary svg {
-  color: var(--field-focus) !important; fill: var(--field-focus) !important;
-}
-[data-testid="stExpander"] summary:hover {
-  color: #9a3412 !important;
-}
-[data-baseweb="popover"] [role="option"]:hover {
-  background: var(--option-hover) !important;
-  color: var(--option-hover-text) !important;
-}
-[data-baseweb="popover"] [role="option"][aria-selected="true"] {
-  background: var(--accent-grad) !important;
-  color: #ffffff !important;
-}
-section[data-testid="stSidebar"] [role="switch"][aria-checked="true"] {
-  background: var(--field-focus) !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > div > div:hover,
-section[data-testid="stSidebar"] [data-testid="stNumberInput"] > div > div:hover,
-section[data-testid="stSidebar"] [data-testid="stMultiSelect"] > div > div:hover {
-  border-color: var(--field-focus) !important;
-}
-
-.nav-card{display:block;text-decoration:none;border:1px solid #fed7aa;border-radius:13px;background:#fff;padding:.58rem .65rem;margin:.35rem 0;color:#431407;font-size:.84rem;font-weight:760;box-shadow:0 4px 12px rgba(234,88,12,.045);}
-.nav-card-active{background:linear-gradient(135deg,#ff4f79,#ff8a00);color:white!important;border-color:#ff4f79;box-shadow:0 7px 18px rgba(255,79,121,.16);}
-.nav-card:hover{border-color:#fb923c;background:#fff7ed;}
-.nav-card-active:hover{background:linear-gradient(135deg,#ff4f79,#ff8a00);}
-.nav-emoji{display:inline-block;width:1.45rem;text-align:center;margin-right:.2rem;}
-.stMetric {
-  background:#ffffff;
-  border:1px solid #e5e7eb;
-  border-radius:10px;
-  box-shadow:0 3px 10px rgba(15,23,42,.035);
-}
-.evaluator-panel,.visual-card,.graph-card,.coverage-card,.task-card {
-  border-color:#e5e7eb;
-  border-radius:12px;
-  box-shadow:0 4px 14px rgba(15,23,42,.04);
-}
-.evaluator-panel h3,.graph-card h4,.visual-card h3,.clean-title {color:#7c2d12 !important;}
-.task-card,.solutionbox,.warningbox,.successbox,.visual-note,.final-strip,.warning-strip {
-  border-left-width:1px !important;
-}
-.solutionbox {background:#fff7ed; border:1px solid #e5e7eb;}
-.warningbox {background:#fffbeb; border:1px solid #e5e7eb;}
-.successbox {background:#f0fdf4; border:1px solid #e5e7eb;}
-.final-strip {background:linear-gradient(135deg,#fff7ed,#f0fdf4); border:1px solid #e5e7eb;}
-.warning-strip {background:#fff7ed; border:1px solid #e5e7eb;}
-
+.native {background:#eaf7ef;color:#17613a;}
+.geometry {background:#fff0e8;color:#9a431f;}
+.derived {background:#f1ecff;color:#6543a5;}
+.small-muted {font-size:.84rem;color:#6f625d;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -3789,572 +3590,123 @@ def render_page_switcher(page: str) -> None:
                   on_click=set_page, args=("Map",))
 
 
-def apply_dashboard_theme(dark_theme: bool) -> None:
-    """Apply a compact infographic-inspired light/dark skin."""
-    if dark_theme:
-        # A calm dark slate rather than saturated blue: long reading sessions
-        # need low chroma. Accents are desaturated to sit on it without
-        # vibrating, which is what made red text on blue hard to read.
-        app_bg = "linear-gradient(180deg,#141821 0%,#191d28 50%,#12161e 100%)"
-        sidebar_bg = "linear-gradient(180deg,#1a1f2b 0%,#141821 100%)"
-        panel_bg = "rgba(255,255,255,.055)"
-        panel_border = "rgba(255,255,255,.10)"
-        text = "#e8eaf0"
-        muted = "#a3abbb"
-        sidebar_text = "#e8eaf0"
-        metric_bg = "rgba(255,255,255,.07)"
-        hero = "#D73648"
-        nav_bg = "rgba(255,255,255,.06)"
-        nav_active = "linear-gradient(135deg,#9a3412,#c2410c)"
-        map_tiles = "dark"
-        ok_color = "#7ddba1"
-        geo_color = "#f0a868"
-        derived_color = "#b7a6f0"
-        field_bg = "rgba(255,255,255,.06)"
-        field_border = "rgba(255,255,255,.15)"
-        field_focus = "#f0a868"
-        field_glow = "rgba(240,168,104,.18)"
-        field_label = "#cbd3e1"
-        option_hover = "rgba(255,255,255,.09)"
-        option_hover_text = "#f5d0b0"
-        accent_grad = "linear-gradient(135deg,#7a1224,#9e1b32)"
-        # The search frame and its magnifier: white on the dark skin.
-        search_ink = "#ffffff"
-        search_icon = "%23ffffff"
-        ev_bg = "rgba(255,255,255,.045)"
-        ev_border = "rgba(255,255,255,.12)"
-        ev_quote_bg = "rgba(255,255,255,.06)"
-        ev_full = "#7ddba1"
-        ev_partial = "#f0a868"
-        ev_none = "#9aa4b5"
-        ev_full_bg = "rgba(125,219,161,.14)"
-        ev_partial_bg = "rgba(240,168,104,.14)"
-        ev_none_bg = "rgba(154,164,181,.14)"
-    else:
-        # Cardiff University red, used as a soft warm tint rather than grey.
-        app_bg = "#ffffff"
-        sidebar_bg = "#ffffff"
-        panel_bg = "#ffffff"
-        panel_border = "#e5e7eb"
-        text = "#303443"
-        muted = "#596273"
-        sidebar_text = "#303443"
-        metric_bg = "#ffffff"
-        hero = "#D73648"
-        nav_bg = "#ffffff"
-        nav_active = "linear-gradient(135deg,#D73648,#b8283f)"
-        map_tiles = "light"
-        ok_color = "#15803d"
-        geo_color = "#ea580c"
-        derived_color = "#7c3aed"
-        field_bg = "#ffffff"
-        field_border = "#eccace"
-        field_focus = "#D73648"
-        field_glow = "rgba(215,54,72,.16)"
-        field_label = "#8a1e2b"
-        option_hover = "#fdeef1"
-        option_hover_text = "#8a1e2b"
-        accent_grad = "linear-gradient(135deg,#D73648,#b8283f)"
-        # Cardiff red, sampled from the crest, so the box reads as a search
-        # field at a glance rather than as one more input.
-        search_ink = "#D73648"
-        search_icon = "%23D73648"
-        ev_bg = "#ffffff"
-        ev_border = "#e8d5cf"
-        ev_quote_bg = "#faf7f5"
-        ev_full = "#15803d"
-        ev_partial = "#a8620a"
-        ev_none = "#5f6875"
-        ev_full_bg = "rgba(21,128,61,.10)"
-        ev_partial_bg = "rgba(168,98,10,.10)"
-        ev_none_bg = "rgba(95,104,117,.10)"
-
-    st.session_state.map_tiles = map_tiles
+def apply_dashboard_theme(dark_theme: bool = False) -> None:
+    """Apply the single public coral-and-orange visual system."""
+    st.session_state.map_tiles = "light"
     st.markdown(
-        f"""
+        """
 <style>
-:root {{
-  --field-bg:{field_bg};
-  --field-border:{field_border};
-  --field-focus:{field_focus};
-  --field-glow:{field_glow};
-  --field-label:{field_label};
-  --option-hover:{option_hover};
-  --option-hover-text:{option_hover_text};
-  --accent-grad:{accent_grad};
-}}
-.stApp {{ background:{app_bg} !important; color:{text} !important; }}
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] > div,
-section[data-testid="stSidebar"] div[data-testid="stSidebarContent"],
-div[data-testid="stSidebar"] {{
-  background:{sidebar_bg} !important;
-  border-right:1px solid {panel_border} !important;
-}}
-section[data-testid="stSidebar"] *::-webkit-scrollbar {{
-  width:10px;
-}}
-section[data-testid="stSidebar"] *::-webkit-scrollbar-track {{
-  background:rgba(255,255,255,.08);
-}}
-section[data-testid="stSidebar"] *::-webkit-scrollbar-thumb {{
-  background:rgba(255,255,255,.36);
-  border-radius:999px;
-}}
-section[data-testid="stSidebar"] [data-testid="collapsedControl"],
-section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {{
-  color:{sidebar_text} !important;
-}}
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] *,
-div[data-testid="stSidebar"],
-div[data-testid="stSidebar"] * {{
-  color:{sidebar_text} !important;
-}}
-.hero {{
-  background:{hero} !important;
-  color:white !important;
-  border:0 !important;
-  border-radius:6px !important;
-  box-shadow:0 8px 18px rgba(17,24,39,.10) !important;
-}}
-.hero h1,.hero p {{ color:white !important; }}
-.stMetric {{
-  background:{metric_bg} !important;
-  border:1px solid {panel_border} !important;
-  border-radius:6px !important;
-  box-shadow:none !important;
-}}
-.stMetric label,.stMetric [data-testid="stMetricLabel"] {{
-  color:{muted} !important;
-}}
-.stMetric [data-testid="stMetricValue"] {{
-  color:{text} !important;
-}}
-.task-card,.visual-card,.evaluator-panel,.graph-card,.coverage-card,
-.solutionbox,.warningbox,.successbox,.final-strip,.warning-strip,
-.subtask,.visual-note,.bridge-side,.bridge-mid-light div,.side-card {{
-  background:{panel_bg} !important;
-  border:1px solid {panel_border} !important;
-  border-left-width:1px !important;
-  border-radius:6px !important;
-  box-shadow:none !important;
-  color:{text} !important;
-}}
-.task-step,.path-step,.principle-card,.scq-tile,.flow-box {{
-  background:{panel_bg} !important;
-  border:1px solid {panel_border} !important;
-  border-radius:6px !important;
-  color:{text} !important;
-  box-shadow:none !important;
-}}
-.task-card h3,.visual-card h3,.evaluator-panel h3,.graph-card h4,
-.clean-title,.solutionbox b,.task-key,.step-title2,.path-step b,
-.principle-card b,.scq-tile h4,.flow-box b,.bridge-side b,
-.bridge-mid-light,.big-score,.final-box b,.side-title {{ color:{text} !important; }}
-.small-muted,.step-text,.clean-subtitle,.path-step small,
-.principle-card p,.scq-tile p,.flow-box small,.score-label,
-.bridge-side span,.visual-note,.subtask,.side-copy,.side-muted {{
-  color:{muted} !important;
-}}
-.side-card {{
-  padding:.75rem .85rem !important;
-  margin:.55rem 0 1rem 0 !important;
-}}
-.side-title {{
-  font-weight:900 !important;
-  margin-bottom:.45rem !important;
-}}
-.side-ok,.native-word {{
-  color:{ok_color} !important;
+:root {
+  --ink:#332f3e;
+  --muted:#746d78;
+  --surface:#fffdfb;
+  --surface-soft:#fff7f2;
+  --border:#efc9bb;
+  --coral:#ff6675;
+  --orange:#ffa35b;
+  --accent-grad:linear-gradient(135deg,#ff6675 0%,#ff846d 48%,#ffa35b 100%);
+  --field-bg:#fffdfb;
+  --field-border:#efc9bb;
+  --field-focus:#f16b57;
+  --field-glow:rgba(241,107,87,.16);
+  --field-label:#633b32;
+  --option-hover:#fff0e9;
+  --option-hover-text:#7e392c;
+}
+.stApp {
+  background:linear-gradient(180deg,#ffffff 0%,#fffdfa 62%,#fff8f3 100%) !important;
+  color:var(--ink) !important;
+}
+h1,h2,h3,h4,h5,h6,p,label {
+  color:var(--ink);
+}
+div[data-testid="stButton"] button {
+  min-height:3rem;
+  border-radius:13px !important;
+  font-weight:750 !important;
+  transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease;
+}
+div[data-testid="stButton"] button[kind="primary"] {
+  background:var(--accent-grad) !important;
+  border:1px solid #f06e56 !important;
+  color:#fff !important;
+  box-shadow:0 5px 0 #d95443,0 11px 22px rgba(207,83,61,.18) !important;
+}
+div[data-testid="stButton"] button[kind="secondary"] {
+  background:linear-gradient(180deg,#fffdfb,#fff7f2) !important;
+  border:1px solid var(--border) !important;
+  color:#503a35 !important;
+  box-shadow:0 4px 0 #e5b6a5,0 9px 18px rgba(116,73,58,.10) !important;
+}
+div[data-testid="stButton"] button:hover {
+  transform:translateY(-1px);
+  filter:saturate(1.03);
+}
+div[data-testid="stButton"] button:active {
+  transform:translateY(3px);
+  box-shadow:0 1px 0 #d95443,0 4px 10px rgba(116,73,58,.10) !important;
+}
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-baseweb="select"] > div {
+  background:var(--field-bg) !important;
+  border-color:var(--field-border) !important;
+  color:var(--ink) !important;
+  border-radius:13px !important;
+}
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stNumberInput"] input:focus,
+div[data-baseweb="select"] > div:focus-within {
+  border-color:var(--field-focus) !important;
+  box-shadow:0 0 0 3px var(--field-glow) !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+  border-bottom:1px solid #eadfd9;
+}
+.stTabs [aria-selected="true"] {
+  color:#a74736 !important;
+  border-bottom-color:#f16b57 !important;
+}
+.stTabs [aria-selected="true"] p {
+  color:#a74736 !important;
+  font-weight:750 !important;
+}
+div[data-testid="stMetric"] {
+  background:linear-gradient(135deg,#fffdfb,#fff6f0) !important;
+  border:1px solid #efd1c5 !important;
+  border-radius:17px !important;
+  box-shadow:0 9px 24px rgba(91,48,38,.06) !important;
+  padding:.7rem .9rem !important;
+}
+div[data-testid="stDataFrame"] {
+  border:1px solid #efcfc2 !important;
+  border-radius:18px !important;
+  overflow:hidden !important;
+  background:#fffdfb !important;
+  box-shadow:0 12px 30px rgba(91,48,38,.08) !important;
+}
+div[data-testid="stDataFrame"] [role="columnheader"] {
+  background:#ffe9df !important;
+  color:#5a342c !important;
   font-weight:800 !important;
-}}
-.side-alert {{
-  color:#fecdd3 !important;
-  font-weight:800 !important;
-}}
-.geo-word {{
-  color:{geo_color} !important;
-  font-weight:800 !important;
-}}
-.derived-word {{
-  color:{derived_color} !important;
-  font-weight:800 !important;
-}}
-.side-copy {{
-  font-size:.78rem !important;
-  line-height:1.35rem !important;
-}}
-.bar-track {{
-  background:rgba(255,255,255,.22) !important;
-}}
-.final-box {{
-  background:linear-gradient(135deg,#0f9f8f,#13a85f) !important;
-  border-radius:6px !important;
-  color:white !important;
-}}
-.nav-card {{
-  background:{nav_bg} !important;
-  border:1px solid {panel_border} !important;
-  border-radius:6px !important;
-  box-shadow:none !important;
-  color:{text} !important;
-}}
-.nav-card-active {{
-  background:{nav_active} !important;
-  border-color:transparent !important;
-  color:white !important;
-}}
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span,
-div[data-testid="stSidebar"] label,
-div[data-testid="stSidebar"] p,
-div[data-testid="stSidebar"] span {{
-  color:{sidebar_text} !important;
-}}
-section[data-testid="stSidebar"] button,
-div[data-testid="stSidebar"] button {{
-  background:{nav_bg} !important;
-  border:1px solid {panel_border} !important;
-  border-radius:6px !important;
-  color:{sidebar_text} !important;
-  box-shadow:none !important;
-}}
-section[data-testid="stSidebar"] button[kind="primary"],
-div[data-testid="stSidebar"] button[kind="primary"] {{
-  background:{nav_active} !important;
-  border-color:transparent !important;
-  color:white !important;
-}}
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
-section[data-testid="stSidebar"] input,
-div[data-testid="stSidebar"] div[data-baseweb="select"] > div,
-div[data-testid="stSidebar"] input {{
-  background:rgba(255,255,255,.94) !important;
-  border-color:transparent !important;
-  color:#303443 !important;
-  border-radius:6px !important;
-}}
-section[data-testid="stSidebar"] div[data-baseweb="select"] *,
-div[data-testid="stSidebar"] div[data-baseweb="select"] * {{
-  color:#303443 !important;
-}}
-div[data-testid="stButton"] button[kind="secondary"] {{
-  background:{panel_bg} !important;
-  border:1px solid {panel_border} !important;
-  color:{text} !important;
-  border-radius:6px !important;
-  box-shadow:none !important;
-}}
-div[data-testid="stButton"] button[kind="secondary"]:hover {{
-  border-color:#20c6d7 !important;
-  color:{text} !important;
-}}
-div[data-testid="stButton"] button[kind="primary"] {{
-  background:{nav_active} !important;
-  border-color:transparent !important;
-  color:white !important;
-  border-radius:6px !important;
-}}
-.result-table-wrap {{
-  overflow:auto !important;
-  border:1px solid {panel_border} !important;
-  border-radius:6px !important;
-  background:{panel_bg} !important;
-  margin:.55rem 0 1rem 0 !important;
-}}
-.result-table-wrap table {{
-  width:100% !important;
-  border-collapse:collapse !important;
-  font-size:.78rem !important;
-  color:{text} !important;
-}}
-.result-table-wrap th {{
-  background:rgba(255,255,255,.12) !important;
-  color:{text} !important;
-  font-weight:800 !important;
-  text-align:left !important;
-  padding:.48rem .55rem !important;
-  border-bottom:1px solid {panel_border} !important;
-}}
-.result-table-wrap td {{
-  padding:.42rem .55rem !important;
-  border-bottom:1px solid {panel_border} !important;
-  color:{text} !important;
-}}
-div[data-testid="stCodeBlock"] pre,
-div[data-testid="stCodeBlock"] code {{
-  background:{panel_bg} !important;
-  color:{text} !important;
-  border-color:{panel_border} !important;
-}}
-.hero {{ position:relative; }}
-.hero {{
-  display:flex;
-  align-items:center;
-  gap:1.4rem;
-}}
-.hero-main {{ flex:1 1 auto; min-width:0; }}
-/* Height is fixed and the width follows the artwork, so any silhouette of
-   Wales sits at the same optical weight as the title block beside it. */
-.hero-wales {{
-  flex:0 0 auto;
-  height:240px;          /* the one number to change if you want it bigger */
-  width:auto;
-  max-width:42%;
-  object-fit:contain;
-  align-self:center;
-  margin:-.6rem -.4rem -.6rem 0;
-  filter:drop-shadow(0 4px 12px rgba(0,0,0,.22));
-}}
-@media (max-width: 820px) {{
-  .hero {{ display:block; }}
-  .hero-wales {{ display:none; }}
-}}
-.hero-logo {{
-  display:block;
-  height:52px;
-  width:auto;
-  margin:0 0 .85rem 0;
-  background:#fff;
-  border-radius:8px;
-  padding:6px 10px;
-  box-shadow:0 3px 10px rgba(0,0,0,.14);
-}}
-.hero-inst {{
-  font-size:.72rem; font-weight:800; letter-spacing:.16em;
-  text-transform:uppercase; opacity:.85; margin-bottom:.35rem;
-}}
-.hero-people {{
-  display:flex; flex-wrap:wrap; gap:1.6rem;
-  margin:.75rem 0 .5rem; font-size:.82rem; line-height:1.35rem;
-}}
-.hero-people b {{
-  font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
-  opacity:.85;
-}}
-.hero-rule {{ margin-top:.35rem; }}
-
-/* Selected radio and tab labels kept legible on the dark skin, where the
-   accent fill is dark enough to swallow dark text. */
-div[role="radiogroup"] label[data-baseweb="radio"] div {{
-  color:{text} !important;
-}}
-.stTabs [aria-selected="true"] p {{ color:{text} !important; }}
-.stRadio label p, .stSelectbox label p, .stTextInput label p {{
-  color:{muted} !important;
-}}
-
-/* ---- natural-language search ---- */
-.nl-wrap {{
-  background:{accent_grad};
-  border-radius:14px 14px 0 0;
-  padding:.85rem 1.1rem .7rem;
-  color:#fff;
-  margin-top:1.7rem;
-}}
-.nl-title {{ font-size:1.02rem; font-weight:800; letter-spacing:.01em; }}
-.nl-sub {{ font-size:.8rem; opacity:.92; margin-top:.15rem; line-height:1.35rem; }}
-
-/* The two question boxes are the only text inputs in the app, so they can be
-   framed directly. A Cardiff-red rule and an inline magnifier make the field
-   read as a search engine instead of another form control. The glyph is an
-   SVG data URI recoloured per theme, so nothing is fetched over the network
-   and it stays crisp at any zoom. */
-div[data-testid="stTextInput"] input {{
-  border:2px solid {search_ink} !important;
-  border-radius:12px !important;
-  padding-left:2.6rem !important;
-  font-size:.95rem !important;
-  background-color:{field_bg} !important;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='{search_icon}' stroke-width='2.1' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><line x1='16.2' y1='16.2' x2='21' y2='21'/></svg>") !important;
-  background-repeat:no-repeat !important;
-  background-position:left .8rem center !important;
-  background-size:17px 17px !important;
-  transition:box-shadow .15s ease, border-color .15s ease;
-}}
-div[data-testid="stTextInput"] input:focus {{
-  box-shadow:0 0 0 3px {field_glow} !important;
-}}
-.nl-read {{
-  background:{ev_bg};
-  border:1px solid {ev_border};
-  border-radius:12px;
-  padding:.75rem .95rem;
-  margin:.55rem 0 .9rem;
-  color:{text};
-}}
-.nl-read-title {{
-  font-size:.66rem; font-weight:800; letter-spacing:.13em;
-  text-transform:uppercase; color:{muted}; margin-bottom:.45rem;
-}}
-.nl-chips {{ display:flex; flex-wrap:wrap; gap:.35rem; }}
-.nl-chip {{
-  font-size:.76rem; font-weight:700; padding:.2rem .6rem;
-  border-radius:999px; border:1px solid {ev_border};
-}}
-.nl-chip-rel {{ color:{field_focus}; background:{ev_quote_bg}; font-family:ui-monospace,Consolas,monospace; }}
-.nl-chip-focus {{ color:{ev_partial}; background:{ev_partial_bg}; }}
-.nl-chip-area {{ color:{ev_full}; background:{ev_full_bg}; }}
-.nl-steps {{ margin:.6rem 0 0; padding-left:1.15rem; }}
-.nl-steps li {{ font-size:.83rem; line-height:1.5rem; color:{muted}; }}
-.ql-head {{
-  border-radius:10px;
-  padding:.55rem .8rem;
-  margin:.3rem 0 .6rem;
-  border-left:5px solid currentColor;
-  background:{ev_quote_bg};
-}}
-.ql-rel {{
-  display:block; font-size:.72rem; font-weight:800;
-  letter-spacing:.12em; text-transform:uppercase;
-}}
-.ql-inst {{
-  display:block; font-size:.84rem; line-height:1.45rem;
-  color:{text}; opacity:.86; margin-top:.2rem;
-}}
-.ql-scq1 {{ color:#2563eb; }}
-.ql-scq2 {{ color:#0d9488; }}
-.ql-scq3 {{ color:#7c3aed; }}
-.ql-scq4 {{ color:#64748b; }}
-.ql-scq5 {{ color:#c2410c; }}
-.ql-scq6 {{ color:#b45309; }}
-.ql-scq7 {{ color:#15803d; }}
-.ql-scq8 {{ color:#be185d; }}
-[data-testid="stExpander"] .stButton button {{
-  border-radius:999px !important;
-  text-align:left !important;
-  font-size:.82rem !important;
-  padding:.35rem .85rem !important;
-  white-space:normal !important;
-  line-height:1.35rem !important;
-}}
-
-.nl-driven {{
-  background:{ev_quote_bg};
-  border:1px solid {ev_border};
-  border-left:4px solid {field_focus};
-  border-radius:10px;
-  padding:.5rem .8rem;
-  font-size:.85rem;
-  line-height:1.45rem;
-  color:{text};
-  margin:.2rem 0 .5rem;
-}}
-.nl-src {{
-  display:inline-block; font-size:.72rem; font-weight:700;
-  padding:.2rem .65rem; border-radius:999px; margin-bottom:.5rem;
-  border:1px solid {ev_border};
-}}
-.nl-src-rule {{ color:{ev_full}; background:{ev_full_bg}; }}
-.nl-src-llm {{ color:{ev_partial}; background:{ev_partial_bg}; }}
-.nl-warn {{
-  margin-top:.5rem; font-size:.82rem; color:{ev_partial};
-  background:{ev_partial_bg}; border-radius:8px; padding:.4rem .6rem;
-}}
-
-/* ---- Task 3 evidence block ---- */
-.ev-inst {{
-  background:{ev_quote_bg};
-  border:1px solid {ev_border};
-  border-left:4px solid {field_focus};
-  border-radius:10px;
-  padding:.7rem .9rem;
-  margin:.5rem 0 .8rem;
-  font-size:.94rem;
-  line-height:1.55rem;
-  color:{text};
-}}
-.ev-inst-label {{
-  display:block;
-  font-size:.66rem;
-  font-weight:800;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-  color:{field_focus};
-  margin-bottom:.25rem;
-}}
-.ev-block, .ev-qs {{
-  background:{ev_bg};
-  border:1px solid {ev_border};
-  border-radius:12px;
-  padding:.85rem 1rem;
-  margin:.55rem 0;
-  color:{text};
-}}
-.ev-title {{
-  font-size:.68rem;
-  font-weight:800;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-  color:{muted};
-  margin-bottom:.6rem;
-}}
-.ev-card {{
-  border:1px solid {ev_border};
-  border-left:4px solid {ev_none};
-  border-radius:10px;
-  padding:.65rem .8rem;
-  margin-bottom:.55rem;
-}}
-.ev-card.ev-full {{ border-left-color:{ev_full}; }}
-.ev-card.ev-partial {{ border-left-color:{ev_partial}; }}
-.ev-head {{
-  display:flex; align-items:center; gap:.6rem;
-  flex-wrap:wrap; margin-bottom:.4rem;
-}}
-.ev-source {{ font-weight:800; font-size:.86rem; color:{text}; }}
-.ev-verdict {{
-  margin-left:auto;
-  font-size:.68rem; font-weight:800;
-  letter-spacing:.06em; text-transform:uppercase;
-  padding:.15rem .55rem; border-radius:999px;
-}}
-.ev-verdict.ev-full {{ color:{ev_full}; background:{ev_full_bg}; }}
-.ev-verdict.ev-partial {{ color:{ev_partial}; background:{ev_partial_bg}; }}
-.ev-verdict.ev-none {{ color:{ev_none}; background:{ev_none_bg}; }}
-.ev-quote {{
-  font-style:italic;
-  background:{ev_quote_bg};
-  border-radius:8px;
-  padding:.45rem .65rem;
-  font-size:.9rem;
-  line-height:1.5rem;
-  color:{text};
-}}
-.ev-page {{ font-size:.74rem; color:{muted}; margin:.25rem 0 .45rem; }}
-.ev-empty {{
-  display:inline-block;
-  font-size:.7rem; font-weight:800; letter-spacing:.1em;
-  color:{ev_none}; background:{ev_none_bg};
-  border:1px dashed {ev_border};
-  padding:.28rem .6rem; border-radius:6px;
-  margin-bottom:.45rem;
-}}
-.ev-warrant {{ font-size:.88rem; line-height:1.5rem; color:{text}; }}
-.ev-note {{ font-size:.78rem; color:{muted}; margin-top:.3rem; }}
-.ev-assess {{
-  background:{ev_quote_bg};
-  border-radius:10px;
-  padding:.65rem .8rem;
-  font-size:.88rem;
-  line-height:1.55rem;
-  color:{text};
-}}
-.ev-qs ol {{ margin:0; padding-left:1.2rem; }}
-.ev-qs li {{ font-size:.9rem; line-height:1.6rem; margin-bottom:.2rem; color:{text}; }}
-.ev-qs li::marker {{ color:{field_focus}; font-weight:800; }}
-mark {{ color:inherit; }}
-
-.map-note {{
-  background:{panel_bg} !important;
-  border:1px solid {panel_border} !important;
-  border-radius:6px !important;
-  color:{muted} !important;
-  padding:.65rem .8rem !important;
-  margin:.5rem 0 .65rem 0 !important;
-}}
+}
+[data-testid="stExpander"] {
+  border-color:#efcfc2 !important;
+  border-radius:16px !important;
+  background:#fffaf7 !important;
+}
+[data-baseweb="popover"] [role="option"]:hover {
+  background:var(--option-hover) !important;
+  color:var(--option-hover-text) !important;
+}
+[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+  background:var(--accent-grad) !important;
+  color:#fff !important;
+}
+@media (max-width:760px) {
+  .block-container {padding-left:.7rem;padding-right:.7rem;}
+  div[data-testid="stButton"] button {min-height:2.75rem;}
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -11232,6 +10584,7 @@ def _map_explicit_relation(text: str) -> str:
             r"\b(?:wards?|communities|unitary\s+authorities|lsoas?)\s+near\b",
             low,
         )
+        or re.search(r"\bnear\b", low)
     ):
         return "graph_near"
     if re.search(
@@ -11352,6 +10705,13 @@ def _map_spatial_hint(text: str) -> Dict[str, str] | None:
     first = parse_anchor(first_fragment)
     if not first:
         return None
+    # A terse spatial question such as "NEAR W01001440" already supplies a
+    # relation and an unambiguous geographic anchor.  In that form the user
+    # is asking for areas, not silently asking for every school.  Explicit
+    # school wording keeps the school-result interpretation used by Map.
+    if result_kind == "Schools" and not re.search(r"\bschools?\b", raw, re.I):
+        result_kind = "LSOA" if first[1] == "LSOA" else "AdminUnit"
+        requested_type = first[1]
     hint: Dict[str, str] = {
         "anchor_name": first[0],
         "anchor_type": first[1],
