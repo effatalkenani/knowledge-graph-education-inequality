@@ -3560,8 +3560,9 @@ def render_page_switcher(page: str) -> None:
         [data-testid="stMainBlockContainer"]{
           width:100%!important;
           max-width:none!important;
-          padding-left:clamp(.75rem,1.6vw,1.6rem)!important;
-          padding-right:clamp(.75rem,1.6vw,1.6rem)!important;
+          padding-left:clamp(.35rem,.65vw,.75rem)!important;
+          padding-right:clamp(.35rem,.65vw,.75rem)!important;
+          padding-top:.45rem!important;
           margin-left:0!important;
           margin-right:0!important;
         }
@@ -3598,6 +3599,14 @@ def render_page_switcher(page: str) -> None:
         .st-key-page_map{
           animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
           transform-origin:50% 0;
+          width:100%!important;
+          padding:clamp(.7rem,1.35vw,1.35rem)!important;
+          background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%)!important;
+          border:1px solid #f0cfc1!important;
+          border-radius:30px!important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,.92),
+            0 24px 58px rgba(102,52,40,.10)!important;
         }
         .st-key-nav_switcher{
           width:min(960px,88%)!important;
@@ -3616,7 +3625,7 @@ def render_page_switcher(page: str) -> None:
             0 7px 16px rgba(95,49,39,.08)!important;
         }
         .shared-hero-logo{
-          width:190px;max-width:21%;max-height:180px;object-fit:contain;
+          width:260px;max-width:27%;max-height:225px;object-fit:contain;
           flex:0 0 auto;filter:drop-shadow(0 12px 22px rgba(75,36,25,.18));
         }
         .guided-hero:after,.map-search-hero:after{
@@ -3649,6 +3658,10 @@ def render_page_switcher(page: str) -> None:
         div[data-testid="stDeckGlJsonChart"]{
           animation:result-rise .48s cubic-bezier(.2,.8,.2,1) both;
           transform-origin:50% 20%;
+          border:2px solid #efbda9!important;
+          border-radius:24px!important;
+          overflow:hidden!important;
+          box-shadow:0 20px 46px rgba(101,52,40,.14)!important;
         }
         div[data-testid="stDataFrame"]{
           animation:result-rise .55s .06s cubic-bezier(.2,.8,.2,1) both;
@@ -11929,7 +11942,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         "div[data-testid='stExpander']{border:1px solid #f0cfc2!important;"
         "border-radius:18px!important;background:#fffaf7!important;"
         "box-shadow:0 10px 28px rgba(91,48,38,.06)!important}"
-        "div[data-testid='stDeckGlJsonChart']{border:1px solid #f0cfc2;"
+        "div[data-testid='stDeckGlJsonChart']{border:2px solid #efbda9!important;"
         "border-radius:24px;overflow:hidden;box-shadow:0 20px 48px rgba(91,48,38,.14)}"
         "div[data-testid='stDataFrame']{border:1px solid #f0cfc2!important;"
         "border-radius:20px!important;overflow:hidden!important;background:#fffdfa!important;"
