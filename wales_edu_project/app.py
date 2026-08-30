@@ -4972,6 +4972,40 @@ def display_df(df: pd.DataFrame) -> None:
             st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def warm_table(df: pd.DataFrame) -> Any:
+    """Give evaluator-facing result grids the same warm visual hierarchy."""
+    return (
+        df.style
+        .set_table_styles([
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", "#ffad78"),
+                    ("color", "#3f241f"),
+                    ("font-weight", "800"),
+                    ("border-color", "#efbba8"),
+                ],
+            },
+            {
+                "selector": "td",
+                "props": [
+                    ("color", "#2f2422"),
+                    ("border-color", "#f1ddd5"),
+                ],
+            },
+            {
+                "selector": "tbody tr:nth-child(even) td",
+                "props": [("background-color", "#fff8f3")],
+            },
+            {
+                "selector": "tbody tr:nth-child(odd) td",
+                "props": [("background-color", "#fffdfb")],
+            },
+        ])
+        .format(na_rep="—", precision=1)
+    )
+
+
 def school_outline_points(df: pd.DataFrame, bins: int = 34) -> List[Dict[str, float]]:
     """Approximate a Wales outline from available school coordinates."""
     pts = df[["longitude", "latitude"]].dropna().copy()
@@ -7436,6 +7470,9 @@ def clear_guided_selection() -> None:
     st.session_state.pop("guided_selected_lsoas", None)
     st.session_state.pop("guided_lsoa_results_table", None)
     st.session_state.pop("guided_admin_results_table", None)
+    st.session_state["guided_selection_version"] = (
+        int(st.session_state.get("guided_selection_version", 0)) + 1
+    )
 
 
 def guided_admin_kind_expr(alias: str) -> str:
@@ -8055,12 +8092,17 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
 
         st.markdown("### Results")
         st.metric("Areas found", len(result))
-        reset_left, reset_col, reset_right = st.columns([2.4, 1, 2.4])
-        with reset_col:
-            st.button(
-                "Reset selection", key="guided_reset_selection",
-                use_container_width=True, on_click=clear_guided_selection,
-            )
+        has_guided_selection = bool(
+            st.session_state.get("guided_selected_lsoas")
+            or st.session_state.get("guided_selected_admins")
+        )
+        if has_guided_selection:
+            reset_left, reset_col, reset_right = st.columns([2.4, 1, 2.4])
+            with reset_col:
+                st.button(
+                    "Clear selected areas", key="guided_reset_selection",
+                    use_container_width=True, on_click=clear_guided_selection,
+                )
         if result.empty:
             st.info(
                 "No area satisfies this relationship for the selected place."
@@ -8094,9 +8136,13 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             if lsoa_col:
                 try:
                     table_event = st.dataframe(
-                        table_result, use_container_width=True, hide_index=True,
+                        warm_table(table_result), use_container_width=True,
+                        hide_index=True,
                         on_select="rerun", selection_mode="multi-row",
-                        key="guided_lsoa_results_table",
+                        key=(
+                            "guided_lsoa_results_table_"
+                            f"{st.session_state.get('guided_selection_version', 0)}"
+                        ),
                     )
                     selected_rows = list(table_event.selection.rows)
                     table_selected_lsoas = {
@@ -8135,12 +8181,15 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             ] or list(table_result.columns)
             try:
                 table_event = st.dataframe(
-                    table_result[visible_cols],
+                    warm_table(table_result[visible_cols]),
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
                     selection_mode="multi-row",
-                    key="guided_admin_results_table",
+                    key=(
+                        "guided_admin_results_table_"
+                        f"{st.session_state.get('guided_selection_version', 0)}"
+                    ),
                 )
                 selected_rows = list(table_event.selection.rows)
             except TypeError:
@@ -11622,14 +11671,17 @@ def page_map(cfg: Dict[str, str]) -> None:
     st.markdown(
         "<style>[data-testid='stMainBlockContainer']{max-width:1600px!important;"
         "padding-left:2.2rem!important;padding-right:2.2rem!important}"
-        ".map-search-hero{max-width:980px;margin:1rem auto 1.45rem;"
-        "text-align:center;padding:2.2rem 1.5rem;border-radius:28px;"
+        ".map-search-hero{max-width:1120px;margin:1rem auto 1.45rem;"
+        "display:flex;align-items:center;gap:2rem;text-align:left;"
+        "padding:1.8rem 2.2rem;border-radius:28px;"
         "background:linear-gradient(125deg,#ff707c 0%,#ff9a72 52%,#ffc55c 100%);"
         "box-shadow:0 22px 55px rgba(185,76,55,.18)}"
         ".map-search-hero h1{font-size:clamp(2rem,4vw,3.2rem);"
         "letter-spacing:-.04em;line-height:1.08;margin:0;color:#fff;"
         "font-weight:850}.map-search-hero p{font-size:1rem;color:#fff7f2;"
-        "margin:.55rem 0 0}"
+        "margin:.55rem 0 0}.map-hero-logo{width:190px;max-height:180px;"
+        "object-fit:contain;flex:0 0 auto;filter:drop-shadow(0 12px 22px rgba(75,36,25,.18))}"
+        ".map-hero-copy{flex:1;text-align:center}"
         "div[data-testid='stTextInput'] input,div[data-testid='stNumberInput'] input{"
         "border-radius:14px!important;min-height:3.15rem;padding-left:1rem;"
         "background:#fffdfa!important;border:1px solid #f3cbbc!important;"
@@ -11650,6 +11702,10 @@ def page_map(cfg: Dict[str, str]) -> None:
         "div[data-testid='stMetric']{background:linear-gradient(135deg,#fffdfa,#fff3ec)!important;"
         "border:1px solid #f2d5ca!important;border-radius:17px!important;"
         "box-shadow:0 9px 24px rgba(91,48,38,.06)!important;padding:.7rem .9rem!important}"
+        ".st-key-page_map div[data-testid='stButton'] button[kind='primary']{"
+        "background:linear-gradient(120deg,#ff6877,#ff9b69)!important;"
+        "border:0!important;color:#fff!important;"
+        "box-shadow:0 10px 24px rgba(255,104,119,.22)!important}"
         ".school-results-title{font-size:1.45rem;font-weight:850;color:#4c2b25;"
         "margin:1.4rem 0 .6rem}.results-basis{color:#76574f;font-size:.88rem;"
         "margin:.2rem 0 1rem}"
@@ -11657,25 +11713,21 @@ def page_map(cfg: Dict[str, str]) -> None:
         unsafe_allow_html=True,
     )
     hero_shell = st.container(key="map_search_hero")
-    logo_col, hero_col = hero_shell.columns([1, 4])
-    with logo_col:
-        logo_path = Path(__file__).with_name("wales_education_kg.png")
-        if logo_path.exists():
-            st.image(str(logo_path), use_container_width=True)
-        else:
-            st.markdown(
-                "<div style='height:100%;min-height:190px;display:flex;"
-                "align-items:center;justify-content:center;color:#7c4437;"
-                "font-weight:850;text-align:center'>Wales Education KG</div>",
-                unsafe_allow_html=True,
-            )
-    with hero_col:
-        st.markdown(
-            "<div class='map-search-hero'><h1>Explore Welsh schools by place</h1>"
-            "<p>Search schools, compare local indicators and view the geographic "
-            "areas connected to each result.</p></div>",
-            unsafe_allow_html=True,
+    logo_path = Path(__file__).with_name("wales_education_kg.png")
+    logo_html = ""
+    if logo_path.exists():
+        logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+        logo_html = (
+            "<img class='map-hero-logo' alt='Wales Education KG' "
+            f"src='data:image/png;base64,{logo_b64}'>"
         )
+    hero_shell.markdown(
+        "<div class='map-search-hero'>" + logo_html
+        + "<div class='map-hero-copy'><h1>Explore Welsh schools by place</h1>"
+        "<p>Search schools, compare local indicators and view the geographic "
+        "areas connected to each result.</p></div></div>",
+        unsafe_allow_html=True,
+    )
 
     la_opts = safe_options(cfg, """
     MATCH (s:School)
@@ -13136,7 +13188,8 @@ ORDER BY cluster_size DESC, cluster_id
     edit_left, edit_mid, edit_right = st.columns([5, 1.35, 5])
     with edit_mid:
         st.button(
-            "Edit search", key="map_edit_search", use_container_width=True,
+            "Back to filters", key="map_edit_search", use_container_width=True,
+            type="primary",
             on_click=edit_map_search,
         )
     st.markdown("<div id='school-map-results'></div>", unsafe_allow_html=True)
@@ -13144,8 +13197,18 @@ ORDER BY cluster_size DESC, cluster_id
         components.html(
             """
             <script>
-            const target = window.parent.document.getElementById('school-map-results');
-            if (target) setTimeout(() => target.scrollIntoView({behavior:'smooth', block:'start'}), 120);
+            let attempts = 0;
+            const timer = setInterval(() => {
+              const doc = window.parent.document;
+              const target = doc.querySelector('[data-testid="stDeckGlJsonChart"]');
+              attempts += 1;
+              if (target) {
+                target.scrollIntoView({behavior:'smooth', block:'start'});
+                clearInterval(timer);
+              } else if (attempts > 40) {
+                clearInterval(timer);
+              }
+            }, 100);
             </script>
             """,
             height=0,
@@ -13210,8 +13273,22 @@ ORDER BY cluster_size DESC, cluster_id
         "capped9_score": "Capped 9 (points)",
         "nearest_stop_distance_m": "Nearest stop (m)",
     })
+    if "Deprivation" in school_table.columns:
+        school_table["Deprivation"] = school_table["Deprivation"].map({
+            "high_deprivation": "High",
+            "medium_deprivation": "Medium",
+            "low_deprivation": "Low",
+            "unknown": "Unknown",
+        }).fillna(school_table["Deprivation"])
+    for numeric_column in (
+        "FSM (%)", "Attendance (%)", "Capped 9 (points)", "Nearest stop (m)"
+    ):
+        if numeric_column in school_table.columns:
+            school_table[numeric_column] = pd.to_numeric(
+                school_table[numeric_column], errors="coerce"
+            ).round(1)
     st.dataframe(
-        school_table, use_container_width=True, hide_index=True,
+        warm_table(school_table), use_container_width=True, hide_index=True,
         height=min(560, 44 + 35 * min(len(school_table), 14)),
         key="map_school_results_table",
     )
