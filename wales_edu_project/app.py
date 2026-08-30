@@ -3256,6 +3256,30 @@ def edit_map_search() -> None:
     st.session_state["map_has_run"] = False
 
 
+def render_map_edit_button() -> None:
+    """Keep the return action identical for filter and natural searches."""
+    source = st.session_state.get("map_last_search_source", "filters")
+    label = "Back to question" if source == "words" else "Back to filters"
+    edit_left, edit_mid, edit_right = st.columns([5, 1.35, 5])
+    with edit_mid:
+        st.button(
+            label,
+            key="map_edit_search",
+            use_container_width=True,
+            type="primary",
+            on_click=edit_map_search,
+        )
+
+
+def clear_map_spatial_selection() -> None:
+    """Reset row emphasis without discarding the natural-language answer."""
+    st.session_state.pop("map_spatial_selected_lsoas", None)
+    st.session_state.pop("map_spatial_selected_admins", None)
+    st.session_state["map_spatial_selection_version"] = (
+        int(st.session_state.get("map_spatial_selection_version", 0)) + 1
+    )
+
+
 def wales_logo_html() -> str:
     """Embed the project mark so both public heroes use the same asset."""
     logo_path = Path(__file__).with_name("wales_education_kg.png")
@@ -10796,7 +10820,7 @@ def resolve_map_admin_scope(
         compatible = (
             _eval_class(domain_type) == _eval_class(unit_type)
             and "touches" in possible
-        ) or result_kind == "LSOA"
+        ) or unit_type == "LSOA" or result_kind == "LSOA"
     else:
         compatible = table_relation in possible
     if spatial_only and not compatible:
@@ -12425,6 +12449,14 @@ def page_map(cfg: Dict[str, str]) -> None:
     if build_run or nl_map.get("submitted"):
         st.session_state["map_has_run"] = True
         st.session_state["map_scroll_to_results"] = True
+        st.session_state["map_last_search_source"] = (
+            "words" if nl_map.get("submitted") else "filters"
+        )
+        st.session_state.pop("map_spatial_selected_lsoas", None)
+        st.session_state.pop("map_spatial_selected_admins", None)
+        st.session_state["map_spatial_selection_version"] = (
+            int(st.session_state.get("map_spatial_selection_version", 0)) + 1
+        )
     if not st.session_state.get("map_has_run"):
         return
     st.markdown(
@@ -12432,6 +12464,7 @@ def page_map(cfg: Dict[str, str]) -> None:
         "display:none!important}</style>",
         unsafe_allow_html=True,
     )
+    render_map_edit_button()
 
     if nl_map.get("spatial_relation_failed"):
         st.info(
@@ -12475,16 +12508,50 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "answer itself; click an LSOA for its code, deprivation and "
                 "schools."
             )
+            selected_lsoas = set(
+                st.session_state.get("map_spatial_selected_lsoas", [])
+            ) & set(codes)
+            if selected_lsoas:
+                reset_left, reset_mid, reset_right = st.columns([5, 1.5, 5])
+                with reset_mid:
+                    st.button(
+                        "Clear selected areas",
+                        key="map_spatial_clear_lsoas",
+                        use_container_width=True,
+                        on_click=clear_map_spatial_selection,
+                    )
             clicked_lsoa = render_answer_map(
                 cfg,
                 spatial_df,
                 focus_code=None,
                 key="map_spatial_lsoa_answer",
                 focus_admin=str(anchor.get("uri") or ""),
+                selected_codes=selected_lsoas,
             )
             if clicked_lsoa:
                 render_lsoa_school_panel(cfg, clicked_lsoa)
-            display_df(spatial_df)
+            st.caption(
+                "Select one or more rows to emphasise those areas. "
+                "The remaining answers fade but stay visible for context."
+            )
+            try:
+                spatial_event = st.dataframe(
+                    warm_table(spatial_df), use_container_width=True,
+                    hide_index=True, on_select="rerun",
+                    selection_mode="multi-row", key=(
+                        "map_spatial_lsoa_table_"
+                        f"{st.session_state.get('map_spatial_selection_version', 0)}"
+                    ),
+                )
+                chosen = {
+                    str(spatial_df.iloc[int(i)]["lsoa_code"])
+                    for i in spatial_event.selection.rows
+                }
+                if chosen != selected_lsoas:
+                    st.session_state["map_spatial_selected_lsoas"] = sorted(chosen)
+                    st.rerun()
+            except TypeError:
+                display_df(spatial_df)
         else:
             unit_df = (
                 units.dropna(subset=["unit_uri"])
@@ -12499,16 +12566,60 @@ def page_map(cfg: Dict[str, str]) -> None:
                 "These polygons are the exact administrative answer; school "
                 "pins are not substituted for the requested units."
             )
+            valid_admins = set(
+                unit_df.get("unit_uri", pd.Series(dtype=str))
+                .dropna().astype(str)
+            )
+            selected_admins = set(
+                st.session_state.get("map_spatial_selected_admins", [])
+            ) & valid_admins
+            if selected_admins:
+                reset_left, reset_mid, reset_right = st.columns([5, 1.5, 5])
+                with reset_mid:
+                    st.button(
+                        "Clear selected areas",
+                        key="map_spatial_clear_admins",
+                        use_container_width=True,
+                        on_click=clear_map_spatial_selection,
+                    )
             picked_unit = render_admin_answer_map(
                 cfg,
                 unit_df,
                 None,
                 key="map_spatial_admin_answer",
                 focus_admin=str(anchor.get("uri") or ""),
+                selected_admins=selected_admins,
             )
             if picked_unit and picked_unit.get("uri") != anchor.get("uri"):
                 render_unit_school_card(cfg, picked_unit)
-            display_df(unit_df)
+            st.caption(
+                "Select one or more rows to keep those boundaries strong. "
+                "Other answers fade and selected schools remain prominent."
+            )
+            visible_cols = [
+                c for c in ("unit_name", "unit_type", "unit_uri")
+                if c in unit_df.columns
+            ] or list(unit_df.columns)
+            table_units = unit_df.reset_index(drop=True)
+            try:
+                spatial_event = st.dataframe(
+                    warm_table(table_units[visible_cols]),
+                    use_container_width=True, hide_index=True,
+                    on_select="rerun", selection_mode="multi-row",
+                    key=(
+                        "map_spatial_admin_table_"
+                        f"{st.session_state.get('map_spatial_selection_version', 0)}"
+                    ),
+                )
+                chosen = {
+                    str(table_units.iloc[int(i)]["unit_uri"])
+                    for i in spatial_event.selection.rows
+                }
+                if chosen != selected_admins:
+                    st.session_state["map_spatial_selected_admins"] = sorted(chosen)
+                    st.rerun()
+            except TypeError:
+                display_df(table_units[visible_cols])
         return
     if admin_scope:
         conditions.append("l.code IN $nl_admin_lsoa_codes")
@@ -13459,13 +13570,6 @@ ORDER BY cluster_size DESC, cluster_id
             "Cluster regions are shaded by deprivation level. Hover a region "
             "for its counts and averages, then click it to see the schools "
             "by name. School pins return in Standard search."
-        )
-    edit_left, edit_mid, edit_right = st.columns([5, 1.35, 5])
-    with edit_mid:
-        st.button(
-            "Back to filters", key="map_edit_search", use_container_width=True,
-            type="primary",
-            on_click=edit_map_search,
         )
     st.markdown("<div id='school-map-results'></div>", unsafe_allow_html=True)
     if st.session_state.pop("map_scroll_to_results", False):
