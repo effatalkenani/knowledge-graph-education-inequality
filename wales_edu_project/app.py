@@ -3854,19 +3854,19 @@ def render_page_switcher(page: str) -> None:
         + wales_logo_html()
         + "<div class='site-brand-copy'>"
         "<div class='site-brand-name'>Wales Education KG</div>"
-        "<div class='site-brand-tagline'>Explore Welsh schools and places "
-        "through a qualitative knowledge graph.</div>"
+        "<div class='site-brand-tagline'>Ask about Welsh places and schools, "
+        "then explore the answers on the map.</div>"
         "</div></header>",
         unsafe_allow_html=True,
     )
     nav_shell = st.container(key="nav_switcher")
     scq, map_col, _nav_space = nav_shell.columns([1, 1, 2.8], gap="small")
     with scq:
-        st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
+        st.button("Explore Place Relations", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
                   on_click=set_page, args=("SCQ Demonstrator",))
     with map_col:
-        st.button("Map Explorer", key="nav_tab_map", use_container_width=True,
+        st.button("Explore Schools", key="nav_tab_map", use_container_width=True,
                   type="primary" if page == "Map" else "secondary",
                   on_click=set_page, args=("Map",))
 
