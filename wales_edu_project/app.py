@@ -3486,12 +3486,6 @@ def render_page_switcher(page: str) -> None:
           font-weight:800!important;
           letter-spacing:.005em!important;
         }
-        .nav-transfer{
-          height:3.75rem;display:flex;align-items:center;justify-content:center;
-          color:#d76451;font-size:1.45rem;font-weight:900;
-          filter:drop-shadow(0 5px 7px rgba(102,52,40,.16));
-          user-select:none;
-        }
         .guided-hero,.map-search-hero{
           position:relative;isolation:isolate;overflow:hidden;
           transform:perspective(1200px) translateZ(0);
@@ -3682,18 +3676,13 @@ def render_page_switcher(page: str) -> None:
             unsafe_allow_html=True,
         )
     nav_shell = st.container(key="nav_switcher")
-    pad_left, scq, transfer, map_col, pad_right = nav_shell.columns(
-        [.05, 1, .09, 1, .05]
+    pad_left, scq, gap, map_col, pad_right = nav_shell.columns(
+        [.05, 1, .04, 1, .05]
     )
     with scq:
         st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
                   on_click=set_page, args=("SCQ Demonstrator",))
-    with transfer:
-        st.markdown(
-            "<div class='nav-transfer' title='Switch search view'>⇄</div>",
-            unsafe_allow_html=True,
-        )
     with map_col:
         st.button("Map Explorer", key="nav_tab_map", use_container_width=True,
                   type="primary" if page == "Map" else "secondary",
