@@ -7286,6 +7286,15 @@ def clear_guided_selection() -> None:
     )
 
 
+def clear_place_nl_selection() -> None:
+    """Clear emphasis in the SCQ natural-language result table."""
+    st.session_state.pop("place_nl_selected_lsoas", None)
+    st.session_state.pop("place_nl_selected_admins", None)
+    st.session_state["place_nl_selection_version"] = (
+        int(st.session_state.get("place_nl_selection_version", 0)) + 1
+    )
+
+
 def guided_admin_kind_expr(alias: str) -> str:
     """Canonical administrative type from the actual YAGO2geo spelling."""
     raw = (
@@ -7588,6 +7597,7 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         st.session_state["place_nl_question"] = ""
         st.session_state.pop("place_nl_scope", None)
         st.session_state.pop("place_nl_error", None)
+        st.session_state.pop("place_nl_notice", None)
 
     st.markdown("### Search in your own words")
     qcol, bcol, clear_col = st.columns([6, 1, 1])
@@ -7617,17 +7627,34 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     if asked:
         st.session_state.pop("place_nl_scope", None)
         st.session_state.pop("place_nl_error", None)
-        input_error = natural_spatial_input_error(text)
+        st.session_state.pop("place_nl_notice", None)
+        clear_place_nl_selection()
+        try:
+            entity_scopes, entity_error, entity_notice = (
+                infer_natural_entity_scopes(cfg, text)
+            )
+        except Exception:
+            entity_scopes, entity_error, entity_notice = [], None, None
+        try:
+            graph_hint, graph_error = infer_natural_spatial_scope(cfg, text)
+        except Exception:
+            graph_hint, graph_error = None, None
+        input_error = entity_error or graph_error or (
+            None if (graph_hint or entity_scopes)
+            else natural_spatial_input_error(text)
+        )
         intent = (
             llm_parse_map_question(text)
             if text.strip() and not input_error else {}
         )
-        requested_scopes = intent.get("admin_scopes") or (
-            [intent["admin_scope"]] if intent.get("admin_scope") else []
-        )
+        requested_scopes = entity_scopes or ([graph_hint] if graph_hint else (
+            intent.get("admin_scopes") or (
+                [intent["admin_scope"]] if intent.get("admin_scope") else []
+            )
+        ))
         # The deterministic reader is the safe fallback and also protects
         # explicit codes/relation words from an incorrect model paraphrase.
-        if not requested_scopes:
+        if not requested_scopes and not graph_error:
             hint = _map_spatial_hint(text)
             requested_scopes = [hint] if hint else []
         if input_error:
@@ -7651,7 +7678,10 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
                     scope, scope_warnings = resolve_map_admin_scopes(
                         cfg,
                         requested_scopes,
-                        str(intent.get("admin_operator") or "AND").upper(),
+                        (
+                            "OR" if entity_scopes else
+                            str(intent.get("admin_operator") or "AND").upper()
+                        ),
                     )
             except Exception:
                 scope = None
@@ -7666,12 +7696,17 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
                 )
             else:
                 st.session_state["place_nl_scope"] = scope
+                if entity_notice:
+                    st.session_state["place_nl_notice"] = entity_notice
                 st.session_state["place_nl_scroll_to_results"] = True
 
     error = st.session_state.get("place_nl_error")
     if error:
         st.info(error)
         return
+    notice = st.session_state.get("place_nl_notice")
+    if notice:
+        st.info(notice)
     scope = st.session_state.get("place_nl_scope")
     if not scope:
         return
@@ -7690,24 +7725,78 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             "for individual schools and education indicators."
         )
         return
-    if result_kind == "LSOA":
+    if result_kind in {"LSOA", "Mixed"}:
         codes = sorted(set(scope.get("lsoa_codes") or []))
-        result = pd.DataFrame({"lsoa_code": codes})
+        scope_units = scope.get("units", pd.DataFrame())
+        result = (
+            scope_units.dropna(subset=["lsoa_code"])
+            .drop_duplicates(subset=["lsoa_code"])
+            .reset_index(drop=True)
+            if isinstance(scope_units, pd.DataFrame)
+            and not scope_units.empty
+            and "lsoa_code" in scope_units.columns
+            else pd.DataFrame({"lsoa_code": codes})
+        )
         if result.empty:
             if natural_loading_slot is not None:
                 natural_loading_slot.empty()
             st.info("No LSOA satisfies this relationship for the selected place.")
             return
-        st.metric("Areas found", len(result))
+        if result_kind == "Mixed" and scope.get("compound"):
+            st.metric("Named places", len(scope.get("components") or []))
+            st.caption(
+                "Administrative places are drawn through their intersecting "
+                "LSOA coverage so statistical and administrative selections "
+                "can share one map."
+            )
+        else:
+            st.metric("Areas found", len(result))
+        selected_lsoas = set(
+            st.session_state.get("place_nl_selected_lsoas", [])
+        ) & set(codes)
+        if selected_lsoas:
+            reset_left, reset_mid, reset_right = st.columns([5, 1.5, 5])
+            with reset_mid:
+                st.button(
+                    "Clear selected areas", key="place_nl_clear_lsoas",
+                    use_container_width=True,
+                    on_click=clear_place_nl_selection,
+                )
+        anchor_is_lsoa = str(anchor.get("unit_type")) == "LSOA"
         clicked = render_answer_map(
             cfg, result, key="place_nl_lsoa_map",
-            focus_admin=str(anchor.get("uri") or ""),
+            focus_code=str(anchor.get("uri") or "") if anchor_is_lsoa else None,
+            focus_admin=(
+                None if anchor_is_lsoa else str(anchor.get("uri") or "")
+            ),
+            selected_codes=selected_lsoas,
         )
         if clicked:
             render_lsoa_school_panel(cfg, clicked)
         if natural_loading_slot is not None:
-            dismiss_loading_when_ready(require_map=True)
-        display_df(result)
+            natural_loading_slot.empty()
+        st.caption(
+            "Select one or more rows to emphasise those answer areas. "
+            "Select a row again to remove it from the selection."
+        )
+        try:
+            table_event = st.dataframe(
+                warm_table(result), use_container_width=True, hide_index=True,
+                on_select="rerun", selection_mode="multi-row",
+                key=(
+                    "place_nl_lsoa_results_table_"
+                    f"{st.session_state.get('place_nl_selection_version', 0)}"
+                ),
+            )
+            chosen = {
+                str(result.iloc[int(i)]["lsoa_code"])
+                for i in table_event.selection.rows
+            }
+            if chosen != selected_lsoas:
+                st.session_state["place_nl_selected_lsoas"] = sorted(chosen)
+                st.rerun()
+        except TypeError:
+            display_df(result)
         return
 
     units = scope.get("units", pd.DataFrame())
@@ -7725,15 +7814,56 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         )
         return
     st.metric("Areas found", len(result))
+    valid_admins = set(result["unit_uri"].dropna().astype(str))
+    selected_admins = set(
+        st.session_state.get("place_nl_selected_admins", [])
+    ) & valid_admins
+    if selected_admins:
+        reset_left, reset_mid, reset_right = st.columns([5, 1.5, 5])
+        with reset_mid:
+            st.button(
+                "Clear selected areas", key="place_nl_clear_admins",
+                use_container_width=True,
+                on_click=clear_place_nl_selection,
+            )
+    anchor_is_lsoa = str(anchor.get("unit_type")) == "LSOA"
     picked = render_admin_answer_map(
-        cfg, result, None, key="place_nl_admin_map",
-        focus_admin=str(anchor.get("uri") or ""),
+        cfg, result,
+        str(anchor.get("uri") or "") if anchor_is_lsoa else None,
+        key="place_nl_admin_map",
+        focus_admin=(None if anchor_is_lsoa else str(anchor.get("uri") or "")),
+        selected_admins=selected_admins,
     )
     if picked:
         render_unit_school_card(cfg, picked)
     if natural_loading_slot is not None:
-        dismiss_loading_when_ready(require_map=True)
-    display_df(result)
+        natural_loading_slot.empty()
+    visible_cols = [
+        c for c in ("unit_name", "unit_type", "unit_uri")
+        if c in result.columns
+    ] or list(result.columns)
+    st.caption(
+        "Select one or more rows to keep those boundaries strong. "
+        "The other answers fade but remain visible for context."
+    )
+    try:
+        table_event = st.dataframe(
+            warm_table(result[visible_cols]), use_container_width=True,
+            hide_index=True, on_select="rerun", selection_mode="multi-row",
+            key=(
+                "place_nl_admin_results_table_"
+                f"{st.session_state.get('place_nl_selection_version', 0)}"
+            ),
+        )
+        chosen = {
+            str(result.iloc[int(i)]["unit_uri"])
+            for i in table_event.selection.rows
+        }
+        if chosen != selected_admins:
+            st.session_state["place_nl_selected_admins"] = sorted(chosen)
+            st.rerun()
+    except TypeError:
+        display_df(result[visible_cols])
 
 
 def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
@@ -8032,7 +8162,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 key="guided_lsoa_map",
             )
             if guided_loading_slot is not None:
-                dismiss_loading_when_ready(require_map=True)
+                guided_loading_slot.empty()
             if clicked and re.match(r"^W\d{8}$", clicked):
                 render_lsoa_school_panel(cfg, clicked)
             st.caption(
@@ -8077,7 +8207,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 key="guided_admin_map",
             )
             if guided_loading_slot is not None:
-                dismiss_loading_when_ready(require_map=True)
+                guided_loading_slot.empty()
             st.caption(
                 "Select a row to focus that area. Its boundary stays strong, "
                 "the other answers fade, and only its school pins remain."
@@ -10608,6 +10738,12 @@ def _map_requested_result(text: str) -> Tuple[str, str | None]:
     return "Schools", None
 
 
+def _map_has_explicit_result_class(text: str) -> bool:
+    """Whether the words before the relation name an answer class."""
+    kind, _ = _map_requested_result(text)
+    return kind != "Schools" or bool(re.search(r"\bschools?\b", text or "", re.I))
+
+
 def _map_explicit_relation(text: str) -> str:
     """Read relation words in precedence order; negation always wins."""
     low = (text or "").lower()
@@ -10837,6 +10973,225 @@ def natural_spatial_input_error(text: str) -> str | None:
     return None
 
 
+def infer_natural_spatial_scope(
+    cfg: Dict[str, str], text: str
+) -> Tuple[Dict[str, Any] | None, str | None]:
+    """Resolve an omitted geography type from the graph itself.
+
+    Codes and exact stored names are authoritative.  A unique match supplies
+    the anchor class; ambiguous names are reported instead of being guessed.
+    The same helper is used by SCQ and Map natural-language search.
+    """
+    raw = str(text or "").strip()
+    relation = _map_explicit_relation(raw)
+    if not raw or relation == "direct":
+        return None, None
+
+    hint = _map_spatial_hint(raw)
+    explicit_result = _map_has_explicit_result_class(raw)
+
+    # The deterministic reader already recognises a W-code or an explicitly
+    # typed anchor.  It still benefits from the same safe result inference.
+    if hint and hint.get("anchor_name") and hint.get("anchor_type"):
+        anchor_type = _canonical_spatial_type(hint.get("anchor_type"))
+    else:
+        patterns = {
+            "not_touches": r"\b(?:(?:does|do)\s+not\s+(?:touch|border)|not\s+touch(?:ing)?|non[- ]adjacent|not\s+adjacent)\b",
+            "intersects": r"\bintersect(?:s|ing)?\b",
+            "between": r"\bbetween\b",
+            "contains": r"\b(?:contains?|containing|parent\s+of)\b",
+            "inside": r"\b(?:inside|within|contained\s+in)\b",
+            "graph_near": r"\b(?:graph[- ]?near|near)\b",
+            "touches": r"\b(?:touch(?:es|ing)?|adjacent|neighbours?|neighbors?|neighbouring|neighboring)\b",
+        }
+        match = re.search(patterns.get(relation, r"$^"), raw, re.I)
+        if not match:
+            return None, None
+        if relation == "between":
+            # BETWEEN still needs two independently resolved anchors.
+            return None, natural_spatial_input_error(raw)
+        anchor_text = raw[match.end():].strip(" ?.,")
+        anchor_text = re.sub(r"^(?:to|with|of|the)\s+", "", anchor_text, flags=re.I)
+        if not anchor_text:
+            return None, "Add the reference place by its stored name or code."
+
+        # Remove only a trailing type label.  The remaining text must match a
+        # stored entity exactly (including either side of a bilingual name).
+        for phrase in sorted(_ADMIN_TYPE_WORDS, key=len, reverse=True):
+            anchor_text = re.sub(
+                rf"\s+{re.escape(phrase)}$", "", anchor_text,
+                flags=re.I,
+            ).strip()
+        anchor_text = re.sub(r"\s+lsoa$", "", anchor_text, flags=re.I).strip()
+        kind_expr = guided_admin_kind_expr("a")
+        wales_pred = guided_wales_admin_predicate("a")
+        candidates = run_cypher(cfg, f"""
+        MATCH (l:LSOA)
+        WHERE toUpper(coalesce(l.code, '')) = toUpper($name)
+           OR toLower(coalesce(l.name, '')) = toLower($name)
+        RETURN l.code AS identifier, coalesce(l.name,l.code) AS name,
+               'LSOA' AS unit_type
+        UNION ALL
+        MATCH (a:AdminUnit)
+        WHERE {wales_pred}
+          AND (
+            toLower(coalesce(a.name, '')) = toLower($name)
+            OR toLower(coalesce(a.name, '')) STARTS WITH toLower($name) + ' - '
+            OR toLower(coalesce(a.name, '')) ENDS WITH ' - ' + toLower($name)
+          )
+        RETURN a.uri AS identifier, coalesce(a.name,a.uri) AS name,
+               {kind_expr} AS unit_type
+        """, {"name": anchor_text})
+        unique: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for row in candidates:
+            key = (str(row.get("identifier") or ""), str(row.get("unit_type") or ""))
+            if key[0] and key[1]:
+                unique[key] = row
+        candidates = list(unique.values())
+        if not candidates:
+            return None, (
+                f'We could not find an exact Welsh place or LSOA matching "{anchor_text}". '
+                "Check the stored name or code and search again."
+            )
+        if len(candidates) > 1:
+            options = sorted({str(row.get("unit_type")) for row in candidates})
+            labels = ", ".join(options)
+            examples = "; ".join(
+                f'{row.get("name")} ({row.get("unit_type")})'
+                for row in candidates[:5]
+            )
+            return None, (
+                f'"{anchor_text}" matches more than one stored Welsh entity'
+                f" ({labels}): {examples}. Add the area type so we use the intended one."
+            )
+        chosen = candidates[0]
+        anchor_type = _canonical_spatial_type(chosen.get("unit_type"))
+        anchor_name = (
+            str(chosen.get("identifier")) if anchor_type == "LSOA"
+            else anchor_text
+        )
+        result_kind, requested_type = _map_requested_result(raw)
+        hint = {
+            "anchor_name": anchor_name,
+            "anchor_type": anchor_type,
+            "relation": relation,
+            "target_type": _canonical_spatial_type(requested_type) or anchor_type,
+            "result_kind": result_kind,
+            "spatial_only": result_kind != "Schools",
+        }
+
+    if not explicit_result and not re.search(r"\bschools?\b", raw, re.I):
+        if relation in {"touches", "not_touches", "graph_near"}:
+            hint["target_type"] = anchor_type
+            hint["result_kind"] = "LSOA" if anchor_type == "LSOA" else "AdminUnit"
+            hint["spatial_only"] = True
+        elif relation == "intersects" and anchor_type != "LSOA":
+            # In this graph INTERSECTS is AdminUnit -> LSOA.
+            hint["target_type"] = "LSOA"
+            hint["result_kind"] = "LSOA"
+            hint["spatial_only"] = True
+        else:
+            return None, (
+                "Add the type of area to return for this cross-geography "
+                "relationship, such as LSOAs, Communities or Wards."
+            )
+    return hint, None
+
+
+def infer_natural_entity_scopes(
+    cfg: Dict[str, str], text: str
+) -> Tuple[List[Dict[str, Any]], str | None, str | None]:
+    """Resolve one or more named places when no relation was requested."""
+    raw = str(text or "").strip()
+    if not raw or _map_explicit_relation(raw) != "direct":
+        return [], None, None
+    raw = re.sub(
+        r"^(?:show|map|find|display|locate|plot)\s+(?:me\s+)?",
+        "", raw, flags=re.I,
+    ).strip()
+    fragments = [
+        part.strip(" ?.,;•") for part in re.split(
+            r"\s*(?:,|;|•|\band\b|&)\s*", raw, flags=re.I
+        ) if part.strip(" ?.,;•")
+    ][:8]
+    if not fragments:
+        return [], None, None
+
+    kind_expr = guided_admin_kind_expr("a")
+    wales_pred = guided_wales_admin_predicate("a")
+    scopes: List[Dict[str, Any]] = []
+    seen: set[Tuple[str, str]] = set()
+    for original in fragments:
+        code = re.search(r"\bW\d{8}\b", original, re.I)
+        candidate_text = code.group(0).upper() if code else original
+        if not code:
+            for phrase in sorted(_ADMIN_TYPE_WORDS, key=len, reverse=True):
+                candidate_text = re.sub(
+                    rf"\s+{re.escape(phrase)}$", "", candidate_text,
+                    flags=re.I,
+                ).strip()
+            candidate_text = re.sub(
+                r"\s+lsoa$", "", candidate_text, flags=re.I
+            ).strip()
+        rows = run_cypher(cfg, f"""
+        MATCH (l:LSOA)
+        WHERE toUpper(coalesce(l.code,'')) = toUpper($name)
+           OR toLower(coalesce(l.name,'')) = toLower($name)
+        RETURN l.code AS identifier, coalesce(l.name,l.code) AS name,
+               'LSOA' AS unit_type
+        UNION ALL
+        MATCH (a:AdminUnit)
+        WHERE {wales_pred}
+          AND (
+            toLower(coalesce(a.name,'')) = toLower($name)
+            OR toLower(coalesce(a.name,'')) STARTS WITH toLower($name) + ' - '
+            OR toLower(coalesce(a.name,'')) ENDS WITH ' - ' + toLower($name)
+          )
+        RETURN a.uri AS identifier, coalesce(a.name,a.uri) AS name,
+               {kind_expr} AS unit_type
+        """, {"name": candidate_text})
+        matches = rows.to_dict("records") if isinstance(rows, pd.DataFrame) else []
+        matches = [m for m in matches if m.get("identifier") and m.get("unit_type")]
+        unique = {
+            (str(m["identifier"]), str(m["unit_type"])): m for m in matches
+        }
+        matches = list(unique.values())
+        if not matches:
+            # No exact entity means this may be an ordinary school-property
+            # question; leave it to the existing parser.
+            return [], None, None
+        if len(matches) > 1:
+            choices = "; ".join(
+                f'{m.get("name")} ({m.get("unit_type")})' for m in matches[:5]
+            )
+            return [], (
+                f'"{candidate_text}" matches more than one stored Welsh '
+                f"entity: {choices}. Add the area type."
+            ), None
+        match = matches[0]
+        unit_type = _canonical_spatial_type(match.get("unit_type"))
+        key = (str(match.get("identifier")), unit_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        scopes.append({
+            "anchor_name": (
+                str(match.get("identifier")) if unit_type == "LSOA"
+                else candidate_text
+            ),
+            "anchor_type": unit_type,
+            "relation": "direct",
+            "target_type": unit_type,
+            "result_kind": "LSOA" if unit_type == "LSOA" else "AdminUnit",
+            "spatial_only": True,
+        })
+    notice = (
+        "No spatial relationship was specified; showing the named place"
+        + ("s only." if len(scopes) != 1 else " only.")
+    )
+    return scopes, None, notice
+
+
 def resolve_map_admin_scope(
     cfg: Dict[str, str], scope: Dict[str, str] | None
 ) -> Tuple[Dict[str, Any] | None, List[str]]:
@@ -10976,6 +11331,44 @@ def resolve_map_admin_scope(
     if len(anchors) != 1:
         return None, [f"{name} is ambiguous for type {unit_type}; use a more specific name."]
     anchor_uri = str(anchors.iloc[0]["uri"])
+
+    # Entity-only natural queries display the named geometry itself.  They do
+    # not manufacture a topological relation merely to reuse a result path.
+    if relation == "direct" and spatial_only:
+        if unit_type == "LSOA":
+            units = pd.DataFrame([{
+                "lsoa_code": anchor_uri,
+                "name": anchors.iloc[0].get("name"),
+                "result_type": "LSOA",
+            }])
+            lsoa_codes = [anchor_uri]
+        else:
+            coverage = run_cypher(cfg, """
+            MATCH (u:AdminUnit {uri:$uri})
+            OPTIONAL MATCH (u)-[:INTERSECTS]->(l:LSOA)
+            RETURN u.uri AS unit_uri, u.name AS unit_name,
+                   u.type AS unit_type, u.wkt AS unit_wkt,
+                   l.code AS lsoa_code
+            """, {"uri": anchor_uri})
+            units = coverage if not coverage.empty else pd.DataFrame([{
+                "unit_uri": anchor_uri,
+                "unit_name": anchors.iloc[0].get("name"),
+                "unit_type": unit_type,
+                "unit_wkt": anchors.iloc[0].get("wkt"),
+            }])
+            lsoa_codes = sorted(set(
+                units.get("lsoa_code", pd.Series(dtype=str))
+                .dropna().astype(str)
+            ))
+        return {
+            "anchor": anchors.iloc[0].to_dict(),
+            "relation": "direct", "target_type": unit_type,
+            "result_kind": "LSOA" if unit_type == "LSOA" else "AdminUnit",
+            "spatial_only": True,
+            "provenance": "Exact stored entity; no relationship applied",
+            "disjointness_applied": False,
+            "lsoa_codes": lsoa_codes, "units": units,
+        }, []
 
     if relation == "between":
         second_name = str(scope.get("second_name") or "").strip()
@@ -11355,11 +11748,17 @@ def resolve_map_admin_scopes(
         c.get("units") for c in resolved_components
         if isinstance(c.get("units"), pd.DataFrame)
     ]
+    result_kinds = {str(c.get("result_kind")) for c in resolved_components}
     return {
         "compound": True,
         "components": resolved_components,
         "operator": logical_operator,
         "relation": "compound",
+        "anchor": resolved_components[0].get("anchor", {}),
+        "result_kind": (
+            next(iter(result_kinds)) if len(result_kinds) == 1 else "Mixed"
+        ),
+        "spatial_only": all(bool(c.get("spatial_only")) for c in resolved_components),
         "lsoa_codes": sorted(combined_codes),
         "units": (
             pd.concat(unit_frames, ignore_index=True).drop_duplicates()
@@ -11963,7 +12362,28 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     # llm_parse_map_question falls back to the deterministic parser.
     cached_text = st.session_state.get("map_nl_parsed_text")
     cached_intent = st.session_state.get("map_nl_parsed_intent")
-    input_error = natural_spatial_input_error(question) if asked else None
+    graph_hint: Dict[str, Any] | None = None
+    graph_error: str | None = None
+    entity_scopes: List[Dict[str, Any]] = []
+    entity_error: str | None = None
+    entity_notice: str | None = None
+    if asked:
+        try:
+            entity_scopes, entity_error, entity_notice = (
+                infer_natural_entity_scopes(cfg, question)
+            )
+        except Exception:
+            entity_scopes, entity_error, entity_notice = [], None, None
+        try:
+            graph_hint, graph_error = infer_natural_spatial_scope(cfg, question)
+        except Exception:
+            graph_hint, graph_error = None, None
+    input_error = (
+        entity_error or graph_error or (
+            None if (graph_hint or entity_scopes)
+            else natural_spatial_input_error(question)
+        )
+    ) if asked else None
     if asked and input_error:
         parsed = parse_map_question(question)
         parsed["input_validation_failed"] = True
@@ -11973,6 +12393,19 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         parsed["admin_scopes"] = []
     elif asked:
         parsed = llm_parse_map_question(question)
+        if entity_scopes:
+            parsed["admin_scope"] = entity_scopes[0]
+            parsed["admin_scopes"] = entity_scopes
+            parsed["admin_operator"] = "OR"
+            parsed["entity_only_notice"] = entity_notice
+            parsed["conditions"] = []
+            parsed["params"] = {}
+            parsed["unmatched"] = []
+        elif graph_hint:
+            # Exact graph resolution is authoritative for entity type and
+            # relation; retain any school-property conditions read by the LLM.
+            parsed["admin_scope"] = graph_hint
+            parsed["admin_scopes"] = [graph_hint]
     elif cached_text == question and isinstance(cached_intent, dict):
         parsed = cached_intent
     else:
@@ -11993,6 +12426,8 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
             natural_loading_slot.empty()
         st.info(str(parsed.get("input_validation_message")))
         return parsed
+    if parsed.get("entity_only_notice"):
+        st.info(str(parsed.get("entity_only_notice")))
 
     if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
         relation = _map_explicit_relation(question)
@@ -12635,7 +13070,15 @@ def page_map(cfg: Dict[str, str]) -> None:
         units = admin_scope.get("units", pd.DataFrame())
         if result_kind == "LSOA":
             codes = sorted(set(admin_scope.get("lsoa_codes") or []))
-            spatial_df = pd.DataFrame({"lsoa_code": codes})
+            spatial_df = (
+                units.dropna(subset=["lsoa_code"])
+                .drop_duplicates(subset=["lsoa_code"])
+                .reset_index(drop=True)
+                if isinstance(units, pd.DataFrame)
+                and not units.empty
+                and "lsoa_code" in units.columns
+                else pd.DataFrame({"lsoa_code": codes})
+            )
             if spatial_df.empty:
                 if active_loading_slot is not None:
                     active_loading_slot.empty()
@@ -12663,15 +13106,21 @@ def page_map(cfg: Dict[str, str]) -> None:
             clicked_lsoa = render_answer_map(
                 cfg,
                 spatial_df,
-                focus_code=None,
+                focus_code=(
+                    str(anchor.get("uri") or "")
+                    if str(anchor.get("unit_type")) == "LSOA" else None
+                ),
                 key="map_spatial_lsoa_answer",
-                focus_admin=str(anchor.get("uri") or ""),
+                focus_admin=(
+                    None if str(anchor.get("unit_type")) == "LSOA"
+                    else str(anchor.get("uri") or "")
+                ),
                 selected_codes=selected_lsoas,
             )
             if clicked_lsoa:
                 render_lsoa_school_panel(cfg, clicked_lsoa)
             if active_loading_slot is not None:
-                dismiss_loading_when_ready(require_map=True)
+                active_loading_slot.empty()
             st.caption(
                 "Select one or more rows to emphasise those areas. "
                 "The remaining answers fade but stay visible for context."
@@ -12729,18 +13178,21 @@ def page_map(cfg: Dict[str, str]) -> None:
                         use_container_width=True,
                         on_click=clear_map_spatial_selection,
                     )
+            anchor_is_lsoa = str(anchor.get("unit_type")) == "LSOA"
             picked_unit = render_admin_answer_map(
                 cfg,
                 unit_df,
-                None,
+                str(anchor.get("uri") or "") if anchor_is_lsoa else None,
                 key="map_spatial_admin_answer",
-                focus_admin=str(anchor.get("uri") or ""),
+                focus_admin=(
+                    None if anchor_is_lsoa else str(anchor.get("uri") or "")
+                ),
                 selected_admins=selected_admins,
             )
             if picked_unit and picked_unit.get("uri") != anchor.get("uri"):
                 render_unit_school_card(cfg, picked_unit)
             if active_loading_slot is not None:
-                dismiss_loading_when_ready(require_map=True)
+                active_loading_slot.empty()
             st.caption(
                 "Select one or more rows to keep those boundaries strong. "
                 "Other answers fade and selected schools remain prominent."
@@ -13733,7 +14185,7 @@ ORDER BY cluster_size DESC, cluster_id
         selected_school_codes=selected_school_codes,
     )
     if loading_slot is not None:
-        dismiss_loading_when_ready(require_map=True)
+        loading_slot.empty()
     if clicked_region:
         render_lsoa_school_panel(cfg, clicked_region)
 
