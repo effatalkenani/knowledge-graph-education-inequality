@@ -3442,6 +3442,14 @@ def render_page_switcher(page: str) -> None:
           margin-left:0!important;
           margin-right:0!important;
         }
+        /* Style-only Markdown blocks must not create blank rows above the
+           real header. Their CSS still applies while their wrappers collapse. */
+        div[data-testid="stElementContainer"]:has(
+          > div[data-testid="stMarkdownContainer"] > style:only-child
+        ){
+          display:none!important;height:0!important;min-height:0!important;
+          margin:0!important;padding:0!important;
+        }
         section[data-testid="stSidebar"],
         [data-testid="stSidebarCollapsedControl"]{
           display:none!important;
@@ -3516,6 +3524,28 @@ def render_page_switcher(page: str) -> None:
             0 28px 58px rgba(143,68,50,.18),
             0 7px 16px rgba(95,49,39,.08)!important;
         }
+        .site-header{
+          width:100%;min-height:108px;margin:0;padding:.8rem 1.35rem;
+          display:flex;align-items:center;gap:1.1rem;
+          background:linear-gradient(118deg,#ff6575 0%,#ff8b6d 56%,#ffbd61 100%);
+          color:#fff;border:1px solid rgba(255,255,255,.34);
+          border-radius:24px 24px 0 0;
+          box-shadow:inset 0 1px 0 rgba(255,255,255,.46);
+        }
+        .site-header .shared-hero-logo{
+          width:94px!important;max-width:94px!important;height:82px!important;
+          max-height:82px!important;object-fit:contain!important;flex:0 0 94px!important;
+          filter:drop-shadow(0 8px 14px rgba(75,36,25,.18))!important;
+        }
+        .site-brand-copy{min-width:0;line-height:1.2}
+        .site-brand-name{
+          margin:0;color:#fff;font-size:clamp(1.45rem,2.4vw,2rem);
+          font-weight:900;letter-spacing:-.025em;
+        }
+        .site-brand-tagline{
+          margin:.3rem 0 0;color:#fff8f3;font-size:.94rem;
+          font-weight:560;line-height:1.4;
+        }
         .shared-hero-logo{
           width:260px;max-width:27%;max-height:225px;object-fit:contain;
           flex:0 0 auto;filter:drop-shadow(0 12px 22px rgba(75,36,25,.18));
@@ -3570,9 +3600,12 @@ def render_page_switcher(page: str) -> None:
           background:#fff0e8!important;
         }
         .result-loading-overlay{
-          position:fixed;inset:0;width:100vw;height:100dvh;z-index:999998;display:flex;
+          position:fixed!important;top:0!important;right:0!important;bottom:0!important;
+          left:0!important;width:100vw!important;height:100vh!important;
+          min-height:100vh!important;max-height:none!important;z-index:2147483647;
+          display:flex!important;
           flex-direction:column;align-items:center;justify-content:center;
-          background:rgba(255,250,247,.84);backdrop-filter:blur(11px) saturate(1.08);
+          background:#f6f8fb;backdrop-filter:none;
           color:#4a2b25;font-weight:850;text-align:center;overflow:hidden;
           transition:opacity .22s ease;
         }
@@ -3605,46 +3638,131 @@ def render_page_switcher(page: str) -> None:
         button[data-baseweb="tab"]:hover{
           background:#fff4ed!important;transform:translateY(-1px)!important;
         }
-        /* The two main search modes must read as large clickable controls,
-           not as quiet document tabs.  Scope this treatment so evidence and
-           result tabs elsewhere keep their compact appearance. */
+        /* Secondary navigation: compact document tabs. */
         .st-key-guided_search_tabs [data-baseweb="tab-list"],
         .st-key-map_search_builder [data-baseweb="tab-list"]{
-          display:flex!important;gap:18px!important;width:100%!important;
-          padding:8px 8px 13px!important;margin:.35rem 0 1rem!important;
-          border:0!important;background:transparent!important;
+          display:flex!important;gap:1.45rem!important;width:100%!important;
+          align-items:flex-end!important;padding:0 .3rem!important;
+          margin:.35rem 0 1.15rem!important;
+          border-bottom:1px solid #eadfd9!important;
+          background:transparent!important;
         }
         .st-key-guided_search_tabs [data-baseweb="tab-list"] > button,
         .st-key-map_search_builder [data-baseweb="tab-list"] > button{
-          flex:1 1 0!important;min-height:58px!important;
-          justify-content:center!important;border-radius:17px!important;
-          border:1px solid #efb9a4!important;
-          background:linear-gradient(180deg,#fffaf6 0%,#ffe9de 100%)!important;
-          color:#654239!important;font-size:1rem!important;font-weight:820!important;
-          letter-spacing:.005em!important;
-          box-shadow:0 7px 0 #dfa891,0 14px 25px rgba(101,52,40,.14)!important;
-          transform:translateY(0)!important;
-          transition:transform .16s ease,box-shadow .16s ease,
-                     background .16s ease,border-color .16s ease!important;
+          flex:0 0 auto!important;min-height:40px!important;
+          padding:.15rem .18rem .65rem!important;justify-content:flex-start!important;
+          border:0!important;border-radius:8px 8px 0 0!important;
+          background:transparent!important;color:#665954!important;
+          font-size:.91rem!important;font-weight:650!important;
+          box-shadow:none!important;clip-path:none!important;
+          transform:none!important;position:relative!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button:nth-child(1)::before,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button:nth-child(1)::before,
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button:nth-child(2)::before,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button:nth-child(2)::before{
+          content:''!important;display:inline-block!important;flex:0 0 17px!important;
+          width:17px!important;height:17px!important;margin-right:7px!important;
+          vertical-align:-4px!important;background-color:currentColor!important;
+          -webkit-mask-repeat:no-repeat!important;mask-repeat:no-repeat!important;
+          -webkit-mask-position:center!important;mask-position:center!important;
+          -webkit-mask-size:contain!important;mask-size:contain!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button:nth-child(1)::before,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button:nth-child(1)::before{
+          -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-8V3h-2v2h-2v2h2v2h2V7h6V5h-6z'/%3E%3C/svg%3E")!important;
+          mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-8V3h-2v2h-2v2h2v2h2V7h6V5h-6z'/%3E%3C/svg%3E")!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button:nth-child(2)::before,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button:nth-child(2)::before{
+          -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'/%3E%3C/svg%3E")!important;
+          mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'/%3E%3C/svg%3E")!important;
         }
         .st-key-guided_search_tabs [data-baseweb="tab-list"] > button:hover,
         .st-key-map_search_builder [data-baseweb="tab-list"] > button:hover{
-          border-color:#f58d6d!important;
-          background:linear-gradient(180deg,#fffdf9 0%,#ffdfd0 100%)!important;
-          box-shadow:0 8px 0 #d99b82,0 17px 29px rgba(101,52,40,.18)!important;
-          transform:translateY(-1px)!important;
+          background:#fff3ec!important;color:#a94436!important;
+          transform:none!important;
         }
         .st-key-guided_search_tabs [data-baseweb="tab-list"] > button[aria-selected="true"],
         .st-key-map_search_builder [data-baseweb="tab-list"] > button[aria-selected="true"]{
-          color:#fff!important;border-color:#f06458!important;
-          background:linear-gradient(135deg,#ff6575 0%,#ff8b68 56%,#ffa45d 100%)!important;
-          box-shadow:inset 0 3px 8px rgba(119,43,35,.22),
-                     0 3px 0 #cc4f43,0 8px 18px rgba(211,77,65,.22)!important;
-          transform:translateY(4px)!important;
+          background:transparent!important;color:#ad4638!important;
+          border:0!important;border-bottom:3px solid #19733d!important;
+          box-shadow:none!important;font-weight:820!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button[aria-selected="true"]::after,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button[aria-selected="true"]::after{
+          content:""!important;display:block!important;position:absolute!important;
+          left:50%!important;bottom:-8px!important;transform:translateX(-50%)!important;
+          width:0!important;height:0!important;border-left:6px solid transparent!important;
+          border-right:6px solid transparent!important;border-top:6px solid #19733d!important;
         }
         .st-key-guided_search_tabs [data-baseweb="tab-highlight"],
         .st-key-map_search_builder [data-baseweb="tab-highlight"]{
           display:none!important;
+        }
+        /* Primary navigation: one connected two-page switcher. */
+        .st-key-nav_switcher{
+          width:100%!important;margin:0 auto 0!important;
+          padding:9px 18px 0!important;
+          background:linear-gradient(100deg,#ff8b78 0%,#ffad70 100%)!important;
+          border:0!important;border-radius:0!important;
+          position:relative!important;z-index:20!important;
+          box-shadow:none!important;
+        }
+        .st-key-nav_switcher [data-testid="stHorizontalBlock"]{
+          gap:4px!important;width:100%!important;align-items:flex-end!important;
+        }
+        .st-key-nav_switcher [data-testid="column"]{
+          padding:0!important;min-width:0!important;
+        }
+        .st-key-nav_switcher button{
+          width:100%!important;min-height:3.35rem!important;
+          padding:0 .85rem!important;font-size:.94rem!important;
+          letter-spacing:.005em!important;border-radius:13px!important;
+          justify-content:center!important;text-align:center!important;
+          background:transparent!important;color:#fffaf6!important;
+          border:0!important;box-shadow:none!important;
+          clip-path:none!important;position:relative!important;
+        }
+        .st-key-nav_switcher button[kind="secondary"]{
+          background:transparent!important;color:#fffaf6!important;border:0!important;
+        }
+        .st-key-nav_switcher button:hover{
+          transform:none!important;background:rgba(255,255,255,.14)!important;
+          box-shadow:none!important;
+        }
+        .st-key-nav_switcher button[kind="primary"],
+        .st-key-nav_switcher button[data-testid="baseButton-primary"]{
+          background:#fffaf6!important;color:#b64c3f!important;border:0!important;
+          border-radius:13px 13px 0 0!important;
+          box-shadow:inset 0 1px 0 #fff!important;
+          font-weight:880!important;transform:none!important;z-index:2!important;
+        }
+        .st-key-nav_switcher button:before{
+          content:""!important;display:inline-block!important;width:21px!important;
+          height:21px!important;margin-right:9px!important;background:currentColor!important;
+          -webkit-mask-repeat:no-repeat!important;mask-repeat:no-repeat!important;
+          -webkit-mask-position:center!important;mask-position:center!important;
+          -webkit-mask-size:contain!important;mask-size:contain!important;
+        }
+        .st-key-nav_switcher .st-key-nav_tab_scq button:before{
+          -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M7 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm10 12a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM7 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm2-8 6.2 9.3 1.6-1.1L10.6 6 9 7zm0 10h5v2H9v-2z'/%3E%3C/svg%3E")!important;
+          mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M7 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm10 12a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM7 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm2-8 6.2 9.3 1.6-1.1L10.6 6 9 7zm0 10h5v2H9v-2z'/%3E%3C/svg%3E")!important;
+        }
+        .st-key-nav_switcher .st-key-nav_tab_map button:before{
+          -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m15 5-6-2-6 2v16l6-2 6 2 6-2V3l-6 2zm-5 .4 4 1.34v11.85l-4-1.33V5.4zm-5 1.04 3-1v11.82l-3 1V6.44zm14 11.12-3 1V6.74l3-1v11.82z'/%3E%3C/svg%3E")!important;
+          mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m15 5-6-2-6 2v16l6-2 6 2 6-2V3l-6 2zm-5 .4 4 1.34v11.85l-4-1.33V5.4zm-5 1.04 3-1v11.82l-3 1V6.44zm14 11.12-3 1V6.74l3-1v11.82z'/%3E%3C/svg%3E")!important;
+        }
+        .st-key-nav_switcher button:after{content:none!important;display:none!important}
+        @media (max-width:640px){
+          .site-header{min-height:94px;padding:.7rem .85rem;gap:.75rem}
+          .site-header .shared-hero-logo{width:70px!important;max-width:70px!important;
+            height:66px!important;max-height:66px!important;flex-basis:70px!important}
+          .site-brand-name{font-size:1.28rem}
+          .site-brand-tagline{font-size:.78rem}
+          .st-key-nav_switcher{padding-left:8px!important;padding-right:8px!important}
+          .st-key-nav_switcher button{min-height:3.15rem!important;
+            padding:0 .35rem!important;font-size:.78rem!important}
         }
         @keyframes page-enter{
           from{opacity:0;transform:translateY(10px) scale(.995)}
@@ -3701,10 +3819,18 @@ def render_page_switcher(page: str) -> None:
             "}</style>",
             unsafe_allow_html=True,
         )
-    nav_shell = st.container(key="nav_switcher")
-    pad_left, scq, gap, map_col, pad_right = nav_shell.columns(
-        [.05, 1, .04, 1, .05]
+    st.markdown(
+        "<header class='site-header'>"
+        + wales_logo_html()
+        + "<div class='site-brand-copy'>"
+        "<div class='site-brand-name'>Wales Education KG</div>"
+        "<div class='site-brand-tagline'>Explore Welsh schools and places "
+        "through a qualitative knowledge graph.</div>"
+        "</div></header>",
+        unsafe_allow_html=True,
     )
+    nav_shell = st.container(key="nav_switcher")
+    scq, map_col, _nav_space = nav_shell.columns([1, 1, 2.8], gap="small")
     with scq:
         st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
@@ -3722,54 +3848,52 @@ def apply_dashboard_theme(dark_theme: bool = False) -> None:
         """
 <style>
 :root {
-  --ink:#332f3e;
-  --muted:#746d78;
-  --surface:#fffdfb;
-  --surface-soft:#fff7f2;
-  --border:#efc9bb;
-  --coral:#ff6675;
-  --orange:#ffa35b;
-  --accent-grad:linear-gradient(135deg,#ff6675 0%,#ff846d 48%,#ffa35b 100%);
-  --field-bg:#fffdfb;
-  --field-border:#efc9bb;
-  --field-focus:#f16b57;
-  --field-glow:rgba(241,107,87,.16);
-  --field-label:#633b32;
-  --option-hover:#fff0e9;
-  --option-hover-text:#7e392c;
+  --ink:#172033;
+  --muted:#5b6475;
+  --surface:#ffffff;
+  --surface-soft:#f6f8fb;
+  --border:#dce3ec;
+  --coral:#c74655;
+  --orange:#d99a3d;
+  --accent-grad:linear-gradient(135deg,#123b5d 0%,#1b587b 100%);
+  --field-bg:#ffffff;
+  --field-border:#cfd8e3;
+  --field-focus:#c74655;
+  --field-glow:rgba(199,70,85,.16);
+  --field-label:#26364c;
+  --option-hover:#eef3f8;
+  --option-hover-text:#123b5d;
 }
 .stApp {
-  background:linear-gradient(180deg,#ffffff 0%,#fffdfa 62%,#fff8f3 100%) !important;
+  background:#f6f8fb !important;
   color:var(--ink) !important;
 }
 h1,h2,h3,h4,h5,h6,p,label {
   color:var(--ink);
 }
 div[data-testid="stButton"] button {
-  min-height:3rem;
-  border-radius:13px !important;
-  font-weight:750 !important;
-  transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease;
+  min-height:2.75rem;
+  border-radius:10px !important;
+  font-weight:700 !important;
+  transition:background-color .14s ease,color .14s ease,box-shadow .14s ease,border-color .14s ease;
 }
 div[data-testid="stButton"] button[kind="primary"] {
-  background:var(--accent-grad) !important;
-  border:1px solid #f06e56 !important;
+  background:var(--coral) !important;
+  border:1px solid #a93645 !important;
   color:#fff !important;
-  box-shadow:0 5px 0 #d95443,0 11px 22px rgba(207,83,61,.18) !important;
+  box-shadow:0 4px 12px rgba(25,42,65,.16) !important;
 }
 div[data-testid="stButton"] button[kind="secondary"] {
-  background:linear-gradient(180deg,#fffdfb,#fff7f2) !important;
+  background:#ffffff !important;
   border:1px solid var(--border) !important;
-  color:#503a35 !important;
-  box-shadow:0 4px 0 #e5b6a5,0 9px 18px rgba(116,73,58,.10) !important;
+  color:var(--ink) !important;
+  box-shadow:0 2px 8px rgba(25,42,65,.08) !important;
 }
 div[data-testid="stButton"] button:hover {
-  transform:translateY(-1px);
-  filter:saturate(1.03);
+  filter:brightness(.97);
 }
 div[data-testid="stButton"] button:active {
-  transform:translateY(3px);
-  box-shadow:0 1px 0 #d95443,0 4px 10px rgba(116,73,58,.10) !important;
+  box-shadow:0 1px 5px rgba(25,42,65,.12) !important;
 }
 div[data-testid="stTextInput"] input,
 div[data-testid="stNumberInput"] input,
@@ -3777,7 +3901,7 @@ div[data-baseweb="select"] > div {
   background:var(--field-bg) !important;
   border-color:var(--field-border) !important;
   color:var(--ink) !important;
-  border-radius:13px !important;
+  border-radius:10px !important;
 }
 div[data-testid="stTextInput"] input:focus,
 div[data-testid="stNumberInput"] input:focus,
@@ -3797,22 +3921,22 @@ div[data-baseweb="select"] > div:focus-within {
   font-weight:750 !important;
 }
 div[data-testid="stMetric"] {
-  background:linear-gradient(135deg,#fffdfb,#fff6f0) !important;
-  border:1px solid #efd1c5 !important;
-  border-radius:17px !important;
-  box-shadow:0 9px 24px rgba(91,48,38,.06) !important;
+  background:#ffffff !important;
+  border:1px solid var(--border) !important;
+  border-radius:12px !important;
+  box-shadow:0 3px 12px rgba(25,42,65,.06) !important;
   padding:.7rem .9rem !important;
 }
 div[data-testid="stDataFrame"] {
-  border:1px solid #efcfc2 !important;
-  border-radius:18px !important;
+  border:1px solid var(--border) !important;
+  border-radius:12px !important;
   overflow:hidden !important;
-  background:#fffdfb !important;
-  box-shadow:0 12px 30px rgba(91,48,38,.08) !important;
+  background:#ffffff !important;
+  box-shadow:0 5px 18px rgba(25,42,65,.07) !important;
 }
 div[data-testid="stDataFrame"] [role="columnheader"] {
-  background:#ffe9df !important;
-  color:#5a342c !important;
+  background:#eaf0f6 !important;
+  color:#172033 !important;
   font-weight:800 !important;
 }
 [data-testid="stExpander"] {
@@ -4890,25 +5014,36 @@ def branded_loading_overlay(message: str) -> Any:
             + logo_b64 + "')!important;}"
         )
     overlay_css = """
-    .result-loading-overlay{position:fixed;inset:0;width:100vw;height:100dvh;
-      z-index:999998;display:flex;flex-direction:column;align-items:center;
-      justify-content:center;background:rgba(255,250,247,.90);
-      backdrop-filter:blur(11px) saturate(1.08);color:#4a2b25;
-      font-weight:850;text-align:center;overflow:hidden;transition:opacity .22s ease}
-    .result-loader-map{width:210px;height:220px;background-position:center;
+    .result-loading-overlay{position:fixed!important;top:0!important;right:0!important;
+      bottom:0!important;left:0!important;width:100vw!important;height:100vh!important;
+      min-height:100vh!important;max-height:none!important;z-index:2147483647;
+      display:flex!important;flex-direction:column;
+      align-items:center;justify-content:center;background:#f6f8fb;
+      backdrop-filter:none;color:#172033;font-weight:750;
+      text-align:center;overflow:hidden;isolation:isolate;contain:paint;
+      pointer-events:all;transition:opacity .18s ease}
+    .result-loader-map{width:170px;height:180px;background-position:center;
       background-repeat:no-repeat;background-size:contain;
-      filter:drop-shadow(0 18px 25px rgba(117,58,43,.20))}
-    .result-loader-copy{font-size:1.05rem;margin-top:.35rem;line-height:1.35}
-    .result-loader-note{font-size:.88rem;font-weight:600;color:#806159;
-      margin-top:.48rem;line-height:1.45;max-width:560px;padding:0 1.25rem}
+      filter:drop-shadow(0 16px 24px rgba(18,59,93,.18))}
+    .result-loader-copy{font-size:1.08rem;margin-top:.55rem;line-height:1.35;
+      letter-spacing:.01em;color:#123b5d}
+    .result-loader-note{font-size:.86rem;font-weight:550;color:#5b6475;
+      margin-top:.42rem;line-height:1.5;max-width:520px;padding:0 1.25rem}
     .result-loader-dots{display:flex;gap:7px;margin-top:.75rem}
-    .result-loader-dots i{width:9px;height:9px;border-radius:50%;background:#e7b5a4;
-      animation:loader-dot 1.2s linear infinite}
-    .result-loader-dots i:nth-child(2){animation-delay:.2s}
-    .result-loader-dots i:nth-child(3){animation-delay:.4s}
-    @keyframes loader-dot{0%,28%,100%{background:#e7b5a4;opacity:.48;box-shadow:none}
-      42%,62%{background:#d9514f;opacity:1;
-      box-shadow:0 0 0 4px rgba(217,81,79,.10)}}
+    .result-loader-dots i{width:10px;height:10px;border-radius:50%;background:#efb19d;
+      animation:result-loader-dot 1.15s ease-in-out infinite!important;
+      animation-play-state:running!important;will-change:transform,opacity}
+    .result-loader-dots i:nth-child(2){animation-delay:.18s!important}
+    .result-loader-dots i:nth-child(3){animation-delay:.36s!important}
+    @keyframes result-loader-dot{
+      0%,25%,100%{background:#efb19d;opacity:.38;transform:scale(.72);box-shadow:none}
+      48%,62%{background:#c74655;opacity:1;transform:scale(1.22);
+      box-shadow:0 0 0 4px rgba(199,70,85,.14)}
+    }
+    @media (prefers-reduced-motion:reduce){
+      .result-loader-dots i{animation-duration:1.15s!important;
+        animation-iteration-count:infinite!important}
+    }
     """
     slot.markdown(
         "<style>" + overlay_css + logo_css + "</style>"
@@ -4929,10 +5064,25 @@ def persist_search_tab(container_key: str) -> None:
         <script>
         (() => {{
           const doc = window.parent.document;
-          const storageKey = {json.dumps(f'wales-search-tab:{container_key}')};
+          const storageKey = {json.dumps(f'wales-search-tab-v2:{container_key}')};
           const selector = {json.dumps(
               f'.st-key-{container_key} [data-baseweb="tab-list"] > button'
           )};
+          const navSelector = '.st-key-nav_switcher button';
+          const navButtons = Array.from(doc.querySelectorAll(navSelector));
+          navButtons.forEach((button) => {{
+            if (button.dataset.searchTabReset !== 'ready') {{
+              button.dataset.searchTabReset = 'ready';
+              button.addEventListener('click', () => {{
+                window.parent.sessionStorage.removeItem(
+                  'wales-search-tab-v2:guided_search_tabs'
+                );
+                window.parent.sessionStorage.removeItem(
+                  'wales-search-tab-v2:map_search_builder'
+                );
+              }});
+            }}
+          }});
           let attempts = 0;
           const timer = window.setInterval(() => {{
             const buttons = Array.from(doc.querySelectorAll(selector));
@@ -5014,7 +5164,7 @@ def dismiss_loading_when_ready(
     """Let the browser remove the cover only after its target is painted."""
     target = (
         '[data-testid="stDeckGlJsonChart"] canvas'
-        if require_map else '.guided-hero, .map-search-hero'
+        if require_map else '.site-header'
     )
     components.html(
         f"""
@@ -7294,6 +7444,10 @@ def render_named_entity_map(
     lats: List[float] = []
     lons: List[float] = []
     table_rows: List[Dict[str, str]] = []
+    selected_key = f"{key}_selected_uris"
+    selected_uris = {
+        str(value) for value in st.session_state.get(selected_key, []) if value
+    }
     for index, entity in enumerate(entities):
         fill, line = palette[index % len(palette)]
         rings = _wkt_rings(entity.get("wkt"))
@@ -7308,8 +7462,12 @@ def render_named_entity_map(
                 ring = ring[:: len(ring) // 500 + 1] + [ring[-1]]
             for lon, lat in ring:
                 lons.append(float(lon)); lats.append(float(lat))
+            entity_uri = str(entity.get("uri") or "")
             polygon_rows.append({
-                "polygon": ring, "fill": fill, "line": line, "width": 4,
+                "polygon": ring,
+                "fill": ([255, 255, 255, 235] if entity_uri in selected_uris else fill),
+                "line": ([168, 77, 50, 255] if entity_uri in selected_uris else line),
+                "width": 5 if entity_uri in selected_uris else 4,
                 "uri": str(entity.get("uri") or ""),
                 "name": entity.get("name") or entity.get("uri"),
                 "type": entity.get("unit_type") or "Area",
@@ -7409,7 +7567,26 @@ def render_named_entity_map(
         "Exact stored boundaries are shown. No spatial relationship or "
         "INTERSECTS result was applied; school pins are information only."
     )
-    display_df(pd.DataFrame(table_rows))
+    table_df = pd.DataFrame(table_rows)
+    st.caption("Select one or more places to highlight them on the map.")
+    chosen_uris: set[str] = set()
+    with st.expander("Select answer areas", expanded=True):
+        for row_index, row in table_df.iterrows():
+            uri = str(row.get("identifier") or "")
+            label = str(row.get("name") or uri)
+            area_type = str(row.get("area_type") or "Area")
+            if uri and st.checkbox(
+                f"{label} · {area_type}",
+                value=uri in selected_uris,
+                key=f"{key}_choice_{row_index}_{uri[-18:]}",
+            ):
+                chosen_uris.add(uri)
+        if chosen_uris and st.button("Clear selected areas", key=f"{key}_clear_selection"):
+            st.session_state[selected_key] = []
+            st.rerun()
+    if chosen_uris != selected_uris:
+        st.session_state[selected_key] = sorted(chosen_uris)
+        st.rerun()
     return picked
 
 
@@ -8116,6 +8293,41 @@ def guided_result_query(
         .replace("__B_WALES__", b_wales).replace("__M_WALES__", m_wales)
 
 
+def render_manual_multi_select(
+    frame: pd.DataFrame,
+    id_col: str,
+    selected_values: Any,
+    key_prefix: str,
+) -> set[str]:
+    """Fallback result selector for Streamlit builds without dataframe rows."""
+    selected_set = {
+        str(v) for v in (
+            selected_values if isinstance(selected_values, (list, tuple, set))
+            else [selected_values]
+        ) if v
+    }
+    chosen: set[str] = set()
+    if frame is None or frame.empty or id_col not in frame.columns:
+        return chosen
+    with st.expander("Select one or more results", expanded=True):
+        st.caption("Tick several results to highlight them on the map.")
+        for idx, row in frame.reset_index(drop=True).iterrows():
+            value = str(row.get(id_col) or "")
+            if not value:
+                continue
+            label = str(
+                row.get("unit_name") or row.get("lsoa_name")
+                or row.get("school") or row.get("name") or value
+            )
+            if st.checkbox(
+                label,
+                value=value in selected_set,
+                key=f"{key_prefix}_{idx}_{value[-18:]}",
+            ):
+                chosen.add(value)
+    return chosen
+
+
 def render_guided_natural_search(cfg: Dict[str, str]) -> None:
     """Natural wording routed through the same spatial resolver as the map."""
     if st.session_state.pop("place_nl_clear_pending", False):
@@ -8356,7 +8568,12 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
                 st.session_state["place_nl_selected_lsoas"] = sorted(chosen)
                 st.rerun()
         except TypeError:
-            display_df(result)
+            chosen = render_manual_multi_select(
+                result, "lsoa_code", selected_lsoas, "place_nl_lsoa_fallback"
+            )
+            if chosen != selected_lsoas:
+                st.session_state["place_nl_selected_lsoas"] = sorted(chosen)
+                st.rerun()
         return
 
     units = scope.get("units", pd.DataFrame())
@@ -8423,7 +8640,13 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             st.session_state["place_nl_selected_admins"] = sorted(chosen)
             st.rerun()
     except TypeError:
-        display_df(result[visible_cols])
+        chosen = render_manual_multi_select(
+            result[visible_cols], "unit_uri", selected_admins,
+            "place_nl_admin_fallback"
+        )
+        if chosen != selected_admins:
+            st.session_state["place_nl_selected_admins"] = sorted(chosen)
+            st.rerun()
 
 
 def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
@@ -8488,11 +8711,6 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
       min-height:3.3rem;padding-left:1.25rem;border:1px solid #dfe3ea;
       box-shadow:0 10px 28px rgba(15,23,42,.06)}
     </style>
-    <div class="guided-hero">
-    """ + wales_logo_html() + """
-    <div class="guided-hero-copy"><h1>Ask the Welsh place knowledge graph</h1>
-    <p>Explore how LSOAs and administrative areas touch, intersect, contain
-    or lie near one another. Schools appear in the areas returned.</p></div></div>
     """, unsafe_allow_html=True)
 
     render_page_switcher("SCQ Demonstrator")
@@ -8777,7 +8995,13 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                         )
                         st.rerun()
                 except TypeError:
-                    display_df(table_result)
+                    chosen = render_manual_multi_select(
+                        table_result, lsoa_col, selected_lsoas,
+                        "guided_lsoa_fallback"
+                    )
+                    if chosen != selected_lsoas:
+                        st.session_state["guided_selected_lsoas"] = sorted(chosen)
+                        st.rerun()
         else:
             selected_admins = set(
                 st.session_state.get("guided_selected_admins", [])
@@ -8803,6 +9027,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                 c for c in ("unit_name", "unit_type", "unit_uri")
                 if c in table_result.columns
             ] or list(table_result.columns)
+            table_selected_admins: set[str] = set()
             try:
                 table_event = st.dataframe(
                     warm_table(table_result[visible_cols]),
@@ -8815,29 +9040,15 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
                         f"{st.session_state.get('guided_selection_version', 0)}"
                     ),
                 )
-                selected_rows = list(table_event.selection.rows)
+                table_selected_admins = {
+                    str(table_result.iloc[int(i)].get("unit_uri") or "")
+                    for i in table_event.selection.rows
+                } - {""}
             except TypeError:
-                # Older Streamlit versions keep the result usable through a
-                # searchable selector instead of silently losing selection.
-                selected_rows = []
-                table_choice = st.selectbox(
-                    "Explore an area",
-                    list(range(len(table_result))),
-                    format_func=lambda i: str(
-                        table_result.iloc[i].get("unit_name")
-                        or table_result.iloc[i].get("unit_uri")
-                    ),
-                    index=None,
-                    placeholder="Choose an answer area",
-                    key="guided_admin_result_fallback",
+                table_selected_admins = render_manual_multi_select(
+                    table_result[visible_cols], "unit_uri", selected_admins,
+                    "guided_admin_fallback"
                 )
-                if table_choice is not None:
-                    selected_rows = [int(table_choice)]
-                display_df(table_result[visible_cols])
-            table_selected_admins = {
-                str(table_result.iloc[int(i)].get("unit_uri") or "")
-                for i in selected_rows
-            } - {""}
             if table_selected_admins != selected_admins:
                 st.session_state["guided_selected_admins"] = sorted(
                     table_selected_admins
@@ -13395,15 +13606,6 @@ def page_map(cfg: Dict[str, str]) -> None:
             "</style>",
             unsafe_allow_html=True,
         )
-    hero_shell = st.container(key="map_search_hero")
-    logo_html = wales_logo_html()
-    hero_shell.markdown(
-        "<div class='map-search-hero'>" + logo_html
-        + "<div class='map-hero-copy'><h1>Explore Welsh schools by place</h1>"
-        "<p>Search schools, compare local indicators and view the geographic "
-        "areas connected to each result.</p></div></div>",
-        unsafe_allow_html=True,
-    )
     render_page_switcher("Map")
 
     la_opts = safe_options(cfg, """
@@ -14038,7 +14240,13 @@ def page_map(cfg: Dict[str, str]) -> None:
                     st.session_state["map_spatial_selected_lsoas"] = sorted(chosen)
                     st.rerun()
             except TypeError:
-                display_df(spatial_df)
+                chosen = render_manual_multi_select(
+                    spatial_df, "lsoa_code", selected_lsoas,
+                    "map_spatial_lsoa_fallback"
+                )
+                if chosen != selected_lsoas:
+                    st.session_state["map_spatial_selected_lsoas"] = sorted(chosen)
+                    st.rerun()
         else:
             unit_df = (
                 units.dropna(subset=["unit_uri"])
@@ -14116,7 +14324,13 @@ def page_map(cfg: Dict[str, str]) -> None:
                     st.session_state["map_spatial_selected_admins"] = sorted(chosen)
                     st.rerun()
             except TypeError:
-                display_df(table_units[visible_cols])
+                chosen = render_manual_multi_select(
+                    table_units[visible_cols], "unit_uri", selected_admins,
+                    "map_spatial_admin_fallback"
+                )
+                if chosen != selected_admins:
+                    st.session_state["map_spatial_selected_admins"] = sorted(chosen)
+                    st.rerun()
         return
     if admin_scope:
         conditions.append("l.code IN $nl_admin_lsoa_codes")
@@ -15284,16 +15498,16 @@ def main() -> None:
             f"<style>.st-key-{inactive_page_key}{{display:none!important}}</style>",
             unsafe_allow_html=True,
         )
-        # Each page is drawn inside its own keyed container. Without this the
-        # pages share element slots, so a widget from the previous page
-        # can survive the switch and paint over the new one -- which is what put
-        # the Evaluation page's SpCom equation underneath the map search box.
-        body = st.container(key=f"page_{page.replace(' ', '_').lower()}")
-        with body:
-            if page == "SCQ Demonstrator":
-                page_guided_spatial_search(cfg)
-            elif page == "Map":
-                page_map(cfg)
+        # Keep one visible page root. Replacing this placeholder prevents the
+        # previous page tree from remaining beside the newly selected page.
+        page_root = st.empty()
+        with page_root.container():
+            body = st.container(key=f"page_{page.replace(' ', '_').lower()}")
+            with body:
+                if page == "SCQ Demonstrator":
+                    page_guided_spatial_search(cfg)
+                elif page == "Map":
+                    page_map(cfg)
         if transition_slot is not None:
             st.session_state["startup_view_ready"] = True
             # The page function has completed, so do not leave startup tied
@@ -15314,8 +15528,8 @@ def main() -> None:
                 "again or refresh the page."
             )
             return
-        body = st.container()
-        with body:
+        page_root = st.empty()
+        with page_root.container():
             if page == "SCQ Demonstrator":
                 page_guided_spatial_search(cfg)
             elif page == "Map":
