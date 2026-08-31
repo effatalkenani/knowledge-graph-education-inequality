@@ -3576,6 +3576,13 @@ def render_page_switcher(page: str) -> None:
           color:#4a2b25;font-weight:850;text-align:center;overflow:hidden;
           transition:opacity .22s ease;
         }
+        /* Streamlit marks the previous render as stale while a rerun is in
+           flight.  Our branded cover intentionally lives in that render so
+           it can remain visible during the blocking Neo4j work. */
+        .stale:has(.result-loading-overlay),
+        [data-stale="true"]:has(.result-loading-overlay){
+          opacity:1!important;
+        }
         .result-loader-map{
           width:210px;height:220px;background-position:center;
           background-repeat:no-repeat;background-size:contain;
@@ -4913,6 +4920,92 @@ def branded_loading_overlay(message: str) -> Any:
         unsafe_allow_html=True,
     )
     return slot
+
+
+def persist_search_tab(container_key: str) -> None:
+    """Keep the reader's selected search tab across Streamlit reruns."""
+    components.html(
+        f"""
+        <script>
+        (() => {{
+          const doc = window.parent.document;
+          const storageKey = {json.dumps(f'wales-search-tab:{container_key}')};
+          const selector = {json.dumps(
+              f'.st-key-{container_key} [data-baseweb="tab-list"] > button'
+          )};
+          let attempts = 0;
+          const timer = window.setInterval(() => {{
+            const buttons = Array.from(doc.querySelectorAll(selector));
+            attempts += 1;
+            if (buttons.length >= 2) {{
+              buttons.forEach((button, index) => {{
+                if (button.dataset.searchTabMemory !== 'ready') {{
+                  button.dataset.searchTabMemory = 'ready';
+                  button.addEventListener('click', () => {{
+                    window.parent.sessionStorage.setItem(
+                      storageKey, String(index)
+                    );
+                  }});
+                }}
+              }});
+              const saved = Number(
+                window.parent.sessionStorage.getItem(storageKey) || '0'
+              );
+              const wanted = buttons[saved] || buttons[0];
+              if (wanted.getAttribute('aria-selected') !== 'true') {{
+                wanted.click();
+              }}
+              window.clearInterval(timer);
+            }} else if (attempts > 75) {{
+              window.clearInterval(timer);
+            }}
+          }}, 40);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def paint_loading_then_execute(
+    *, state_key: str, button_key: str, message: str
+) -> None:
+    """Commit the loader to the browser before starting blocking work.
+
+    Calling ``st.rerun`` immediately after drawing the cover can discard the
+    partial render, leaving only Streamlit's faded stale page.  A hidden
+    browser-triggered button starts the execution rerun after this render has
+    actually mounted, so the logo and message stay visible throughout.
+    """
+    branded_loading_overlay(message)
+    st.session_state[state_key] = "execute"
+    st.markdown(
+        f"<style>.st-key-{button_key}{{display:none!important}}</style>",
+        unsafe_allow_html=True,
+    )
+    st.button("Continue", key=button_key)
+    components.html(
+        f"""
+        <script>
+        (() => {{
+          const doc = window.parent.document;
+          const selector = {json.dumps(f'.st-key-{button_key} button')};
+          const clickWhenMounted = () => {{
+            const button = doc.querySelector(selector);
+            if (button) button.click();
+            else window.setTimeout(clickWhenMounted, 40);
+          }};
+          window.requestAnimationFrame(() =>
+            window.requestAnimationFrame(() =>
+              window.setTimeout(clickWhenMounted, 80)
+            )
+          );
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+    st.stop()
 
 
 def dismiss_loading_when_ready(
@@ -8058,9 +8151,11 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         st.session_state["place_nl_submit_phase"] = "paint"
         st.rerun()
     if phase == "paint":
-        branded_loading_overlay("Building and framing the spatial answer…")
-        st.session_state["place_nl_submit_phase"] = "execute"
-        st.rerun()
+        paint_loading_then_execute(
+            state_key="place_nl_submit_phase",
+            button_key="place_nl_execute_handoff",
+            message="Building and framing the spatial answer…",
+        )
     asked = phase == "execute"
     if asked:
         st.session_state.pop("place_nl_submit_phase", None)
@@ -8416,6 +8511,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     guided, words = guided_search_shell.tabs(
         ["Build a search", "Write in your own words"]
     )
+    persist_search_tab("guided_search_tabs")
     with words:
         st.markdown("## Ask about places in your own words")
         st.caption(
@@ -8569,9 +8665,11 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             st.session_state["guided_submit_phase"] = "paint"
             st.rerun()
         if phase == "paint":
-            branded_loading_overlay("Building and framing the spatial answer…")
-            st.session_state["guided_submit_phase"] = "execute"
-            st.rerun()
+            paint_loading_then_execute(
+                state_key="guided_submit_phase",
+                button_key="guided_execute_handoff",
+                message="Building and framing the spatial answer…",
+            )
         run = phase == "execute"
         if run:
             st.session_state.pop("guided_submit_phase", None)
@@ -13060,9 +13158,11 @@ def render_map_nl(
         st.session_state["map_nl_submit_phase"] = "paint"
         st.rerun()
     if phase == "paint":
-        branded_loading_overlay("Finding the schools and framing the result…")
-        st.session_state["map_nl_submit_phase"] = "execute"
-        st.rerun()
+        paint_loading_then_execute(
+            state_key="map_nl_submit_phase",
+            button_key="map_nl_execute_handoff",
+            message="Finding the schools and framing the result…",
+        )
     asked = phase == "execute"
     if asked:
         st.session_state.pop("map_nl_submit_phase", None)
@@ -13339,6 +13439,7 @@ def page_map(cfg: Dict[str, str]) -> None:
 
     search_shell = st.container(key="map_search_builder")
     search_tabs = search_shell.tabs(["Build a search", "Write in your own words"])
+    persist_search_tab("map_search_builder")
     controls = search_tabs[0].container()
     controls.markdown("## Find schools")
     controls.caption("Choose filters, then open the results on the map.")
@@ -13724,10 +13825,23 @@ def page_map(cfg: Dict[str, str]) -> None:
         st.info("Swap the From and To values marked in red above.")
         return
 
-    build_run = controls.button(
+    build_clicked = controls.button(
         "Show results on map", type="primary", use_container_width=True,
         key="map_filter_submit",
     )
+    build_phase = st.session_state.get("map_filter_submit_phase")
+    if build_clicked:
+        st.session_state["map_filter_submit_phase"] = "paint"
+        st.rerun()
+    if build_phase == "paint":
+        paint_loading_then_execute(
+            state_key="map_filter_submit_phase",
+            button_key="map_filter_execute_handoff",
+            message="Finding the schools and framing the result…",
+        )
+    build_run = build_phase == "execute"
+    if build_run:
+        st.session_state.pop("map_filter_submit_phase", None)
     build_loading_slot = (
         branded_loading_overlay("Finding the schools and framing the result…")
         if build_run else None
