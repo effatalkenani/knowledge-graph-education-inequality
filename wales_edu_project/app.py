@@ -7464,6 +7464,7 @@ def clear_guided_result() -> None:
     st.session_state.pop("guided_selected_admin", None)
     st.session_state.pop("guided_selected_admins", None)
     st.session_state.pop("guided_selected_lsoas", None)
+    st.session_state.pop("guided_submit_phase", None)
 
 
 def clear_guided_selection() -> None:
@@ -7589,6 +7590,50 @@ def guided_anchor_options(
     return tuple(
         (str(r["value"]), str(r["label"])) for _, r in rows.iterrows()
         if pd.notna(r.get("value"))
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def guided_between_options(
+    cfg_key: Tuple[str, str, str, str], kind: str, anchor: str
+) -> Tuple[Tuple[str, str], ...]:
+    """Only endpoints whose shortest same-layer path has an interior area."""
+    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
+           "password": cfg_key[2], "database": cfg_key[3]}
+    if kind == "LSOA":
+        query = """
+        MATCH (a:LSOA {code:$anchor}), (b:LSOA)
+        WHERE b <> a
+        MATCH p = shortestPath((a)-[:LSOA_TOUCHES*..12]-(b))
+        WHERE length(p) > 1
+        RETURN b.code AS value,
+               coalesce(b.name,b.code) + ' · ' + b.code AS label,
+               length(p) AS steps
+        ORDER BY label
+        """
+        params = {"anchor": anchor}
+    else:
+        node_kind = guided_admin_kind_expr("n")
+        b_kind = guided_admin_kind_expr("b")
+        b_wales = guided_wales_admin_predicate("b")
+        n_wales = guided_wales_admin_predicate("n")
+        query = f"""
+        MATCH (a:AdminUnit {{uri:$anchor}}), (b:AdminUnit)
+        WHERE b <> a AND {b_kind} = $kind AND {b_wales}
+        MATCH p = shortestPath((a)-[:TOUCHES*..12]-(b))
+        WHERE length(p) > 1
+          AND all(n IN nodes(p) WHERE {node_kind} = $kind AND {n_wales})
+        RETURN b.uri AS value, coalesce(b.name,b.uri) AS label,
+               length(p) AS steps
+        ORDER BY label
+        """
+        params = {"anchor": anchor, "kind": kind}
+    rows = run_cypher(cfg, query, params)
+    if rows.empty:
+        return ()
+    return tuple(
+        (str(row["value"]), str(row["label"]))
+        for _, row in rows.iterrows() if pd.notna(row.get("value"))
     )
 
 
@@ -8235,6 +8280,19 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             r for r in GUIDED_RELATION_LABELS
             if r in set(caps["relation"].astype(str))
         ]
+        between_options: Tuple[Tuple[str, str], ...] = ()
+        if "between" in relations:
+            try:
+                between_options = guided_between_options(
+                    cfg_key, kind, anchor[0]
+                )
+            except Exception:
+                between_options = ()
+        if not relations:
+            st.info("No valid spatial relationship is available for this place.")
+            return
+        if st.session_state.get("guided_relation") not in relations:
+            st.session_state["guided_relation"] = relations[0]
         with c3:
             relation = st.selectbox(
                 "Relationship", relations,
@@ -8257,12 +8315,25 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
 
         second = None
         if relation == "between":
-            second_options = [x for x in anchors if x[0] != anchor[0]]
+            second_key = f"guided_second_{kind}"
+            if (
+                between_options
+                and st.session_state.get(second_key) not in between_options
+            ):
+                st.session_state[second_key] = between_options[0]
+            elif not between_options:
+                st.session_state.pop(second_key, None)
             second = st.selectbox(
-                "Second place", second_options, format_func=lambda x: x[1],
-                key=f"guided_second_{kind}",
+                "Second place", between_options, format_func=lambda x: x[1],
+                key=second_key,
                 on_change=clear_guided_result,
+                disabled=not bool(between_options),
             )
+            if not between_options:
+                st.info(
+                    "No second place forms a valid BETWEEN path from the "
+                    "selected area. Choose another relationship."
+                )
 
         result_label = GUIDED_TYPE_LABELS.get(result_type, result_type)
         if relation == "contains":
@@ -8278,7 +8349,11 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         elif relation == "not_touches":
             sentence = f"Find {result_label} areas that do not touch {anchor[1]}"
         elif relation == "between":
-            sentence = f"Find {result_label} areas between {anchor[1]} and {second[1]}"
+            sentence = (
+                f"Find {result_label} areas between {anchor[1]} and {second[1]}"
+                if second else
+                f"No valid BETWEEN destination is available from {anchor[1]}"
+            )
         else:
             sentence = (
                 f"Find {result_label} areas that "
@@ -8289,8 +8364,21 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             f"<div class='guided-sentence'>{escape(sentence)}</div>",
             unsafe_allow_html=True,
         )
-        run = st.button("Search", type="primary", use_container_width=True,
-                        key="guided_run")
+        clicked = st.button(
+            "Search", type="primary", use_container_width=True,
+            key="guided_run", disabled=(relation == "between" and not second),
+        )
+        phase = st.session_state.get("guided_submit_phase")
+        if clicked:
+            st.session_state["guided_submit_phase"] = "paint"
+            st.rerun()
+        if phase == "paint":
+            branded_loading_overlay("Building and framing the spatial answer…")
+            st.session_state["guided_submit_phase"] = "execute"
+            st.rerun()
+        run = phase == "execute"
+        if run:
+            st.session_state.pop("guided_submit_phase", None)
         state_key = "guided_has_run"
         if run:
             st.session_state[state_key] = True
