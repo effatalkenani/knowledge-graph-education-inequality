@@ -3438,9 +3438,13 @@ def render_page_switcher(page: str) -> None:
           max-width:none!important;
           padding-left:clamp(.35rem,.65vw,.75rem)!important;
           padding-right:clamp(.35rem,.65vw,.75rem)!important;
-          padding-top:.45rem!important;
+          padding-top:0!important;
           margin-left:0!important;
           margin-right:0!important;
+        }
+        [data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"],
+        [data-testid="stMainBlockContainer"] > div > div[data-testid="stVerticalBlock"]{
+          gap:0!important;
         }
         /* Style-only Markdown blocks must not create blank rows above the
            real header. Their CSS still applies while their wrappers collapse. */
@@ -3493,13 +3497,19 @@ def render_page_switcher(page: str) -> None:
           animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
           transform-origin:50% 0;
           width:100%!important;
-          padding:clamp(.35rem,.8vw,.8rem)!important;
+          padding:0 clamp(.35rem,.8vw,.8rem) clamp(.35rem,.8vw,.8rem)!important;
           background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%)!important;
           border:1px solid #f0cfc1!important;
           border-radius:30px!important;
           box-shadow:
             inset 0 1px 0 rgba(255,255,255,.92),
             0 24px 58px rgba(102,52,40,.10)!important;
+        }
+        .st-key-page_scq_demonstrator > div[data-testid="stVerticalBlock"],
+        .st-key-page_map > div[data-testid="stVerticalBlock"],
+        .st-key-page_scq_demonstrator > div > div[data-testid="stVerticalBlock"],
+        .st-key-page_map > div > div[data-testid="stVerticalBlock"]{
+          gap:0!important;
         }
         .st-key-nav_switcher{
           width:min(1180px,94%)!important;
@@ -3528,7 +3538,7 @@ def render_page_switcher(page: str) -> None:
           width:100%;min-height:108px;margin:0;padding:.8rem 1.35rem;
           display:flex;align-items:center;gap:1.1rem;
           background:linear-gradient(118deg,#ff6575 0%,#ff8b6d 56%,#ffbd61 100%);
-          color:#fff;border:1px solid rgba(255,255,255,.34);
+          color:#fff;border:1px solid rgba(255,255,255,.34);border-bottom:0;
           border-radius:24px 24px 0 0;
           box-shadow:inset 0 1px 0 rgba(255,255,255,.46);
         }
@@ -3704,7 +3714,7 @@ def render_page_switcher(page: str) -> None:
         .st-key-nav_switcher{
           width:100%!important;margin:0 auto 0!important;
           padding:9px 18px 0!important;
-          background:linear-gradient(100deg,#ff8b78 0%,#ffad70 100%)!important;
+          background:linear-gradient(118deg,#ff6575 0%,#ff8b6d 56%,#ffbd61 100%)!important;
           border:0!important;border-radius:0!important;
           position:relative!important;z-index:20!important;
           box-shadow:none!important;
@@ -3724,19 +3734,39 @@ def render_page_switcher(page: str) -> None:
           border:0!important;box-shadow:none!important;
           clip-path:none!important;position:relative!important;
         }
-        .st-key-nav_switcher button[kind="secondary"]{
-          background:transparent!important;color:#fffaf6!important;border:0!important;
+        .st-key-nav_switcher div[data-testid="stButton"] button[kind="secondary"],
+        .st-key-nav_switcher div[data-testid="stButton"] button[data-testid="baseButton-secondary"]{
+          background:rgba(205,77,76,.30)!important;color:#fff!important;
+          border:1px solid rgba(255,255,255,.26)!important;
+          border-bottom:0!important;box-shadow:none!important;
+          border-radius:13px 13px 0 0!important;
+          font-weight:700!important;
         }
-        .st-key-nav_switcher button:hover{
+        .st-key-nav_switcher div[data-testid="stButton"] button:hover{
           transform:none!important;background:rgba(255,255,255,.14)!important;
           box-shadow:none!important;
         }
-        .st-key-nav_switcher button[kind="primary"],
-        .st-key-nav_switcher button[data-testid="baseButton-primary"]{
-          background:#fffaf6!important;color:#b64c3f!important;border:0!important;
+        .st-key-nav_switcher div[data-testid="stButton"] button[kind="primary"],
+        .st-key-nav_switcher div[data-testid="stButton"] button[data-testid="baseButton-primary"]{
+          background:#fffdfa!important;
+          color:#4a3533!important;border:1px solid rgba(255,255,255,.78)!important;
+          border-bottom:0!important;
           border-radius:13px 13px 0 0!important;
-          box-shadow:inset 0 1px 0 #fff!important;
-          font-weight:880!important;transform:none!important;z-index:2!important;
+          box-shadow:0 -1px 0 rgba(255,255,255,.42)!important;
+          font-weight:820!important;transform:none!important;z-index:2!important;
+        }
+        .st-key-nav_switcher div[data-testid="stButton"] button p{
+          color:inherit!important;font-size:inherit!important;font-weight:inherit!important;
+        }
+        .st-key-nav_switcher div[data-testid="stButton"] button[kind="secondary"]:hover,
+        .st-key-nav_switcher div[data-testid="stButton"] button[data-testid="baseButton-secondary"]:hover{
+          background:rgba(190,65,67,.42)!important;color:#fff!important;
+          filter:none!important;
+        }
+        .st-key-nav_switcher div[data-testid="stButton"] button[kind="primary"]:hover,
+        .st-key-nav_switcher div[data-testid="stButton"] button[data-testid="baseButton-primary"]:hover{
+          background:#fffdfa!important;
+          color:#4a3533!important;filter:none!important;
         }
         .st-key-nav_switcher button:before{
           content:""!important;display:inline-block!important;width:21px!important;
