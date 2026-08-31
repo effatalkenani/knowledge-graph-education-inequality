@@ -3549,12 +3549,12 @@ def render_page_switcher(page: str) -> None:
         }
         .site-brand-copy{min-width:0;line-height:1.2}
         .site-brand-name{
-          margin:0;color:#fff;font-size:clamp(1.45rem,2.4vw,2rem);
+          margin:0;color:#fff;font-size:clamp(1.72rem,2.8vw,2.35rem);
           font-weight:900;letter-spacing:-.025em;
         }
         .site-brand-tagline{
-          margin:.3rem 0 0;color:#fff8f3;font-size:.94rem;
-          font-weight:560;line-height:1.4;
+          margin:.34rem 0 0;color:#fff8f3;font-size:1.06rem;
+          font-weight:620;line-height:1.4;
         }
         .shared-hero-logo{
           width:260px;max-width:27%;max-height:225px;object-fit:contain;
@@ -3649,6 +3649,10 @@ def render_page_switcher(page: str) -> None:
           background:#fff4ed!important;transform:translateY(-1px)!important;
         }
         /* Secondary navigation: compact document tabs. */
+        .st-key-guided_search_tabs,
+        .st-key-map_search_builder{
+          margin-top:.7rem!important;
+        }
         .st-key-guided_search_tabs [data-baseweb="tab-list"],
         .st-key-map_search_builder [data-baseweb="tab-list"]{
           display:flex!important;gap:1.45rem!important;width:100%!important;
@@ -3788,8 +3792,8 @@ def render_page_switcher(page: str) -> None:
           .site-header{min-height:94px;padding:.7rem .85rem;gap:.75rem}
           .site-header .shared-hero-logo{width:70px!important;max-width:70px!important;
             height:66px!important;max-height:66px!important;flex-basis:70px!important}
-          .site-brand-name{font-size:1.28rem}
-          .site-brand-tagline{font-size:.78rem}
+          .site-brand-name{font-size:1.48rem}
+          .site-brand-tagline{font-size:.86rem}
           .st-key-nav_switcher{padding-left:8px!important;padding-right:8px!important}
           .st-key-nav_switcher button{min-height:3.15rem!important;
             padding:0 .35rem!important;font-size:.78rem!important}
@@ -8771,6 +8775,11 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         render_guided_natural_search(cfg)
 
     with guided:
+        st.markdown("## Explore place relations")
+        st.caption(
+            "Choose a Welsh area and a qualitative spatial relationship, "
+            "then explore the matching places on the map."
+        )
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             kind = st.selectbox(
