@@ -3353,6 +3353,20 @@ def scroll_to_rendered_map() -> None:
     )
 
 
+def dismiss_browser_loading_overlays() -> None:
+    """Remove custom full-screen covers after an unexpected page failure."""
+    components.html(
+        """
+        <script>
+        window.parent.document
+          .querySelectorAll('.result-loading-overlay')
+          .forEach((node) => node.remove());
+        </script>
+        """,
+        height=0,
+    )
+
+
 def render_page_switcher(page: str) -> None:
     """Two centred tabs for the public SCQ and Map experiences."""
     st.markdown(
@@ -14582,8 +14596,6 @@ ORDER BY cluster_size DESC, cluster_id
     total_schools = int(summary.get("total_schools") or 0)
     near_transport_count = int(summary.get("near_transport_schools") or 0)
 
-    st.metric("Matching schools", f"{len(map_df):,}")
-
     if filtered_metric_props:
         if include_missing_metrics:
             st.caption(
@@ -14656,6 +14668,11 @@ ORDER BY cluster_size DESC, cluster_id
         if SHOW_QUERIES:
             st.code(cypher, language="cypher")
         return
+
+    # Count only the rows that can actually be drawn.  map_df does not exist
+    # until coordinate cleaning has completed, so this must remain after both
+    # empty-result guards above.
+    st.metric("Matching schools", f"{len(map_df):,}")
 
     polygon_df = None
     admin_polygon_df = None
@@ -15051,7 +15068,13 @@ def main() -> None:
         if "key" not in str(exc).lower():
             if transition_slot is not None:
                 transition_slot.empty()
-            raise
+            dismiss_browser_loading_overlays()
+            print(f"Public page failed: {type(exc).__name__}: {exc}")
+            st.error(
+                "The page could not finish loading. Please try the search "
+                "again or refresh the page."
+            )
+            return
         body = st.container()
         with body:
             if page == "SCQ Demonstrator":
@@ -15061,10 +15084,15 @@ def main() -> None:
         if transition_slot is not None:
             st.session_state["startup_view_ready"] = True
             transition_slot.empty()
-    except Exception:
+    except Exception as exc:
         if transition_slot is not None:
             transition_slot.empty()
-        raise
+        dismiss_browser_loading_overlays()
+        print(f"Public page failed: {type(exc).__name__}: {exc}")
+        st.error(
+            "The page could not finish loading. Please try the search again "
+            "or refresh the page."
+        )
 
 
 if __name__ == "__main__":
