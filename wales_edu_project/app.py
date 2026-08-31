@@ -7055,6 +7055,157 @@ def render_admin_answer_map(
     return picked
 
 
+def render_named_entity_map(
+    cfg: Dict[str, str], components: List[Dict[str, Any]], key: str
+) -> Dict[str, Any] | None:
+    """Draw exact stored geometries for an entity-only natural query."""
+    entities: List[Dict[str, Any]] = []
+    seen: set[Tuple[str, str]] = set()
+    for component in components:
+        if str(component.get("relation")) != "direct":
+            continue
+        anchor = component.get("anchor") or {}
+        identity = (
+            str(anchor.get("uri") or ""), str(anchor.get("unit_type") or "")
+        )
+        if not identity[0] or identity in seen or not anchor.get("wkt"):
+            continue
+        seen.add(identity)
+        entities.append(anchor)
+    if not entities:
+        return None
+
+    palette = [
+        ([255, 166, 86, 148], [198, 83, 45, 255]),
+        ([83, 201, 150, 148], [24, 120, 84, 255]),
+        ([139, 92, 246, 142], [91, 51, 180, 255]),
+        ([244, 114, 182, 142], [177, 52, 120, 255]),
+        ([56, 189, 248, 142], [13, 111, 151, 255]),
+    ]
+    polygon_rows: List[Dict[str, Any]] = []
+    entity_rings: List[List[List[List[float]]]] = []
+    lats: List[float] = []
+    lons: List[float] = []
+    table_rows: List[Dict[str, str]] = []
+    for index, entity in enumerate(entities):
+        fill, line = palette[index % len(palette)]
+        rings = _wkt_rings(entity.get("wkt"))
+        entity_rings.append(rings)
+        table_rows.append({
+            "name": str(entity.get("name") or entity.get("uri")),
+            "area_type": str(entity.get("unit_type") or "Area"),
+            "identifier": str(entity.get("uri") or ""),
+        })
+        for ring in rings:
+            if len(ring) > 500:
+                ring = ring[:: len(ring) // 500 + 1] + [ring[-1]]
+            for lon, lat in ring:
+                lons.append(float(lon)); lats.append(float(lat))
+            polygon_rows.append({
+                "polygon": ring, "fill": fill, "line": line, "width": 4,
+                "uri": str(entity.get("uri") or ""),
+                "name": entity.get("name") or entity.get("uri"),
+                "type": entity.get("unit_type") or "Area",
+                "role": f"Named place {index + 1} of {len(entities)}",
+            })
+    if not polygon_rows or not lats:
+        return None
+
+    def extent(row: Dict[str, Any]) -> float:
+        xs = [p[0] for p in row["polygon"]]
+        ys = [p[1] for p in row["polygon"]]
+        return (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+    # Large polygons first, small polygons last, so overlapping named places
+    # remain hoverable and clickable.
+    polygon_rows.sort(key=extent, reverse=True)
+    layers: List[Any] = [pdk.Layer(
+        "PolygonLayer", id=f"{key}-named-polygons", data=polygon_rows,
+        get_polygon="polygon", get_fill_color="fill", get_line_color="line",
+        get_line_width="width", line_width_min_pixels=2,
+        stroked=True, filled=True, pickable=True, auto_highlight=True,
+        highlight_color=[255, 255, 255, 95],
+    )]
+
+    # School pins remain an information layer. Candidate LSOAs are only used
+    # to find points; the polygons above always remain the exact named WKT.
+    lsoa_codes = [
+        str(e.get("uri")) for e in entities
+        if str(e.get("unit_type")) == "LSOA"
+    ]
+    admin_uris = [
+        str(e.get("uri")) for e in entities
+        if str(e.get("unit_type")) != "LSOA"
+    ]
+    try:
+        schools = run_cypher(cfg, """
+        MATCH (s:School)-[:LOCATED_IN]->(l:LSOA)
+        WHERE l.code IN $lsoa_codes
+           OR EXISTS {
+             MATCH (u:AdminUnit)-[:INTERSECTS]->(l)
+             WHERE u.uri IN $admin_uris
+           }
+        RETURN DISTINCT coalesce(s.name,s.school_name,s.code) AS school,
+               s.code AS school_code, s.latitude AS latitude,
+               s.longitude AS longitude,
+               coalesce(l.deprivation,s.deprivation,'unknown') AS deprivation
+        """, {"lsoa_codes": lsoa_codes, "admin_uris": admin_uris})
+    except Exception:
+        schools = pd.DataFrame()
+    if not schools.empty:
+        schools = schools.copy()
+        schools["latitude"] = pd.to_numeric(schools["latitude"], errors="coerce")
+        schools["longitude"] = pd.to_numeric(schools["longitude"], errors="coerce")
+        schools = schools.dropna(subset=["latitude", "longitude"])
+        schools = schools[schools.apply(
+            lambda row: any(
+                _point_in_admin_rings(
+                    row.get("longitude"), row.get("latitude"), rings
+                ) for rings in entity_rings
+            ), axis=1,
+        )]
+    if not schools.empty:
+        schools["icon"] = schools["deprivation"].map(
+            lambda value: PIN_ICONS.get(str(value), PIN_ICONS["unknown"])
+        )
+        layers.append(pdk.Layer(
+            "IconLayer", id=f"{key}-named-schools", data=schools,
+            get_icon="icon", get_position=["longitude", "latitude"],
+            get_size=3.6, size_scale=10, size_min_pixels=14,
+            size_max_pixels=46, pickable=False, alpha_cutoff=-1,
+        ))
+
+    view = pdk.ViewState(
+        latitude=(max(lats) + min(lats)) / 2,
+        longitude=(max(lons) + min(lons)) / 2,
+        zoom=result_map_zoom(lats, lons, single=len(entities) == 1),
+        pitch=0, bearing=0,
+    )
+    tooltip = {
+        "html": (
+            "<div style='font-family:Segoe UI,Arial,sans-serif;width:220px;"
+            "background:rgba(255,255,255,.92);border-radius:13px;padding:10px 12px;'>"
+            "<div style='font-size:14px;font-weight:900;color:#4a2b25'>{name}</div>"
+            "<div style='font-size:11px;color:#806159;margin-top:2px'>{type}</div>"
+            "<div style='font-size:11px;font-weight:750;color:#7652b5;margin-top:6px'>"
+            "{role}</div></div>"
+        ),
+        "style": {"backgroundColor": "transparent"},
+    }
+    st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
+    picked = deck_chart_with_click(pdk.Deck(
+        layers=layers, initial_view_state=view, map_style="light",
+        tooltip=tooltip,
+        parameters={"clearColor": [0.98, 0.97, 0.97, 1]},
+    ), key=key)
+    st.caption(
+        "Exact stored boundaries are shown. No spatial relationship or "
+        "INTERSECTS result was applied; school pins are information only."
+    )
+    display_df(pd.DataFrame(table_rows))
+    return picked
+
+
 def render_admin_containment_map(
     cfg: Dict[str, str],
     result_df: pd.DataFrame,
@@ -7777,6 +7928,27 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             "This page returns geographic areas. Use Schools map to search "
             "for individual schools and education indicators."
         )
+        return
+    entity_components = (
+        scope.get("components", []) if scope.get("compound") else [scope]
+    )
+    entity_only = bool(entity_components) and all(
+        str(component.get("relation")) == "direct"
+        and str(component.get("provenance", "")).startswith("Exact stored entity")
+        for component in entity_components
+    )
+    if entity_only:
+        st.metric("Named places", len(entity_components))
+        picked = render_named_entity_map(
+            cfg, entity_components, key="place_nl_named_entities"
+        )
+        if natural_loading_slot is not None:
+            natural_loading_slot.empty()
+        if picked:
+            if str(picked.get("type")) == "LSOA":
+                render_lsoa_school_panel(cfg, str(picked.get("uri") or ""))
+            else:
+                render_unit_school_card(cfg, picked)
         return
     if result_kind in {"LSOA", "Mixed"}:
         codes = sorted(set(scope.get("lsoa_codes") or []))
@@ -13167,6 +13339,32 @@ def page_map(cfg: Dict[str, str]) -> None:
     params.update(nl_map["params"])
     admin_scope = nl_map.get("resolved_admin_scope")
     if admin_scope and admin_scope.get("spatial_only"):
+        entity_components = (
+            admin_scope.get("components", [])
+            if admin_scope.get("compound") else [admin_scope]
+        )
+        entity_only = bool(entity_components) and all(
+            str(component.get("relation")) == "direct"
+            and str(component.get("provenance", "")).startswith(
+                "Exact stored entity"
+            )
+            for component in entity_components
+        )
+        if entity_only:
+            st.metric("Named places", len(entity_components))
+            picked = render_named_entity_map(
+                cfg, entity_components, key="map_nl_named_entities"
+            )
+            if active_loading_slot is not None:
+                active_loading_slot.empty()
+            if picked:
+                if str(picked.get("type")) == "LSOA":
+                    render_lsoa_school_panel(
+                        cfg, str(picked.get("uri") or "")
+                    )
+                else:
+                    render_unit_school_card(cfg, picked)
+            return
         anchor = admin_scope["anchor"]
         relation = str(admin_scope.get("relation") or "")
         result_kind = str(admin_scope.get("result_kind") or "")
