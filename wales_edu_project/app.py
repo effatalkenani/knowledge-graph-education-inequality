@@ -2096,6 +2096,14 @@ def llm_parse_question(
             "You map an education-geography question onto exactly one of "
             "eight spatial competency forms and return JSON only, with no "
             "prose and no code fence.\n"
+            "The question may be in any language or a mixture of languages. "
+            "Detect the language automatically and interpret its spatial "
+            "meaning without asking the user to translate it. Keep "
+            "official Welsh place names and LSOA W-codes exact. Do not "
+            "require an entity type when a stored name or code identifies "
+            "the entity. Return every JSON value, place-name normalisation, "
+            "and explanatory reason in English only, regardless of the "
+            "question language.\n"
             "SCQ1 touches: which regions directly border a region.\n"
             "SCQ2 near: regions reachable in two touches-steps, disjoint.\n"
             "SCQ3 between: regions on a cycle-free path linking two regions.\n"
@@ -8363,7 +8371,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         st.caption(
             "Use an LSOA, Community, Ward or other available Welsh area, "
             "then describe whether places touch, intersect, contain, lie "
-            "within, near or between one another."
+            "within, near or between one another. Ask in any language; "
+            "keep Welsh place names and W-codes in their official form."
         )
         render_guided_natural_search(cfg)
 
@@ -12484,15 +12493,20 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
             'make a question executable. '
             'where f is one of "fsm", "attendance", "capped9", "budget", '
             '"pupils". Use nothing outside these values. Questions may be '
-            'in any language; translate place names to their English form. '
+            'in any language or a mixture of languages. Detect the language '
+            'automatically and do not require translation. Return all JSON '
+            'values and normalised descriptive text in English only. Preserve '
+            'official Welsh place names and LSOA W-codes exactly; translate '
+            'only the meaning of descriptive words. '
             'Use authority only for an ordinary local-authority filter. If '
             'the user explicitly says community, ward, county or unitary '
             'authority, use the four administrative fields instead. direct '
             'means its intersecting LSOAs; touches means adjacent units; '
             'graph_near means units exactly two TOUCHES steps away. '
             'GRAPH_NEAR returns every qualifying two-hop result; it has no '
-            'numeric result limit. BETWEEN is different: it returns the '
-            'interior nodes of a shortest same-layer TOUCHES path. '
+            'numeric result limit. BETWEEN is different: it returns interior '
+            'nodes on cycle-free same-layer TOUCHES paths within the disclosed '
+            'tractability hop bound. '
             'Schools are never directly assigned to an administrative unit: the '
             'application always crosses through AdminUnit INTERSECTS LSOA '
             'and School LOCATED_IN LSOA. For explicit administrative wording, '
@@ -13464,7 +13478,8 @@ def page_map(cfg: Dict[str, str]) -> None:
         st.markdown("## Ask for schools in your own words")
         st.caption(
             "Use a place, school phase, deprivation level, transport access, "
-            "FSM, attendance or Capped 9 condition."
+            "FSM, attendance or Capped 9 condition. Ask in any language, "
+            "and keep Welsh place names or W-codes in their official form."
         )
         nl_map = render_map_nl(cfg)
     natural_loading_slot = nl_map.pop("_loading_slot", None)
@@ -14418,7 +14433,11 @@ ORDER BY cluster_size DESC, cluster_id
     if df.empty:
         if loading_slot is not None:
             loading_slot.empty()
-        st.info("No rows with coordinates after filtering.")
+        st.info(
+            "No schools matched all the requested conditions. Try changing "
+            "one condition or check the place name; questions can be written "
+            "in any language."
+        )
         if SHOW_QUERIES:
             st.code(cypher, language="cypher")
         return
