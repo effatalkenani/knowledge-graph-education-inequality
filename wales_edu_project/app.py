@@ -3527,6 +3527,47 @@ def render_page_switcher(page: str) -> None:
         button[data-baseweb="tab"]:hover{
           background:#fff4ed!important;transform:translateY(-1px)!important;
         }
+        /* The two main search modes must read as large clickable controls,
+           not as quiet document tabs.  Scope this treatment so evidence and
+           result tabs elsewhere keep their compact appearance. */
+        .st-key-guided_search_tabs [data-baseweb="tab-list"],
+        .st-key-map_search_builder [data-baseweb="tab-list"]{
+          display:flex!important;gap:18px!important;width:100%!important;
+          padding:8px 8px 13px!important;margin:.35rem 0 1rem!important;
+          border:0!important;background:transparent!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button{
+          flex:1 1 0!important;min-height:58px!important;
+          justify-content:center!important;border-radius:17px!important;
+          border:1px solid #efb9a4!important;
+          background:linear-gradient(180deg,#fffaf6 0%,#ffe9de 100%)!important;
+          color:#654239!important;font-size:1rem!important;font-weight:820!important;
+          letter-spacing:.005em!important;
+          box-shadow:0 7px 0 #dfa891,0 14px 25px rgba(101,52,40,.14)!important;
+          transform:translateY(0)!important;
+          transition:transform .16s ease,box-shadow .16s ease,
+                     background .16s ease,border-color .16s ease!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button:hover,
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button:hover{
+          border-color:#f58d6d!important;
+          background:linear-gradient(180deg,#fffdf9 0%,#ffdfd0 100%)!important;
+          box-shadow:0 8px 0 #d99b82,0 17px 29px rgba(101,52,40,.18)!important;
+          transform:translateY(-1px)!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-list"] > button[aria-selected="true"],
+        .st-key-map_search_builder [data-baseweb="tab-list"] > button[aria-selected="true"]{
+          color:#fff!important;border-color:#f06458!important;
+          background:linear-gradient(135deg,#ff6575 0%,#ff8b68 56%,#ffa45d 100%)!important;
+          box-shadow:inset 0 3px 8px rgba(119,43,35,.22),
+                     0 3px 0 #cc4f43,0 8px 18px rgba(211,77,65,.22)!important;
+          transform:translateY(4px)!important;
+        }
+        .st-key-guided_search_tabs [data-baseweb="tab-highlight"],
+        .st-key-map_search_builder [data-baseweb="tab-highlight"]{
+          display:none!important;
+        }
         @keyframes page-enter{
           from{opacity:0;transform:translateY(10px) scale(.995)}
           to{opacity:1;transform:translateY(0) scale(1)}
@@ -7609,7 +7650,7 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
             key="place_nl_question",
         )
     with bcol:
-        asked = st.button(
+        clicked = st.button(
             "Search", type="primary", use_container_width=True,
             key="place_nl_search",
         )
@@ -7619,7 +7660,19 @@ def render_guided_natural_search(cfg: Dict[str, str]) -> None:
         )
     if clear:
         st.session_state["place_nl_clear_pending"] = True
+        st.session_state.pop("place_nl_submit_phase", None)
         st.rerun()
+    phase = st.session_state.get("place_nl_submit_phase")
+    if clicked:
+        st.session_state["place_nl_submit_phase"] = "paint"
+        st.rerun()
+    if phase == "paint":
+        branded_loading_overlay("Building and framing the spatial answer…")
+        st.session_state["place_nl_submit_phase"] = "execute"
+        st.rerun()
+    asked = phase == "execute"
+    if asked:
+        st.session_state.pop("place_nl_submit_phase", None)
     natural_loading_slot = (
         branded_loading_overlay("Building and framing the spatial answer…")
         if asked else None
@@ -7947,7 +8000,10 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         st.info("No geographic areas are available in the current graph.")
         return
 
-    guided, words = st.tabs(["Build a search", "Write in your own words"])
+    guided_search_shell = st.container(key="guided_search_tabs")
+    guided, words = guided_search_shell.tabs(
+        ["Build a search", "Write in your own words"]
+    )
     with words:
         st.markdown("## Ask about places in your own words")
         st.caption(
@@ -11262,7 +11318,7 @@ def resolve_map_admin_scope(
         ) or unit_type == "LSOA" or result_kind == "LSOA"
     else:
         compatible = table_relation in possible
-    if spatial_only and not compatible:
+    if spatial_only and relation != "direct" and not compatible:
         available = ", ".join(sorted(possible)) or "none"
         return None, [
             f"{relation.replace('_', ' ').upper()} is not a possible "
@@ -12336,7 +12392,7 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         # The map already re-reads the question on every run, so this button
         # is a deliberate submit affordance rather than new behaviour: a
         # search field with no Search button reads as unfinished.
-        asked = st.button(
+        clicked = st.button(
             "Search", type="primary", use_container_width=True,
             key="map_nl_submit",
         )
@@ -12349,7 +12405,20 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         st.session_state["map_nl_clear"] = True
         st.session_state.pop("map_nl_parsed_intent", None)
         st.session_state.pop("map_nl_parsed_text", None)
+        st.session_state.pop("map_nl_submit_phase", None)
         st.rerun()
+
+    phase = st.session_state.get("map_nl_submit_phase")
+    if clicked:
+        st.session_state["map_nl_submit_phase"] = "paint"
+        st.rerun()
+    if phase == "paint":
+        branded_loading_overlay("Finding the schools and framing the result…")
+        st.session_state["map_nl_submit_phase"] = "execute"
+        st.rerun()
+    asked = phase == "execute"
+    if asked:
+        st.session_state.pop("map_nl_submit_phase", None)
 
     natural_loading_slot = (
         branded_loading_overlay("Finding the schools and framing the result…")
