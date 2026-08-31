@@ -4337,17 +4337,28 @@ def bng_to_wgs84(east, north):
     return math.degrees(math.atan2(y2, x2)), math.degrees(phi)
 
 
-def _wkt_rings(wkt_text: str) -> List[List[List[float]]]:
+def _wkt_rings(wkt_text: Any) -> List[List[List[float]]]:
     """Turn a POLYGON / MULTIPOLYGON WKT string into deck.gl ring lists.
 
     Written without shapely so the deployed app needs no extra dependency.
     Only exterior rings are kept: holes are rare in LSOA boundaries and
     deck.gl renders the outline faithfully enough for a choropleth.
     """
-    if not wkt_text:
+    if isinstance(wkt_text, bytes):
+        try:
+            wkt_text = wkt_text.decode("utf-8")
+        except UnicodeDecodeError:
+            return []
+    # Pandas represents a missing WKT as NaN (a float). Neo4j rows can also
+    # contain null. Neither is malformed geometry; both simply mean that this
+    # particular outline cannot be drawn.
+    if not isinstance(wkt_text, str):
         return []
-    text = str(wkt_text).strip().upper()
-    body = wkt_text[wkt_text.find("(") :] if "(" in wkt_text else ""
+    source = wkt_text.strip()
+    if not source:
+        return []
+    text = source.upper()
+    body = source[source.find("(") :] if "(" in source else ""
     if not body:
         return []
     rings: List[List[List[float]]] = []
@@ -14703,10 +14714,24 @@ ORDER BY cluster_size DESC, cluster_id
     selected_school_codes = set(
         st.session_state.get("map_selected_school_codes", [])
     ) & valid_school_codes
-    clicked_region = render_school_map(
-        map_df, selected_school, polygon_df, cluster_only, admin_polygon_df,
-        selected_school_codes=selected_school_codes,
-    )
+    try:
+        clicked_region = render_school_map(
+            map_df, selected_school, polygon_df, cluster_only, admin_polygon_df,
+            selected_school_codes=selected_school_codes,
+        )
+    except Exception as exc:
+        # Never leave the full-screen feedback cover over a failed renderer.
+        # Keep technical details in the server log while the public page gets
+        # a useful, non-sensitive recovery message.
+        if loading_slot is not None:
+            loading_slot.empty()
+        print(f"School map rendering failed: {type(exc).__name__}: {exc}")
+        st.info(
+            "The search completed, but the map could not be drawn because "
+            "one of the returned boundaries was unavailable. Change the "
+            "place or relationship and search again."
+        )
+        return
     if loading_slot is not None:
         loading_slot.empty()
     if clicked_region:
