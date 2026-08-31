@@ -7662,7 +7662,8 @@ def guided_entity_types(
     wales_admin = guided_wales_admin_predicate("n")
     rows = run_cypher(cfg, f"""
     MATCH (n)
-    WHERE n:LSOA OR (n:AdminUnit AND {wales_admin})
+    WHERE (n:LSOA AND toUpper(coalesce(n.code, '')) STARTS WITH 'W')
+       OR (n:AdminUnit AND {wales_admin})
     RETURN DISTINCT CASE WHEN n:LSOA THEN 'LSOA' ELSE {admin_kind} END AS kind
     ORDER BY kind
     """)
@@ -7685,6 +7686,7 @@ def guided_anchor_options(
     if kind == "LSOA":
         query = """
         MATCH (n:LSOA)
+        WHERE toUpper(coalesce(n.code, '')) STARTS WITH 'W'
         RETURN n.code AS value,
                coalesce(n.name, n.code) + ' · ' + n.code AS label
         ORDER BY label
@@ -7741,6 +7743,11 @@ def guided_topology(
         query = """
         MATCH (n:LSOA)
         OPTIONAL MATCH (n)-[:LSOA_TOUCHES]-(m:LSOA)
+        WHERE toUpper(coalesce(n.code, '')) STARTS WITH 'W'
+          AND (
+            m IS NULL
+            OR toUpper(coalesce(m.code, '')) STARTS WITH 'W'
+          )
         RETURN n.code AS value,
                coalesce(n.name,n.LSOA_Name,n.code) + ' · ' + n.code AS label,
                collect(DISTINCT m.code) AS neighbours
@@ -7810,28 +7817,35 @@ def guided_capabilities(
            "password": cfg_key[2], "database": cfg_key[3]}
     if kind == "LSOA":
         unit_kind = guided_admin_kind_expr("u")
+        unit_wales = guided_wales_admin_predicate("u")
         query = """
         MATCH (a:LSOA {code:$anchor})
         CALL {
           WITH a MATCH (a)-[:LSOA_TOUCHES]-(b:LSOA)
+          WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
           RETURN 'touches' AS relation, 'LSOA' AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (a)-[:GRAPH_NEAR]-(b:LSOA)
+          WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
           RETURN 'near' AS relation, 'LSOA' AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (b:LSOA)
-          WHERE b <> a AND NOT (a)-[:LSOA_TOUCHES]-(b)
+          WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
+            AND b <> a AND NOT (a)-[:LSOA_TOUCHES]-(b)
           RETURN 'not_touches' AS relation, 'LSOA' AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (u:AdminUnit)-[:INTERSECTS]->(a)
+          WHERE __U_WALES__
           RETURN 'intersects' AS relation, __UNIT_KIND__ AS result_type,
                  count(DISTINCT u) AS n
           UNION
           WITH a MATCH (a)-[:GRAPH_NEAR]-(b:LSOA)<-[:INTERSECTS]-(u:AdminUnit)
-          WHERE NOT (u)-[:INTERSECTS]->(a)
+          WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
+            AND __U_WALES__
+            AND NOT (u)-[:INTERSECTS]->(a)
           RETURN 'near' AS relation, __UNIT_KIND__ AS result_type,
                  count(DISTINCT u) AS n
           UNION
@@ -7841,7 +7855,8 @@ def guided_capabilities(
         }
         WITH relation, result_type, n WHERE n > 0
         RETURN relation, result_type, n
-        """.replace("__UNIT_KIND__", unit_kind)
+        """.replace("__UNIT_KIND__", unit_kind) \
+           .replace("__U_WALES__", unit_wales)
     else:
         a_kind = guided_admin_kind_expr("a")
         b_kind = guided_admin_kind_expr("b")
@@ -7878,11 +7893,14 @@ def guided_capabilities(
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (a)-[:INTERSECTS]->(b:LSOA)
+          WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
           RETURN 'intersects' AS relation, 'LSOA' AS result_type,
                  count(DISTINCT b) AS n
           UNION
           WITH a MATCH (a)-[:INTERSECTS]->(base:LSOA)-[:GRAPH_NEAR]-(b:LSOA)
-          WHERE NOT (a)-[:INTERSECTS]->(b)
+          WHERE toUpper(coalesce(base.code, '')) STARTS WITH 'W'
+            AND toUpper(coalesce(b.code, '')) STARTS WITH 'W'
+            AND NOT (a)-[:INTERSECTS]->(b)
           RETURN 'near' AS relation, 'LSOA' AS result_type,
                  count(DISTINCT b) AS n
           UNION
@@ -7903,43 +7921,53 @@ def guided_result_query(
 ) -> str:
     """Cypher for one validated guided-search combination."""
     if kind == "LSOA":
+        unit_wales = guided_wales_admin_predicate("u")
         if relation == "near" and result_type != "LSOA":
             unit_kind = guided_admin_kind_expr("u")
             return """
                 MATCH (a:LSOA {code:$anchor})-[:GRAPH_NEAR]-(b:LSOA)
                       <-[:INTERSECTS]-(u:AdminUnit)
                 WHERE __UNIT_KIND__ = $result_type
+                  AND toUpper(coalesce(b.code, '')) STARTS WITH 'W'
+                  AND __U_WALES__
                   AND NOT (u)-[:INTERSECTS]->(a)
                 RETURN DISTINCT u.uri AS unit_uri,
                        coalesce(u.name,u.uri) AS unit_name,
                        __UNIT_KIND__ AS unit_type
                 ORDER BY unit_name
-            """.replace("__UNIT_KIND__", unit_kind)
+            """.replace("__UNIT_KIND__", unit_kind) \
+                .replace("__U_WALES__", unit_wales)
         unit_kind = guided_admin_kind_expr("u")
         queries = {
             "touches": """
                 MATCH (a:LSOA {code:$anchor})-[:LSOA_TOUCHES]-(b:LSOA)
+                WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
                 RETURN DISTINCT b.code AS lsoa_code,
                        coalesce(b.name,b.code) AS name, 'LSOA' AS result_type
                 ORDER BY name""",
             "near": """
                 MATCH (a:LSOA {code:$anchor})-[:GRAPH_NEAR]-(b:LSOA)
+                WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
                 RETURN DISTINCT b.code AS lsoa_code,
                        coalesce(b.name,b.code) AS name, 'LSOA' AS result_type
                 ORDER BY name""",
             "not_touches": """
                 MATCH (a:LSOA {code:$anchor}), (b:LSOA)
-                WHERE b <> a AND NOT (a)-[:LSOA_TOUCHES]-(b)
+                WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
+                  AND b <> a AND NOT (a)-[:LSOA_TOUCHES]-(b)
                 RETURN DISTINCT b.code AS lsoa_code,
                        coalesce(b.name,b.code) AS name, 'LSOA' AS result_type
                 ORDER BY name""",
             "intersects": """
                 MATCH (u:AdminUnit)-[:INTERSECTS]->(a:LSOA {code:$anchor})
-                WHERE __UNIT_KIND__ = $result_type
+                WHERE toUpper(coalesce(a.code, '')) STARTS WITH 'W'
+                  AND __UNIT_KIND__ = $result_type
+                  AND __U_WALES__
                 RETURN DISTINCT u.uri AS unit_uri, coalesce(u.name,u.uri) AS unit_name,
                        __UNIT_KIND__ AS unit_type ORDER BY unit_name""",
         }
-        return queries[relation].replace("__UNIT_KIND__", unit_kind)
+        return queries[relation].replace("__UNIT_KIND__", unit_kind) \
+            .replace("__U_WALES__", unit_wales)
 
     b_kind = guided_admin_kind_expr("b")
     b_wales = guided_wales_admin_predicate("b")
@@ -7948,7 +7976,9 @@ def guided_result_query(
         return """
             MATCH (a:AdminUnit {uri:$anchor})-[:INTERSECTS]->(base:LSOA)
                   -[:GRAPH_NEAR]-(b:LSOA)
-            WHERE NOT (a)-[:INTERSECTS]->(b)
+            WHERE toUpper(coalesce(base.code, '')) STARTS WITH 'W'
+              AND toUpper(coalesce(b.code, '')) STARTS WITH 'W'
+              AND NOT (a)-[:INTERSECTS]->(b)
             RETURN DISTINCT b.code AS lsoa_code,
                    coalesce(b.name,b.code) AS name,
                    'LSOA' AS result_type
@@ -7985,6 +8015,7 @@ def guided_result_query(
                    __B_KIND__ AS unit_type ORDER BY unit_name""",
         "intersects": """
             MATCH (a:AdminUnit {uri:$anchor})-[:INTERSECTS]->(b:LSOA)
+            WHERE toUpper(coalesce(b.code, '')) STARTS WITH 'W'
             RETURN DISTINCT b.code AS lsoa_code, coalesce(b.name,b.code) AS name,
                    'LSOA' AS result_type ORDER BY name""",
     }
@@ -11652,6 +11683,7 @@ def infer_natural_entity_scopes(
 
     scopes: List[Dict[str, Any]] = []
     seen: set[Tuple[str, str]] = set()
+    selected_authority_ids: List[str] = []
     for (position, surface_key), raw_matches in sorted(grouped.items()):
         surface = str(raw_matches[0].get("matched_text") or surface_key)
         tail = raw[position + len(surface):]
@@ -11684,23 +11716,111 @@ def infer_natural_entity_scopes(
                 f'"{surface}".'
             ), None
         if len(matches) > 1:
-            choices = "; ".join(
-                f'{m.get("name")} ({m.get("unit_type")})' for m in matches[:5]
-            )
-            return [], (
-                f'"{surface}" matches more than one stored Welsh '
-                f"entity: {choices}. Add the area type."
-            ), None
+            # Names such as "Castle Community" can legitimately occur in
+            # more than one Welsh authority.  When earlier named places in
+            # the same question establish a unique authority context, use it
+            # to select the matching stored entity instead of asking for a
+            # type that is already identical across all candidates.
+            admin_matches = [
+                m for m in matches if str(m.get("unit_type")) != "LSOA"
+            ]
+            if selected_authority_ids and len(admin_matches) == len(matches):
+                ua_kind = guided_admin_kind_expr("ua")
+                ua_wales = guided_wales_admin_predicate("ua")
+                scores = run_cypher(cfg, f"""
+                UNWIND $candidate_ids AS candidate_id
+                MATCH (candidate:AdminUnit {{uri:candidate_id}})
+                MATCH (context:AdminUnit)
+                WHERE context.uri IN $context_ids
+                MATCH (context)-[:WITHIN*0..5]->(ua:AdminUnit)
+                MATCH (candidate)-[:WITHIN*0..5]->(ua)
+                WHERE {ua_kind} = 'UnitaryAuthority' AND {ua_wales}
+                RETURN candidate.uri AS identifier,
+                       count(DISTINCT context.uri) AS context_matches,
+                       count(DISTINCT ua.uri) AS shared_authorities
+                """, {
+                    "candidate_ids": [str(m["identifier"]) for m in admin_matches],
+                    "context_ids": selected_authority_ids,
+                })
+                if isinstance(scores, pd.DataFrame) and not scores.empty:
+                    score_by_id = {
+                        str(row["identifier"]): int(row["context_matches"])
+                        for _, row in scores.iterrows()
+                    }
+                    best_score = max(score_by_id.values(), default=0)
+                    best = [
+                        m for m in admin_matches
+                        if score_by_id.get(str(m["identifier"]), 0) == best_score
+                        and best_score > 0
+                    ]
+                    if len(best) == 1:
+                        matches = best
+            if len(matches) > 1:
+                candidate_ids = [str(m["identifier"]) for m in matches]
+                ua_kind = guided_admin_kind_expr("ua")
+                ua_wales = guided_wales_admin_predicate("ua")
+                authority_rows = run_cypher(cfg, f"""
+                UNWIND $candidate_ids AS candidate_id
+                MATCH (candidate:AdminUnit {{uri:candidate_id}})
+                MATCH (candidate)-[:WITHIN*0..5]->(ua:AdminUnit)
+                WHERE {ua_kind} = 'UnitaryAuthority' AND {ua_wales}
+                RETURN candidate.uri AS identifier,
+                       collect(DISTINCT coalesce(ua.name,ua.uri)) AS authorities
+                """, {"candidate_ids": candidate_ids})
+                authority_by_id: Dict[str, List[str]] = {}
+                if isinstance(authority_rows, pd.DataFrame):
+                    authority_by_id = {
+                        str(row["identifier"]): [
+                            str(value) for value in (row.get("authorities") or [])
+                            if value
+                        ]
+                        for _, row in authority_rows.iterrows()
+                    }
+                suggestions: List[str] = []
+                for item in matches:
+                    authorities = authority_by_id.get(
+                        str(item.get("identifier")), []
+                    )
+                    for authority in authorities[:1]:
+                        # Prefer the English side of a bilingual authority
+                        # label. Putting the authority first lets the same
+                        # contextual resolver disambiguate the following name.
+                        authority_label = authority.split(" - ")[-1].strip()
+                        suggestion = f"{authority_label} {surface}".strip()
+                        if suggestion not in suggestions:
+                            suggestions.append(suggestion)
+                if suggestions:
+                    choices = " or ".join(
+                        f'“{suggestion}”' for suggestion in suggestions[:5]
+                    )
+                    guidance = (
+                        "Copy and search one of these exact forms: " + choices
+                    )
+                else:
+                    choices = "; ".join(
+                        f'{m.get("name")} ({m.get("unit_type")})'
+                        for m in matches[:5]
+                    )
+                    guidance = (
+                        "Add the containing Welsh authority before the place "
+                        "name. Matches: " + choices
+                    )
+                return [], (
+                    f'"{surface}" matches more than one stored Welsh entity: '
+                    f"{guidance}."
+                ), None
         match = matches[0]
         unit_type = _canonical_spatial_type(match.get("unit_type"))
         key = (str(match.get("identifier")), unit_type)
         if key in seen:
             continue
         seen.add(key)
+        if unit_type == "UnitaryAuthority":
+            selected_authority_ids.append(str(match.get("identifier")))
         scopes.append({
             "anchor_name": (
                 str(match.get("identifier")) if unit_type == "LSOA"
-                else surface
+                else str(match.get("identifier"))
             ),
             "anchor_type": unit_type,
             "relation": "direct",
@@ -11812,7 +11932,8 @@ def resolve_map_admin_scope(
         WHERE {anchor_kind} = $anchor_type
           AND {wales_anchor}
           AND (
-            toLower(coalesce(a.name, '')) = toLower($anchor_name)
+            a.uri = $anchor_name
+            OR toLower(coalesce(a.name, '')) = toLower($anchor_name)
             OR toLower(coalesce(a.name, '')) STARTS WITH
                toLower($anchor_name) + ' - '
             OR toLower(coalesce(a.name, '')) ENDS WITH
@@ -11820,8 +11941,12 @@ def resolve_map_admin_scope(
           )
         RETURN a.uri AS uri, a.name AS name,
                {anchor_kind} AS unit_type, a.wkt AS wkt
-        ORDER BY CASE WHEN toLower(coalesce(a.name, '')) =
-                           toLower($anchor_name) THEN 0 ELSE 1 END,
+        ORDER BY CASE
+                   WHEN a.uri = $anchor_name THEN 0
+                   WHEN toLower(coalesce(a.name, '')) =
+                        toLower($anchor_name) THEN 1
+                   ELSE 2
+                 END,
                  a.uri
         LIMIT 3
         """, {"anchor_type": unit_type, "anchor_name": name})
