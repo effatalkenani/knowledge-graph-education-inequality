@@ -11155,7 +11155,12 @@ def _possible_pair_relations(domain: str, range_: str) -> set[str]:
 
 
 def _map_requested_result(text: str) -> Tuple[str, str | None]:
-    """Return the geography explicitly requested before the relation word."""
+    """Return the first answer class named before the relation word.
+
+    The first noun is the requested result; later nouns can describe its
+    graph bridge.  Thus "Schools located in LSOAs near Cathays" asks for
+    Schools, while "LSOAs with schools near Cathays" asks for LSOAs.
+    """
     low = (text or "").lower()
     prefix = re.split(
         r"\b(?:does\s+not|do\s+not|not)?\s*(?:touch(?:es|ing)?|"
@@ -11164,16 +11169,31 @@ def _map_requested_result(text: str) -> Tuple[str, str | None]:
         low,
         maxsplit=1,
     )[0]
-    if re.search(r"\blsoas?\b|lower layer super output areas?", prefix):
-        return "LSOA", "LSOA"
+    candidates: List[Tuple[int, int, str, str | None]] = []
+    for match in re.finditer(
+        r"\bschools?\b|\beducational establishments?\b", prefix
+    ):
+        candidates.append((match.start(), -(match.end() - match.start()),
+                           "Schools", None))
+    for match in re.finditer(
+        r"\blsoas?\b|lower layer super output areas?", prefix
+    ):
+        candidates.append((match.start(), -(match.end() - match.start()),
+                           "LSOA", "LSOA"))
     # Longer labels first so "community ward" is not read as Community.
     for phrase, utype in sorted(
         _ADMIN_TYPE_WORDS.items(), key=lambda item: len(item[0]), reverse=True
     ):
         plural = phrase + "s" if not phrase.endswith("y") else phrase[:-1] + "ies"
-        if re.search(rf"\b(?:{re.escape(phrase)}|{re.escape(plural)})\b", prefix):
-            return "AdminUnit", utype
-    return "Schools", None
+        for match in re.finditer(
+            rf"\b(?:{re.escape(phrase)}|{re.escape(plural)})\b", prefix
+        ):
+            candidates.append((match.start(), -(match.end() - match.start()),
+                               "AdminUnit", utype))
+    if not candidates:
+        return "Schools", None
+    _position, _length, result_kind, result_type = min(candidates)
+    return result_kind, result_type
 
 
 def _map_has_explicit_result_class(text: str) -> bool:
@@ -11336,7 +11356,10 @@ def _map_spatial_hint(text: str) -> Dict[str, str] | None:
         "anchor_name": first[0],
         "anchor_type": first[1],
         "relation": relation,
-        "target_type": _canonical_spatial_type(requested_type) or first[1],
+        "target_type": (
+            _canonical_spatial_type(requested_type)
+            or ("LSOA" if result_kind == "Schools" else first[1])
+        ),
         "result_kind": result_kind,
         "spatial_only": result_kind != "Schools",
     }
@@ -11480,8 +11503,12 @@ def infer_natural_spatial_scope(
         RETURN a.uri AS identifier, coalesce(a.name,a.uri) AS name,
                {kind_expr} AS unit_type
         """, {"name": anchor_text})
+        candidate_records = (
+            candidates.to_dict("records")
+            if isinstance(candidates, pd.DataFrame) else list(candidates)
+        )
         unique: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        for row in candidates:
+        for row in candidate_records:
             key = (str(row.get("identifier") or ""), str(row.get("unit_type") or ""))
             if key[0] and key[1]:
                 unique[key] = row
@@ -11509,11 +11536,16 @@ def infer_natural_spatial_scope(
             else anchor_text
         )
         result_kind, requested_type = _map_requested_result(raw)
+        default_target = (
+            "LSOA" if result_kind == "Schools" else anchor_type
+        )
         hint = {
             "anchor_name": anchor_name,
             "anchor_type": anchor_type,
             "relation": relation,
-            "target_type": _canonical_spatial_type(requested_type) or anchor_type,
+            "target_type": (
+                _canonical_spatial_type(requested_type) or default_target
+            ),
             "result_kind": result_kind,
             "spatial_only": result_kind != "Schools",
         }
@@ -12114,7 +12146,12 @@ def resolve_map_admin_scope(
         RETURN DISTINCT l.code AS lsoa_code, u.uri AS unit_uri,
           u.name AS unit_name, u.type AS unit_type, u.wkt AS unit_wkt
         """
-    elif result_kind == "LSOA":
+    elif result_kind in {"LSOA", "Schools"} and target_type == "LSOA":
+        # Schools have no direct spatial edge to an administrative unit.
+        # Their default geography is the LSOA reached by LOCATED_IN.  For a
+        # graph-near administrative question, cross from the named unit to
+        # its intersecting LSOAs, apply GRAPH_NEAR there, and let the common
+        # school query below join the returned codes back through LOCATED_IN.
         path = """
         MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(base:LSOA)
         MATCH (base)-[:GRAPH_NEAR]-(l:LSOA)
