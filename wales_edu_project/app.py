@@ -3866,7 +3866,7 @@ def render_page_switcher(page: str) -> None:
     nav_shell = st.container(key="nav_switcher")
     scq, map_col, _nav_space = nav_shell.columns([1, 1, 2.8], gap="small")
     with scq:
-        st.button("Explore Place Relations", key="nav_tab_scq", use_container_width=True,
+        st.button("Explore administrative and statistical area relations", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
                   on_click=set_page, args=("SCQ Demonstrator",))
     with map_col:
