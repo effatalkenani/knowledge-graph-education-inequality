@@ -8770,7 +8770,6 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
             "Use an LSOA, Community, Ward or other available Welsh area, "
             "then describe whether places touch, intersect, contain, lie "
             "within, near or between one another. Ask in any language; "
-            "keep Welsh place names and W-codes in their official form."
         )
         render_guided_natural_search(cfg)
 
