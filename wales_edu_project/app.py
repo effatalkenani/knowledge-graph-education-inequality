@@ -11157,71 +11157,105 @@ def infer_natural_spatial_scope(
 def infer_natural_entity_scopes(
     cfg: Dict[str, str], text: str
 ) -> Tuple[List[Dict[str, Any]], str | None, str | None]:
-    """Resolve one or more named places when no relation was requested."""
+    """Resolve every stored place mentioned when no relation was requested."""
     raw = str(text or "").strip()
-    if not raw or _map_explicit_relation(raw) != "direct":
+    if (
+        not raw or _map_explicit_relation(raw) != "direct"
+        or re.search(r"\bschools?\b", raw, re.I)
+    ):
         return [], None, None
     raw = re.sub(
         r"^(?:show|map|find|display|locate|plot)\s+(?:me\s+)?",
         "", raw, flags=re.I,
     ).strip()
-    fragments = [
-        part.strip(" ?.,;•") for part in re.split(
-            r"\s*(?:,|;|•|\band\b|&)\s*", raw, flags=re.I
-        ) if part.strip(" ?.,;•")
-    ][:8]
-    if not fragments:
-        return [], None, None
-
     kind_expr = guided_admin_kind_expr("a")
     wales_pred = guided_wales_admin_predicate("a")
+    codes = sorted(set(re.findall(r"\bW\d{8}\b", raw.upper())))
+    rows = run_cypher(cfg, f"""
+    MATCH (l:LSOA)
+    WHERE toUpper(coalesce(l.code,'')) IN $codes
+       OR (
+         size(trim(coalesce(l.name,''))) >= 4
+         AND toLower($text) CONTAINS toLower(trim(l.name))
+       )
+    RETURN l.code AS identifier, coalesce(l.name,l.code) AS name,
+           'LSOA' AS unit_type,
+           CASE WHEN toUpper(coalesce(l.code,'')) IN $codes
+                THEN toUpper(l.code) ELSE trim(l.name) END AS matched_text
+    UNION ALL
+    MATCH (a:AdminUnit)
+    WHERE {wales_pred}
+    WITH a, [p IN split(coalesce(a.name,''), ' - ') | trim(p)] AS name_parts
+    WHERE any(p IN name_parts
+              WHERE size(p) >= 4
+                AND toLower($text) CONTAINS toLower(p))
+    RETURN a.uri AS identifier, coalesce(a.name,a.uri) AS name,
+           {kind_expr} AS unit_type,
+           head([p IN name_parts
+                 WHERE size(p) >= 4
+                   AND toLower($text) CONTAINS toLower(p)]) AS matched_text
+    LIMIT 60
+    """, {"text": raw, "codes": codes})
+    candidates = rows.to_dict("records") if isinstance(rows, pd.DataFrame) else []
+
+    # CONTAINS is used only to obtain a small candidate set.  Word boundaries
+    # here prevent a short place name from matching inside another word.
+    mentioned: List[Tuple[int, str, Dict[str, Any]]] = []
+    for candidate in candidates:
+        surface = str(candidate.get("matched_text") or "").strip()
+        if not surface:
+            continue
+        found = re.search(rf"(?<!\w){re.escape(surface)}(?!\w)", raw, re.I)
+        if found:
+            mentioned.append((found.start(), surface, candidate))
+    if not mentioned:
+        return [], None, None
+
+    # Resolve ambiguity per written name. An immediately following type label
+    # (for example "Cathays Community") disambiguates that particular name.
+    grouped: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+    for position, surface, candidate in mentioned:
+        grouped.setdefault((position, surface.lower()), []).append(candidate)
+
     scopes: List[Dict[str, Any]] = []
     seen: set[Tuple[str, str]] = set()
-    for original in fragments:
-        code = re.search(r"\bW\d{8}\b", original, re.I)
-        candidate_text = code.group(0).upper() if code else original
-        if not code:
-            for phrase in sorted(_ADMIN_TYPE_WORDS, key=len, reverse=True):
-                candidate_text = re.sub(
-                    rf"\s+{re.escape(phrase)}$", "", candidate_text,
-                    flags=re.I,
-                ).strip()
-            candidate_text = re.sub(
-                r"\s+lsoa$", "", candidate_text, flags=re.I
-            ).strip()
-        rows = run_cypher(cfg, f"""
-        MATCH (l:LSOA)
-        WHERE toUpper(coalesce(l.code,'')) = toUpper($name)
-           OR toLower(coalesce(l.name,'')) = toLower($name)
-        RETURN l.code AS identifier, coalesce(l.name,l.code) AS name,
-               'LSOA' AS unit_type
-        UNION ALL
-        MATCH (a:AdminUnit)
-        WHERE {wales_pred}
-          AND (
-            toLower(coalesce(a.name,'')) = toLower($name)
-            OR toLower(coalesce(a.name,'')) STARTS WITH toLower($name) + ' - '
-            OR toLower(coalesce(a.name,'')) ENDS WITH ' - ' + toLower($name)
-          )
-        RETURN a.uri AS identifier, coalesce(a.name,a.uri) AS name,
-               {kind_expr} AS unit_type
-        """, {"name": candidate_text})
-        matches = rows.to_dict("records") if isinstance(rows, pd.DataFrame) else []
-        matches = [m for m in matches if m.get("identifier") and m.get("unit_type")]
+    for (position, surface_key), raw_matches in sorted(grouped.items()):
+        surface = str(raw_matches[0].get("matched_text") or surface_key)
+        tail = raw[position + len(surface):]
+        explicit_type: str | None = None
+        if re.match(r"^\s+lsoa\b", tail, re.I):
+            explicit_type = "LSOA"
+        else:
+            for phrase, raw_type in sorted(
+                _ADMIN_TYPE_WORDS.items(), key=lambda item: len(item[0]),
+                reverse=True,
+            ):
+                if re.match(rf"^\s+{re.escape(phrase)}\b", tail, re.I):
+                    explicit_type = _canonical_spatial_type(raw_type)
+                    break
+        matches = [
+            m for m in raw_matches
+            if m.get("identifier") and m.get("unit_type")
+            and (
+                not explicit_type
+                or _canonical_spatial_type(m.get("unit_type")) == explicit_type
+            )
+        ]
         unique = {
             (str(m["identifier"]), str(m["unit_type"])): m for m in matches
         }
         matches = list(unique.values())
         if not matches:
-            # No exact entity means this may be an ordinary school-property
-            # question; leave it to the existing parser.
-            return [], None, None
+            return [], (
+                f'No stored {explicit_type or "Welsh area"} matches '
+                f'"{surface}".'
+            ), None
         if len(matches) > 1:
             choices = "; ".join(
                 f'{m.get("name")} ({m.get("unit_type")})' for m in matches[:5]
             )
             return [], (
-                f'"{candidate_text}" matches more than one stored Welsh '
+                f'"{surface}" matches more than one stored Welsh '
                 f"entity: {choices}. Add the area type."
             ), None
         match = matches[0]
@@ -11233,7 +11267,7 @@ def infer_natural_entity_scopes(
         scopes.append({
             "anchor_name": (
                 str(match.get("identifier")) if unit_type == "LSOA"
-                else candidate_text
+                else surface
             ),
             "anchor_type": unit_type,
             "relation": "direct",
