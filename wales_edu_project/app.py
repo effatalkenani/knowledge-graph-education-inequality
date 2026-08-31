@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+from collections import deque
 from html import escape
 from typing import Any, Dict, List, Tuple
 
@@ -40,6 +41,12 @@ load_dotenv()
 # and still live in the code and the research log; this only controls display.
 # Flip to True during development when the query text is needed on screen.
 SHOW_QUERIES = False
+
+# BETWEEN has no numeric hop limit in the paper.  The application needs one
+# to keep simple-path enumeration tractable; six is also the documented
+# default used by SCQ3.  Keeping it in one constant prevents the guided and
+# natural-language routes from quietly using a different meaning.
+BETWEEN_DEFAULT_MAX_HOPS = 6
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -610,6 +617,43 @@ RETURN
     ] AS between_lsoas
 ORDER BY hops
 """
+
+
+def between_result_query(kind: str, max_hops: int = BETWEEN_DEFAULT_MAX_HOPS) -> str:
+    """Return areas on every cycle-free path within the disclosed hop bound.
+
+    This is the paper's BETWEEN semantics.  Shortest-path search may be used
+    elsewhere only as a fast reachability/distance aid; it must not define the
+    answer returned to the user.
+    """
+    hops = max(2, min(int(max_hops), 8))
+    if kind == "LSOA":
+        return f"""
+        MATCH (a:LSOA {{code:$anchor}}), (b:LSOA {{code:$second}})
+        WHERE a <> b
+        MATCH p=(a)-[:LSOA_TOUCHES*2..{hops}]-(b)
+        WHERE all(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
+        UNWIND nodes(p)[1..-1] AS x
+        RETURN DISTINCT x.code AS lsoa_code,
+               coalesce(x.name,x.LSOA_Name,x.code) AS name,
+               'LSOA' AS result_type
+        ORDER BY name
+        """
+    node_kind = guided_admin_kind_expr("n")
+    node_wales = guided_wales_admin_predicate("n")
+    x_kind = guided_admin_kind_expr("x")
+    return f"""
+    MATCH (a:AdminUnit {{uri:$anchor}}), (b:AdminUnit {{uri:$second}})
+    WHERE a <> b
+    MATCH p=(a)-[:TOUCHES*2..{hops}]-(b)
+    WHERE all(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
+      AND all(n IN nodes(p) WHERE {node_kind} = $result_type
+                                AND {node_wales})
+    UNWIND nodes(p)[1..-1] AS x
+    RETURN DISTINCT x.uri AS unit_uri, coalesce(x.name,x.uri) AS unit_name,
+           {x_kind} AS unit_type
+    ORDER BY unit_name
+    """
 
 
 # SCQ8 official ANSWER (grouped per administrative unit) and its
@@ -3434,6 +3478,12 @@ def render_page_switcher(page: str) -> None:
           font-weight:800!important;
           letter-spacing:.005em!important;
         }
+        .nav-transfer{
+          height:3.75rem;display:flex;align-items:center;justify-content:center;
+          color:#d76451;font-size:1.45rem;font-weight:900;
+          filter:drop-shadow(0 5px 7px rgba(102,52,40,.16));
+          user-select:none;
+        }
         .guided-hero,.map-search-hero{
           position:relative;isolation:isolate;overflow:hidden;
           transform:perspective(1200px) translateZ(0);
@@ -3624,11 +3674,18 @@ def render_page_switcher(page: str) -> None:
             unsafe_allow_html=True,
         )
     nav_shell = st.container(key="nav_switcher")
-    pad_left, scq, map_col, pad_right = nav_shell.columns([.05, 1, 1, .05])
+    pad_left, scq, transfer, map_col, pad_right = nav_shell.columns(
+        [.05, 1, .09, 1, .05]
+    )
     with scq:
         st.button("SCQ Search", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
                   on_click=set_page, args=("SCQ Demonstrator",))
+    with transfer:
+        st.markdown(
+            "<div class='nav-transfer' title='Switch search view'>⇄</div>",
+            unsafe_allow_html=True,
+        )
     with map_col:
         st.button("Map Explorer", key="nav_tab_map", use_container_width=True,
                   type="primary" if page == "Map" else "secondary",
@@ -3767,19 +3824,53 @@ div[data-testid="stDataFrame"] [role="columnheader"] {
 # query, which is the correct unit of work.
 @st.cache_resource(show_spinner=False)
 def _cached_driver(uri: str, user: str, password: str):
-    return GraphDatabase.driver(uri, auth=(user, password))
+    return GraphDatabase.driver(
+        uri,
+        auth=(user, password),
+        connection_timeout=8.0,
+        connection_acquisition_timeout=8.0,
+        max_transaction_retry_time=8.0,
+        max_connection_pool_size=20,
+        max_connection_lifetime=1800,
+        keep_alive=True,
+    )
 
 
 def get_driver(cfg: Dict[str, str]):
     return _cached_driver(cfg["uri"], cfg["user"], cfg["password"])
 
 
+@st.cache_data(ttl=300, max_entries=512, show_spinner=False)
+def _cached_read_query(
+    uri: str, user: str, password: str, database: str,
+    cypher: str, params_json: str,
+) -> pd.DataFrame:
+    """Short-lived cache for the app's read-only Cypher workload.
+
+    Streamlit reruns on tab changes, selections and map clicks.  Caching the
+    exact query/parameter pair prevents those UI reruns from repeatedly
+    crossing the network to Aura.  The graph is read-only from this app and
+    the five-minute TTL still makes external reloads visible promptly.
+    """
+    params = json.loads(params_json)
+    driver = _cached_driver(uri, user, password)
+    with driver.session(database=database) as session:
+        rows = [dict(record) for record in session.run(cypher, params)]
+    return pd.DataFrame(rows)
+
+
 def run_cypher(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None) -> pd.DataFrame:
     params = params or {}
-    driver = get_driver(cfg)
-    with driver.session(database=cfg["database"]) as session:
-        rows = [dict(r) for r in session.run(cypher, params)]
-    return pd.DataFrame(rows)
+    params_json = json.dumps(
+        params, sort_keys=True, ensure_ascii=False, default=str,
+        separators=(",", ":"),
+    )
+    # Return a copy because renderers often add presentation columns.  The
+    # cached DataFrame itself must remain immutable for the next consumer.
+    return _cached_read_query(
+        cfg["uri"], cfg["user"], cfg["password"], cfg["database"],
+        cypher, params_json,
+    ).copy(deep=True)
 
 
 def scalar(cfg: Dict[str, str], cypher: str, params: Dict[str, Any] | None = None, default: Any = 0) -> Any:
@@ -4823,7 +4914,14 @@ def dismiss_loading_when_ready(
                 setTimeout(() => {{ el.style.display = 'none'; }}, 220);
               }});
               clearInterval(timer);
-            }} else if (Date.now() - started > 120000) {{
+            }} else if (Date.now() - started > 8000) {{
+              // A selector can change across Streamlit releases.  Feedback
+              // must never become a permanent cover when that happens.
+              doc.querySelectorAll('.result-loading-overlay').forEach((el) => {{
+                el.style.opacity = '0';
+                el.style.pointerEvents = 'none';
+                setTimeout(() => {{ el.style.display = 'none'; }}, 220);
+              }});
               clearInterval(timer);
             }}
           }}, 80);
@@ -6007,19 +6105,8 @@ def lsoa_hop_distance(
     """
     if not code_a or not code_b or code_a == code_b:
         return 0
-    cfg = {"uri": cfg_key[0], "user": cfg_key[1],
-           "password": cfg_key[2], "database": cfg_key[3]}
-    if kind == "LSOA":
-        pattern = ("MATCH (a:LSOA {code:$a}), (b:LSOA {code:$b}) "
-                   "MATCH p = shortestPath((a)-[:LSOA_TOUCHES*..12]-(b))")
-    else:
-        pattern = ("MATCH (a:AdminUnit {uri:$a}), (b:AdminUnit {uri:$b}) "
-                   "MATCH p = shortestPath((a)-[:TOUCHES*..12]-(b))")
-    df = run_cypher(cfg, pattern + " RETURN length(p) AS hops",
-                    {"a": code_a, "b": code_b})
-    if df.empty or pd.isna(df.iloc[0]["hops"]):
-        return None
-    return int(df.iloc[0]["hops"])
+    _labels, adjacency = guided_topology(cfg_key, kind)
+    return topology_hop_distance(adjacency, code_a, code_b, 12)
 
 
 def render_answer_map(
@@ -7593,51 +7680,101 @@ def guided_anchor_options(
     )
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=3600)
 def guided_between_options(
     cfg_key: Tuple[str, str, str, str], kind: str, anchor: str
 ) -> Tuple[Tuple[str, str], ...]:
-    """Only endpoints whose shortest same-layer path has an interior area."""
+    """Eligible endpoints, calculated locally from one cached graph snapshot."""
+    labels, adjacency = guided_topology(cfg_key, kind)
+    distances = topology_distances(
+        adjacency, anchor, BETWEEN_DEFAULT_MAX_HOPS
+    )
+    return tuple(sorted(
+        (
+            (node, labels.get(node, node))
+            for node, steps in distances.items()
+            if 2 <= steps <= BETWEEN_DEFAULT_MAX_HOPS
+        ),
+        key=lambda option: option[1].casefold(),
+    ))
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def guided_topology(
+    cfg_key: Tuple[str, str, str, str], kind: str
+) -> Tuple[Dict[str, str], Dict[str, Tuple[str, ...]]]:
+    """Fetch a same-layer adjacency graph once, then reuse it for browsing.
+
+    The snapshot changes query location, not relationship meaning: LSOA edges
+    are still LSOA_TOUCHES and administrative edges are still native TOUCHES.
+    """
     cfg = {"uri": cfg_key[0], "user": cfg_key[1],
            "password": cfg_key[2], "database": cfg_key[3]}
     if kind == "LSOA":
         query = """
-        MATCH (a:LSOA {code:$anchor}), (b:LSOA)
-        WHERE b <> a
-        MATCH p = shortestPath((a)-[:LSOA_TOUCHES*..12]-(b))
-        WHERE length(p) > 1
-        RETURN b.code AS value,
-               coalesce(b.name,b.code) + ' · ' + b.code AS label,
-               length(p) AS steps
-        ORDER BY label
+        MATCH (n:LSOA)
+        OPTIONAL MATCH (n)-[:LSOA_TOUCHES]-(m:LSOA)
+        RETURN n.code AS value,
+               coalesce(n.name,n.LSOA_Name,n.code) + ' · ' + n.code AS label,
+               collect(DISTINCT m.code) AS neighbours
         """
-        params = {"anchor": anchor}
+        params: Dict[str, Any] = {}
     else:
         node_kind = guided_admin_kind_expr("n")
-        b_kind = guided_admin_kind_expr("b")
-        b_wales = guided_wales_admin_predicate("b")
-        n_wales = guided_wales_admin_predicate("n")
+        m_kind = guided_admin_kind_expr("m")
+        node_wales = guided_wales_admin_predicate("n")
+        m_wales = guided_wales_admin_predicate("m")
         query = f"""
-        MATCH (a:AdminUnit {{uri:$anchor}}), (b:AdminUnit)
-        WHERE b <> a AND {b_kind} = $kind AND {b_wales}
-        MATCH p = shortestPath((a)-[:TOUCHES*..12]-(b))
-        WHERE length(p) > 1
-          AND all(n IN nodes(p) WHERE {node_kind} = $kind AND {n_wales})
-        RETURN b.uri AS value, coalesce(b.name,b.uri) AS label,
-               length(p) AS steps
-        ORDER BY label
+        MATCH (n:AdminUnit)
+        WHERE {node_kind} = $kind AND {node_wales}
+        OPTIONAL MATCH (n)-[:TOUCHES]-(m:AdminUnit)
+        WHERE {m_kind} = $kind AND {m_wales}
+        RETURN n.uri AS value, coalesce(n.name,n.uri) AS label,
+               collect(DISTINCT m.uri) AS neighbours
         """
-        params = {"anchor": anchor, "kind": kind}
+        params = {"kind": kind}
     rows = run_cypher(cfg, query, params)
-    if rows.empty:
-        return ()
-    return tuple(
-        (str(row["value"]), str(row["label"]))
-        for _, row in rows.iterrows() if pd.notna(row.get("value"))
-    )
+    labels: Dict[str, str] = {}
+    adjacency: Dict[str, Tuple[str, ...]] = {}
+    for _, row in rows.iterrows():
+        if pd.isna(row.get("value")):
+            continue
+        node = str(row["value"])
+        labels[node] = str(row.get("label") or node)
+        neighbours = row.get("neighbours") or []
+        adjacency[node] = tuple(
+            str(value) for value in neighbours if value is not None
+        )
+    return labels, adjacency
 
 
-@st.cache_data(show_spinner=False, ttl=180)
+def topology_distances(
+    adjacency: Dict[str, Tuple[str, ...]], start: str, max_hops: int
+) -> Dict[str, int]:
+    """Bounded BFS over the cached immutable topology."""
+    if start not in adjacency:
+        return {}
+    distances = {start: 0}
+    queue = deque([start])
+    while queue:
+        node = queue.popleft()
+        if distances[node] >= max_hops:
+            continue
+        for neighbour in adjacency.get(node, ()):
+            if neighbour not in distances:
+                distances[neighbour] = distances[node] + 1
+                queue.append(neighbour)
+    return distances
+
+
+def topology_hop_distance(
+    adjacency: Dict[str, Tuple[str, ...]], start: str, destination: str,
+    max_hops: int,
+) -> int | None:
+    return topology_distances(adjacency, start, max_hops).get(destination)
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
 def guided_capabilities(
     cfg_key: Tuple[str, str, str, str], kind: str, anchor: str
 ) -> pd.DataFrame:
@@ -8390,31 +8527,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         if relation == "between":
             if not second:
                 return
-            edge = "LSOA_TOUCHES" if kind == "LSOA" else "TOUCHES"
-            node = "LSOA" if kind == "LSOA" else "AdminUnit"
-            key_prop = "code" if kind == "LSOA" else "uri"
-            if kind == "LSOA":
-                path_guard = ""
-                result_kind_expr = "'LSOA'"
-            else:
-                path_kind = guided_admin_kind_expr("n")
-                path_wales = guided_wales_admin_predicate("n")
-                path_guard = (
-                    f"AND all(n IN nodes(p) WHERE {path_kind} = $result_type "
-                    f"AND {path_wales})"
-                )
-                result_kind_expr = guided_admin_kind_expr("x")
-            query = f"""
-            MATCH (a:{node} {{{key_prop}:$anchor}}),
-                  (b:{node} {{{key_prop}:$second}})
-            WHERE a <> b
-            MATCH p = shortestPath((a)-[:{edge}*..12]-(b))
-            WHERE a <> b {path_guard}
-            UNWIND CASE WHEN length(p) > 1 THEN nodes(p)[1..-1] ELSE [] END AS x
-            RETURN DISTINCT x.{key_prop} AS {'lsoa_code' if kind == 'LSOA' else 'unit_uri'},
-                   coalesce(x.name, x.{key_prop}) AS {'name' if kind == 'LSOA' else 'unit_name'},
-                   {result_kind_expr} AS {'result_type' if kind == 'LSOA' else 'unit_type'}
-            """
+            query = between_result_query(kind)
             params["second"] = second[0]
         else:
             query = guided_result_query(kind, relation, result_type)
@@ -11762,31 +11875,7 @@ def resolve_map_admin_scope(
         second_uri = str(second_rows.iloc[0]["uri"])
         if second_uri == anchor_uri:
             return None, ["BETWEEN needs two different places."]
-        if unit_type == "LSOA":
-            between_query = """
-            MATCH (a:LSOA {code:$anchor}), (b:LSOA {code:$second})
-            MATCH p = shortestPath((a)-[:LSOA_TOUCHES*..12]-(b))
-            UNWIND CASE WHEN length(p) > 1
-                        THEN nodes(p)[1..-1] ELSE [] END AS x
-            RETURN DISTINCT x.code AS lsoa_code,
-                   coalesce(x.name,x.code) AS name, 'LSOA' AS result_type
-            ORDER BY name
-            """
-        else:
-            path_kind = guided_admin_kind_expr("n")
-            path_wales = guided_wales_admin_predicate("n")
-            between_query = f"""
-            MATCH (a:AdminUnit {{uri:$anchor}}),
-                  (b:AdminUnit {{uri:$second}})
-            MATCH p = shortestPath((a)-[:TOUCHES*..12]-(b))
-            WHERE all(n IN nodes(p) WHERE {path_kind} = $result_type
-                                      AND {path_wales})
-            UNWIND CASE WHEN length(p) > 1
-                        THEN nodes(p)[1..-1] ELSE [] END AS x
-            RETURN DISTINCT x.uri AS unit_uri, coalesce(x.name,x.uri) AS unit_name,
-                   {guided_admin_kind_expr('x')} AS unit_type
-            ORDER BY unit_name
-            """
+        between_query = between_result_query(unit_type)
         rows = run_cypher(cfg, between_query, {
             "anchor": anchor_uri, "second": second_uri,
             "result_type": target_type,
@@ -14751,7 +14840,10 @@ def main() -> None:
                 page_map(cfg)
         if startup_slot is not None:
             st.session_state["startup_view_ready"] = True
-            dismiss_loading_when_ready(require_map=False, startup=True)
+            # The page function has completed, so do not leave startup tied
+            # to a fragile browser selector. Result loaders still wait for
+            # their map target; first-open merely covers server preparation.
+            startup_slot.empty()
     except TypeError as exc:
         # Only the keyed-container compatibility failure is recoverable here.
         # Other TypeErrors must remain visible rather than being hidden by the
@@ -14768,7 +14860,7 @@ def main() -> None:
                 page_map(cfg)
         if startup_slot is not None:
             st.session_state["startup_view_ready"] = True
-            dismiss_loading_when_ready(require_map=False, startup=True)
+            startup_slot.empty()
     except Exception:
         if startup_slot is not None:
             startup_slot.empty()
