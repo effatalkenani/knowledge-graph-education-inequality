@@ -3298,6 +3298,11 @@ def sidebar_config() -> Dict[str, str]:
 
 def set_page(page_name: str) -> None:
     """Switch between the two public experiences before the next rerun."""
+    previous_page = st.session_state.get("page")
+    if previous_page != page_name:
+        # Cover the previous page while Streamlit reconciles the new keyed
+        # page tree.  Without this, the browser can briefly paint both trees.
+        st.session_state["page_transition_pending"] = True
     if page_name == "Map" and st.session_state.get("page") != "Map":
         st.session_state["map_has_run"] = False
     st.session_state.page = page_name
@@ -14998,14 +15003,31 @@ ORDER BY cluster_size DESC, cluster_id
 
 def main() -> None:
     first_open = not st.session_state.get("startup_view_ready", False)
-    startup_slot = (
-        branded_loading_overlay("Opening the Welsh education explorer…")
-        if first_open else None
+    page_transition = bool(
+        st.session_state.pop("page_transition_pending", False)
+    )
+    transition_slot = (
+        branded_loading_overlay(
+            "Opening the Welsh education explorer…"
+            if first_open else "Opening the selected workspace…"
+        )
+        if first_open or page_transition else None
     )
     try:
         cfg = sidebar_config()
         apply_dashboard_theme(False)
         page = cfg.pop("page")
+        # A keyed Streamlit container can remain in the browser until the
+        # current rerun finishes.  Hide the inactive page explicitly so it
+        # can never appear underneath or inside the active page meanwhile.
+        inactive_page_key = (
+            "page_map" if page == "SCQ Demonstrator"
+            else "page_scq_demonstrator"
+        )
+        st.markdown(
+            f"<style>.st-key-{inactive_page_key}{{display:none!important}}</style>",
+            unsafe_allow_html=True,
+        )
         # Each page is drawn inside its own keyed container. Without this the
         # pages share element slots, so a widget from the previous page
         # can survive the switch and paint over the new one -- which is what put
@@ -15016,19 +15038,19 @@ def main() -> None:
                 page_guided_spatial_search(cfg)
             elif page == "Map":
                 page_map(cfg)
-        if startup_slot is not None:
+        if transition_slot is not None:
             st.session_state["startup_view_ready"] = True
             # The page function has completed, so do not leave startup tied
             # to a fragile browser selector. Result loaders still wait for
             # their map target; first-open merely covers server preparation.
-            startup_slot.empty()
+            transition_slot.empty()
     except TypeError as exc:
         # Only the keyed-container compatibility failure is recoverable here.
         # Other TypeErrors must remain visible rather than being hidden by the
         # loading cover.
         if "key" not in str(exc).lower():
-            if startup_slot is not None:
-                startup_slot.empty()
+            if transition_slot is not None:
+                transition_slot.empty()
             raise
         body = st.container()
         with body:
@@ -15036,12 +15058,12 @@ def main() -> None:
                 page_guided_spatial_search(cfg)
             elif page == "Map":
                 page_map(cfg)
-        if startup_slot is not None:
+        if transition_slot is not None:
             st.session_state["startup_view_ready"] = True
-            startup_slot.empty()
+            transition_slot.empty()
     except Exception:
-        if startup_slot is not None:
-            startup_slot.empty()
+        if transition_slot is not None:
+            transition_slot.empty()
         raise
 
 
