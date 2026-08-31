@@ -8774,7 +8774,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         render_guided_natural_search(cfg)
 
     with guided:
-        st.markdown("# Explore administrative and statistical area relations")
+        st.markdown("Explore administrative and statistical area relations")
         st.caption(
             "Choose a Welsh area and a qualitative spatial relationship, "
             "then explore the matching places on the map."
