@@ -5156,7 +5156,7 @@ def render_school_map(
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
     st.markdown(
         "<div class='map-note'>"
-        "School locations across Wales. Hover a pin to open its metrics card."
+        "Matching school locations. Hover a pin to open its metrics card."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -12095,6 +12095,73 @@ def resolve_map_admin_scope(
             "units": units,
         }, []
 
+    # One canonical bridge for every school question anchored on an
+    # administrative place. Schools are LOCATED_IN LSOAs, never directly in
+    # AdminUnits. Therefore the requested topological relation is evaluated
+    # on the anchor's intersecting LSOAs and only then joined to schools.
+    if result_kind == "Schools" and target_type == "LSOA":
+        if relation in {"direct", "intersects", "inside", "contains"}:
+            path = """
+            MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(l:LSOA)
+            RETURN DISTINCT l.code AS lsoa_code, null AS unit_uri,
+              null AS unit_name, 'LSOA' AS unit_type, null AS unit_wkt
+            """
+        elif relation == "touches":
+            path = """
+            MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(base:LSOA)
+            MATCH (base)-[:LSOA_TOUCHES]-(l:LSOA)
+            WHERE NOT (a)-[:INTERSECTS]->(l)
+            RETURN DISTINCT l.code AS lsoa_code, null AS unit_uri,
+              null AS unit_name, 'LSOA' AS unit_type, null AS unit_wkt
+            """
+        elif relation == "graph_near":
+            path = """
+            MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(base:LSOA)
+            MATCH (base)-[:GRAPH_NEAR]-(l:LSOA)
+            WHERE NOT (a)-[:INTERSECTS]->(l)
+            RETURN DISTINCT l.code AS lsoa_code, null AS unit_uri,
+              null AS unit_name, 'LSOA' AS unit_type, null AS unit_wkt
+            """
+        elif relation == "not_touches":
+            path = """
+            MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(base:LSOA)
+            WITH a, collect(DISTINCT base) AS bases
+            MATCH (l:LSOA)
+            WHERE NOT l IN bases
+              AND none(base IN bases WHERE EXISTS {
+                MATCH (base)-[:LSOA_TOUCHES]-(l)
+              })
+            RETURN DISTINCT l.code AS lsoa_code, null AS unit_uri,
+              null AS unit_name, 'LSOA' AS unit_type, null AS unit_wkt
+            """
+        else:
+            return None, [
+                f"{relation.replace('_', ' ').upper()} cannot be evaluated "
+                "for schools from this single reference place."
+            ]
+        rows = run_cypher(cfg, path, {"anchor_uri": anchor_uri})
+        if rows.empty:
+            return None, [
+                f"No LSOA satisfies {relation.replace('_', ' ')} from {name}."
+            ]
+        return {
+            "anchor": anchors.iloc[0].to_dict(),
+            "relation": relation,
+            "target_type": "LSOA",
+            "result_kind": "Schools",
+            "spatial_only": False,
+            "provenance": (
+                "Geometry-origin + Graph-derived"
+                if relation in {"touches", "graph_near", "not_touches"}
+                else "Geometry-origin"
+            ),
+            "disjointness_applied": relation == "graph_near",
+            "lsoa_codes": sorted(set(
+                rows["lsoa_code"].dropna().astype(str)
+            )),
+            "units": rows,
+        }, []
+
     if relation in {"direct", "intersects"}:
         path = """
         MATCH (a:AdminUnit {uri:$anchor_uri})-[:INTERSECTS]->(l:LSOA)
@@ -12810,7 +12877,9 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     return out
 
 
-def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
+def render_map_nl(
+    cfg: Dict[str, str], *, suppress_messages: bool = False
+) -> Dict[str, Any]:
     """Question box for the map. Returns extra conditions for the query."""
     st.markdown("### Search in your own words")
 
@@ -12909,6 +12978,9 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
             # relation; retain any school-property conditions read by the LLM.
             parsed["admin_scope"] = graph_hint
             parsed["admin_scopes"] = [graph_hint]
+            # A local/model warning produced before exact graph resolution is
+            # now stale. Do not show two contradictory messages.
+            parsed["unmatched"] = []
     elif cached_text == question and isinstance(cached_intent, dict):
         parsed = cached_intent
     else:
@@ -12927,9 +12999,10 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
     if parsed.get("input_validation_failed"):
         if natural_loading_slot is not None:
             natural_loading_slot.empty()
-        st.info(str(parsed.get("input_validation_message")))
+        if not suppress_messages:
+            st.info(str(parsed.get("input_validation_message")))
         return parsed
-    if parsed.get("entity_only_notice"):
+    if parsed.get("entity_only_notice") and not suppress_messages:
         st.info(str(parsed.get("entity_only_notice")))
 
     if len(re.findall(r"\blsoas?\b", question.lower())) >= 2:
@@ -13023,6 +13096,10 @@ def render_map_nl(cfg: Dict[str, str]) -> Dict[str, Any]:
         )
 
     if (
+        not suppress_messages
+        and
+        parsed.get("submitted")
+        and
         question
         and not parsed["conditions"]
         and not parsed.get("resolved_admin_scope")
@@ -13518,9 +13595,37 @@ def page_map(cfg: Dict[str, str]) -> None:
             "FSM, attendance or Capped 9 condition. Ask in any language, "
             "and keep Welsh place names or W-codes in their official form."
         )
-        nl_map = render_map_nl(cfg)
+        # Streamlit evaluates both tab bodies on every rerun.  A Build search
+        # must therefore silence and ignore the standing natural-language
+        # intent rather than letting hidden-tab state leak into the filters.
+        nl_map = render_map_nl(cfg, suppress_messages=build_run)
     natural_loading_slot = nl_map.pop("_loading_slot", None)
     active_loading_slot = natural_loading_slot or build_loading_slot
+
+    if build_run:
+        st.session_state["map_result_source"] = "build"
+    elif nl_map.get("submitted"):
+        st.session_state["map_result_source"] = "natural"
+
+    if st.session_state.get("map_result_source") == "build":
+        # Build a search is a complete, independent query source.  Preserve
+        # the text box for the user, but never combine its cached conditions,
+        # scope, errors or notices with the filter query — including reruns
+        # caused by selecting rows, map interactions, or clearing selections.
+        nl_map = {
+            **nl_map,
+            "conditions": [],
+            "params": {},
+            "resolved_admin_scope": None,
+            "admin_scope_failed": False,
+            "spatial_relation_failed": False,
+            "input_validation_failed": False,
+            "unmatched": [],
+            "submitted": False,
+        }
+    using_build_search = (
+        st.session_state.get("map_result_source") == "build"
+    )
 
     if build_run or nl_map.get("submitted"):
         st.session_state["map_has_run"] = True
@@ -13549,14 +13654,17 @@ def page_map(cfg: Dict[str, str]) -> None:
     # A named administrative scope is part of the meaning of the question.
     # Falling back to every Welsh school after resolution fails would return
     # a confident-looking answer to a different question.
-    if nl_map.get("admin_scope_failed"):
+    if nl_map.get("admin_scope_failed") and not build_run:
         if active_loading_slot is not None:
             active_loading_slot.empty()
-        st.info(
-            "The map was not run because the requested administrative unit "
-            "could not be resolved exactly. Change the name or type shown "
-            "above and search again."
-        )
+        # Show a natural-language failure only on the submission that caused
+        # it. On later reruns (including opening Build a search), do not leak
+        # stale state from the other tab.
+        if nl_map.get("submitted"):
+            st.info(
+                "The map was not run because the requested place could not "
+                "be resolved exactly. Check its name and search again."
+            )
         return
 
     conditions = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL"]
@@ -13755,16 +13863,20 @@ def page_map(cfg: Dict[str, str]) -> None:
     if admin_scope:
         conditions.append("l.code IN $nl_admin_lsoa_codes")
         params["nl_admin_lsoa_codes"] = admin_scope["lsoa_codes"]
-    if selected_school[0] != "All" and search_mode == "Standard search":
+    if (
+        using_build_search
+        and selected_school[0] != "All"
+        and search_mode == "Standard search"
+    ):
         conditions.append("s.code = $school_code")
         params["school_code"] = selected_school[0]
-    if dep != "All":
+    if using_build_search and dep != "All":
         conditions.append("coalesce(l.deprivation, s.deprivation) = $dep")
         params["dep"] = dep
-    if la[0] != "All":
+    if using_build_search and la[0] != "All":
         conditions.append("toLower(coalesce(s.local_authority_name, s.local_authority, l.local_authority, '')) CONTAINS toLower($la)")
         params["la"] = la[0]
-    if phase[0] != "All":
+    if using_build_search and phase[0] != "All":
         conditions.append("coalesce(s.phase_group, s.phase, s.school_type) = $phase")
         params["phase"] = phase[0]
     base_conditions = list(conditions)
@@ -13788,16 +13900,17 @@ def page_map(cfg: Dict[str, str]) -> None:
         else:
             conditions.append(f"(s.{prop} IS NOT NULL AND {expression})")
 
-    add_range_condition("fsm_pct", fsm_min, fsm_max)
-    add_range_condition("attendance_pct", attendance_min, attendance_max)
-    add_range_condition("capped9_score", capped9_min, capped9_max)
-    if transport == "Distance-near (within 800m)":
+    if using_build_search:
+        add_range_condition("fsm_pct", fsm_min, fsm_max)
+        add_range_condition("attendance_pct", attendance_min, attendance_max)
+        add_range_condition("capped9_score", capped9_min, capped9_max)
+    if using_build_search and transport == "Distance-near (within 800m)":
         conditions.append(
             "EXISTS { "
             "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
             "}"
         )
-    elif transport == "Distance-far (no stop within 800m)":
+    elif using_build_search and transport == "Distance-far (no stop within 800m)":
         conditions.append(
             "NOT EXISTS { "
             "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
@@ -13812,8 +13925,10 @@ def page_map(cfg: Dict[str, str]) -> None:
     band_map: Dict[str, str] = {}
     band_label = ""
     band_cypher = ""
-    if search_mode == "Cluster search":
+    if using_build_search and search_mode == "Cluster search":
         if not cluster_inputs_ok:
+            if active_loading_slot is not None:
+                active_loading_slot.empty()
             st.info(
                 "Fix the red cluster bound message in the sidebar, or type "
                 "All to drop that bound."
@@ -13885,6 +14000,8 @@ def page_map(cfg: Dict[str, str]) -> None:
                     cfg, band_cypher, {"c1": c1, "c2": c2}
                 )
             except Exception as exc:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.error(f"Band query failed: {exc}")
                 if SHOW_QUERIES:
                     st.code(band_cypher, language="cypher")
@@ -13913,6 +14030,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             pass
         elif cluster_variable == "Deprivation level":
             if not cluster_dep_levels:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning("Pick at least one deprivation level.")
                 return
             level_values = [
@@ -13939,6 +14058,8 @@ def page_map(cfg: Dict[str, str]) -> None:
                 or 0
             )
             if loaded == 0:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.error(
                     f"No LSOA carries {domain_prop} on this database yet. "
                     "Set RUN_WIMD_LOAD = True in load_to_neo4j.py (extended "
@@ -13949,6 +14070,8 @@ def page_map(cfg: Dict[str, str]) -> None:
                 )
                 return
             if cluster_rank_min is None and cluster_rank_max is None:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning("Set at least one domain-rank bound.")
                 return
             clause, lab = range_clause(
@@ -13966,6 +14089,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
         elif cluster_variable == "School FSM average":
             if cluster_fsm_min is None and cluster_fsm_max is None:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning("Set at least one FSM bound.")
                 return
             clause, lab = range_clause(
@@ -13984,6 +14109,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
         elif cluster_variable == "School Capped 9 average (secondary only)":
             if cluster_cap_min is None and cluster_cap_max is None:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning("Set at least one Capped 9 bound.")
                 return
             cap_lsoas = int(
@@ -14013,6 +14140,8 @@ def page_map(cfg: Dict[str, str]) -> None:
             )
         elif cluster_variable == "School attendance average":
             if cluster_att_min is None and cluster_att_max is None:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning("Set at least one attendance bound.")
                 return
             clause, lab = range_clause(
@@ -14038,6 +14167,8 @@ def page_map(cfg: Dict[str, str]) -> None:
                 cluster_att_min is not None or cluster_att_max is not None
             )
             if not (fsm_set and att_set):
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning(
                     "The compound pool needs at least one bound on FSM AND "
                     "at least one on attendance."
@@ -14135,11 +14266,15 @@ ORDER BY cluster_size DESC, cluster_id
                     )
                     cluster_cypher = fallback_cypher
                 except Exception as exc:
+                    if active_loading_slot is not None:
+                        active_loading_slot.empty()
                     st.error(f"Cluster query failed: {exc}")
                     if SHOW_QUERIES:
                         st.code(cluster_cypher, language="cypher")
                     return
             if cluster_df.empty:
+                if active_loading_slot is not None:
+                    active_loading_slot.empty()
                 st.warning(
                     "No cluster reached the smallest size you asked for "
                     f"({int(min_cluster_size)} LSOAs) with the current "
@@ -14292,7 +14427,10 @@ ORDER BY cluster_size DESC, cluster_id
                 ).mean(),
             }])
 
-    if admin_scope and admin_scope.get("compound"):
+    # Research provenance remains available in development mode, but the
+    # public Map Explorer should lead with the answer rather than expose its
+    # internal Cypher path and geometry safeguards.
+    if SHOW_QUERIES and admin_scope and admin_scope.get("compound"):
         operator = admin_scope.get("operator", "AND")
         component_lines: List[str] = []
         all_target_names: List[str] = []
@@ -14348,7 +14486,7 @@ ORDER BY cluster_size DESC, cluster_id
                 "Resolved target units: " + ", ".join(names[:10])
                 + (f" … and {len(names) - 10} more" if len(names) > 10 else "")
             )
-    elif admin_scope:
+    elif SHOW_QUERIES and admin_scope:
         anchor = admin_scope["anchor"]
         relation = admin_scope["relation"]
         target_type = escape(str(admin_scope["target_type"]))
@@ -14438,6 +14576,8 @@ ORDER BY cluster_size DESC, cluster_id
     summary = summary_df.iloc[0].to_dict() if not summary_df.empty else {}
     total_schools = int(summary.get("total_schools") or 0)
     near_transport_count = int(summary.get("near_transport_schools") or 0)
+
+    st.metric("Matching schools", f"{len(map_df):,}")
 
     if filtered_metric_props:
         if include_missing_metrics:
@@ -14736,38 +14876,6 @@ ORDER BY cluster_size DESC, cluster_id
         loading_slot.empty()
     if clicked_region:
         render_lsoa_school_panel(cfg, clicked_region)
-
-    def result_range(column: str, suffix: str = "") -> Tuple[str, int]:
-        values = pd.to_numeric(
-            map_df.get(column, pd.Series(dtype=float)), errors="coerce"
-        ).dropna()
-        if values.empty:
-            return "N/A", 0
-        return f"{values.min():.1f}–{values.max():.1f}{suffix}", int(len(values))
-
-    fsm_range, fsm_basis = result_range("fsm_pct", "%")
-    attendance_range, attendance_basis = result_range("attendance_pct", "%")
-    capped_range, capped_basis = result_range("capped9_score", " points")
-    st.markdown(
-        "<div class='school-results-title'>Result summary</div>",
-        unsafe_allow_html=True,
-    )
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Matching schools", f"{len(map_df):,}")
-    m2.metric("FSM range", fsm_range)
-    m3.metric("Attendance range", attendance_range)
-    m4.metric("Capped 9 range", capped_range)
-    st.markdown(
-        "<div class='results-basis'>"
-        f"FSM range uses {fsm_basis:,} of {len(map_df):,} schools · "
-        f"attendance uses {attendance_basis:,} of {len(map_df):,} · "
-        f"Capped 9 uses {capped_basis:,} of {len(map_df):,} and is a points "
-        "score for secondary schools, not a percentage. "
-        f"Deprivation filter: {escape(str(dep_label))} · "
-        f"schools with a transport stop within 800m: {near_transport_count:,}."
-        "</div>",
-        unsafe_allow_html=True,
-    )
 
     st.markdown(
         "<div class='school-results-title'>Schools in this map</div>",
