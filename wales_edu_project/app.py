@@ -8881,9 +8881,25 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
     try:
         kinds = guided_entity_types(cfg_key)
-    except Exception:
-        st.error("The place data could not be loaded. Please try again.")
-        return
+    except Exception as first_exc:
+        # A Streamlit redeploy can briefly leave an Aura connection from the
+        # previous process unusable. Rebuild the cached driver and retry the
+        # small opening query once before showing an error to the visitor.
+        try:
+            _cached_driver.clear()
+            _cached_read_query.clear()
+            guided_entity_types.clear()
+            kinds = guided_entity_types(cfg_key)
+        except Exception as retry_exc:
+            print(
+                "Place data load failed after reconnect: "
+                f"{type(first_exc).__name__}: {first_exc}; "
+                f"retry {type(retry_exc).__name__}: {retry_exc}"
+            )
+            st.error("The place data could not be loaded. Please try again.")
+            if st.button("Try again", key="retry_guided_place_data"):
+                st.rerun()
+            return
     if not kinds:
         st.info("No geographic areas are available in the current graph.")
         return
