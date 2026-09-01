@@ -13652,7 +13652,21 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
         # The school builder still supplies safe defaults to the shared result
         # pipeline, but it is not a second visible search interface here.
         st.markdown(
-            "<style>.st-key-natural_hidden_builder{display:none!important}</style>",
+            """
+            <style>
+            .st-key-natural_hidden_builder{display:none!important}
+            .st-key-unified_natural_search{
+              margin:.2rem 0 1.2rem!important;
+              padding:1.35rem 1.45rem 1.55rem!important;
+              border:1px solid #f0cfc2!important;
+              border-radius:26px!important;
+              background:linear-gradient(180deg,#fffdfa 0%,#fff8f3 100%)!important;
+              box-shadow:0 14px 34px rgba(91,48,38,.09)!important;
+            }
+            .st-key-unified_natural_search h2,
+            .st-key-unified_natural_search h3{color:#172033!important}
+            </style>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -14209,7 +14223,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
                 cfg, entity_components, key="map_nl_named_entities"
             )
             if active_loading_slot is not None:
-                active_loading_slot.empty()
+                dismiss_loading_when_ready(require_map=True)
             if picked:
                 if str(picked.get("type")) == "LSOA":
                     render_lsoa_school_panel(
@@ -14274,7 +14288,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
             if clicked_lsoa:
                 render_lsoa_school_panel(cfg, clicked_lsoa)
             if active_loading_slot is not None:
-                active_loading_slot.empty()
+                dismiss_loading_when_ready(require_map=True)
             st.caption(
                 "Select one or more rows to emphasise those areas. "
                 "The remaining answers fade but stay visible for context."
@@ -14352,7 +14366,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
             if picked_unit and picked_unit.get("uri") != anchor.get("uri"):
                 render_unit_school_card(cfg, picked_unit)
             if active_loading_slot is not None:
-                active_loading_slot.empty()
+                dismiss_loading_when_ready(require_map=True)
             st.caption(
                 "Select one or more rows to keep those boundaries strong. "
                 "Other answers fade and selected schools remain prominent."
@@ -15404,7 +15418,10 @@ ORDER BY cluster_size DESC, cluster_id
         )
         return
     if loading_slot is not None:
-        loading_slot.empty()
+        # Keep the branded cover mounted until the browser has painted the
+        # result map. If Streamlit changes its canvas selector, the existing
+        # timeout in dismiss_loading_when_ready prevents a permanent cover.
+        dismiss_loading_when_ready(require_map=True)
     if clicked_region:
         render_lsoa_school_panel(cfg, clicked_region)
 
