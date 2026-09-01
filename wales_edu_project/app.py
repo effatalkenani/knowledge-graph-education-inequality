@@ -3494,7 +3494,8 @@ def render_page_switcher(page: str) -> None:
         }
         div[data-testid="stSpinner"] svg{display:none!important}
         .st-key-page_scq_demonstrator,
-        .st-key-page_map{
+        .st-key-page_map,
+        .st-key-page_natural_language{
           animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
           transform-origin:50% 0;
           width:100%!important;
@@ -3508,8 +3509,10 @@ def render_page_switcher(page: str) -> None:
         }
         .st-key-page_scq_demonstrator > div[data-testid="stVerticalBlock"],
         .st-key-page_map > div[data-testid="stVerticalBlock"],
+        .st-key-page_natural_language > div[data-testid="stVerticalBlock"],
         .st-key-page_scq_demonstrator > div > div[data-testid="stVerticalBlock"],
-        .st-key-page_map > div > div[data-testid="stVerticalBlock"]{
+        .st-key-page_map > div > div[data-testid="stVerticalBlock"],
+        .st-key-page_natural_language > div > div[data-testid="stVerticalBlock"]{
           gap:0!important;
         }
         .st-key-nav_switcher{
@@ -13655,16 +13658,6 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
             """
             <style>
             .st-key-natural_hidden_builder{display:none!important}
-            .st-key-unified_natural_search{
-              margin:.2rem 0 1.2rem!important;
-              padding:1.35rem 1.45rem 1.55rem!important;
-              border:1px solid #f0cfc2!important;
-              border-radius:26px!important;
-              background:linear-gradient(180deg,#fffdfa 0%,#fff8f3 100%)!important;
-              box-shadow:0 14px 34px rgba(91,48,38,.09)!important;
-            }
-            .st-key-unified_natural_search h2,
-            .st-key-unified_natural_search h3{color:#172033!important}
             </style>
             """,
             unsafe_allow_html=True,
