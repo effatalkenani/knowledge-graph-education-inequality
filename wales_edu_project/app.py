@@ -3540,21 +3540,21 @@ def render_page_switcher(page: str) -> None:
             0 7px 16px rgba(95,49,39,.08)!important;
         }
         .site-header{
-          width:100%;min-height:148px;margin:0;padding:1.15rem 1.65rem 1.45rem;
-          display:flex;align-items:center;gap:1.1rem;
+          width:100%;min-height:184px;margin:0;padding:1.55rem 2rem 1.8rem;
+          display:flex;align-items:center;gap:1.45rem;
           background:linear-gradient(118deg,#ff6575 0%,#ff8b6d 56%,#ffbd61 100%);
           color:#fff;border:1px solid rgba(255,255,255,.34);border-bottom:0;
           border-radius:24px 24px 0 0;
           box-shadow:inset 0 1px 0 rgba(255,255,255,.46);
         }
         .site-header .shared-hero-logo{
-          width:104px!important;max-width:104px!important;height:96px!important;
-          max-height:96px!important;object-fit:contain!important;flex:0 0 104px!important;
+          width:136px!important;max-width:136px!important;height:126px!important;
+          max-height:126px!important;object-fit:contain!important;flex:0 0 136px!important;
           filter:drop-shadow(0 8px 14px rgba(75,36,25,.18))!important;
         }
         .site-brand-copy{min-width:0;line-height:1.24}
         .site-brand-name{
-          margin:0;font-size:clamp(2rem,3.35vw,2.9rem);
+          margin:0;font-size:clamp(2rem,3.15vw,2.8rem);
           font-weight:950;letter-spacing:-.035em;line-height:1.05;
           color:#f4fff8;
           background:linear-gradient(180deg,#ffffff 0%,#effff5 42%,#bfe8cc 100%);
@@ -3900,10 +3900,10 @@ def render_page_switcher(page: str) -> None:
         }
         .st-key-nav_switcher button:after{content:none!important;display:none!important}
         @media (max-width:640px){
-          .site-header{min-height:118px;padding:.85rem .9rem 1.1rem;gap:.75rem}
-          .site-header .shared-hero-logo{width:70px!important;max-width:70px!important;
-            height:66px!important;max-height:66px!important;flex-basis:70px!important}
-          .site-brand-name{font-size:1.7rem}
+          .site-header{min-height:142px;padding:1rem .9rem 1.25rem;gap:.85rem}
+          .site-header .shared-hero-logo{width:88px!important;max-width:88px!important;
+            height:82px!important;max-height:82px!important;flex-basis:88px!important}
+          .site-brand-name{font-size:clamp(1.35rem,6vw,1.8rem)}
           .site-brand-tagline{font-size:.86rem}
           .st-key-nav_switcher{padding-left:8px!important;padding-right:8px!important}
           .st-key-nav_switcher button{min-height:3.15rem!important;
@@ -3971,7 +3971,7 @@ def render_page_switcher(page: str) -> None:
         "<header class='site-header'>"
         + wales_logo_html()
         + "<div class='site-brand-copy'>"
-        "<div class='site-brand-name'>Wales Education KG</div>"
+        "<div class='site-brand-name'>Wales Education Knowledge Graph</div>"
         "<div class='site-brand-tagline'>Ask about Welsh places and schools, "
         "then explore the answers on the map.</div>"
         "</div></header>",
