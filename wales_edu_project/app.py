@@ -3799,7 +3799,7 @@ def render_page_switcher(page: str) -> None:
         }
         /* One centred search experience, with live catalogue context. */
         .st-key-natural_search_experience{
-          width:min(1500px,96%)!important;margin:3.1rem auto 2rem!important;
+          width:min(1500px,96%)!important;margin:2.5rem auto 2rem!important;
           padding:2.5rem clamp(1.1rem,3vw,3rem) 1.7rem!important;
           background:linear-gradient(145deg,#fffdfa 0%,#fff7f1 100%)!important;
           border:1px solid #efcbbc!important;border-radius:28px!important;
@@ -3814,8 +3814,8 @@ def render_page_switcher(page: str) -> None:
           margin:.65rem auto 1.55rem!important;font-size:1rem!important;
         }
         .st-key-unified_natural_search div[data-testid="stTextInput"] input{
-          min-height:4.25rem!important;border-radius:18px!important;
-          border:1.5px solid #efbda9!important;background:#fffefa!important;
+          min-height:3.15rem!important;border-radius:15px!important;
+          border:1px solid #f3cbbc!important;background:#fffdfa!important;
           padding:0 1.25rem!important;font-size:1.03rem!important;
           box-shadow:0 10px 24px rgba(117,58,43,.09)!important;
         }
@@ -3825,7 +3825,7 @@ def render_page_switcher(page: str) -> None:
                      0 12px 28px rgba(117,58,43,.12)!important;
         }
         .st-key-unified_natural_search div[data-testid="stButton"] button{
-          min-height:4.25rem!important;border-radius:18px!important;
+          min-height:3.15rem!important;border-radius:14px!important;
         }
         .natural-catalogue-label{
           margin:1.55rem 0 .8rem;text-align:center;color:#75483e;
@@ -3845,6 +3845,25 @@ def render_page_switcher(page: str) -> None:
         }
         .natural-catalogue-name{
           display:block;margin-top:.35rem;color:#7a655e;font-size:.88rem;line-height:1.25;
+        }
+        .st-key-guided_search_builder,
+        .st-key-map_search_builder{
+          width:min(1500px,96%)!important;margin:2.5rem auto 2rem!important;
+        }
+        .st-key-guided_search_builder h2,
+        .st-key-map_search_builder h2{
+          text-align:center!important;margin-top:0!important;
+          font-size:clamp(2rem,3.2vw,3rem)!important;letter-spacing:-.035em!important;
+        }
+        .st-key-guided_search_builder [data-testid="stCaptionContainer"],
+        .st-key-map_search_builder [data-testid="stCaptionContainer"]{
+          text-align:center!important;margin-left:auto!important;margin-right:auto!important;
+        }
+        .st-key-guided_search_builder > div > div[data-testid="stVerticalBlock"]
+          > div[data-testid="stElementContainer"]:has([data-testid="stCaptionContainer"]),
+        .st-key-map_search_builder > div > div[data-testid="stVerticalBlock"]
+          > div[data-testid="stElementContainer"]:has([data-testid="stCaptionContainer"]){
+          text-align:center!important;
         }
         .st-key-nav_switcher button:after{content:none!important;display:none!important}
         @media (max-width:640px){
@@ -14192,7 +14211,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
                 for key, label in catalogue
             )
             st.markdown(
-                "<div class='natural-catalogue-label'>Search across the knowledge graph</div>"
+                "<div class='natural-catalogue-label'>Search across</div>"
                 f"<div class='natural-catalogue'>{catalogue_html}</div>",
                 unsafe_allow_html=True,
             )
