@@ -52,7 +52,7 @@ BETWEEN_DEFAULT_MAX_HOPS = 6
 APP_DIR = Path(__file__).resolve().parent
 
 st.set_page_config(
-    page_title="Explore Wales: Education & Place",
+    page_title="Explore Wales: Education & Geography",
     page_icon=str(APP_DIR / "wales_education_kg.png"),
     layout="wide",
 )
@@ -3325,7 +3325,7 @@ def wales_logo_html() -> str:
         return ""
     logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     return (
-        "<img class='shared-hero-logo' alt='Explore Wales: Education &amp; Place' "
+        "<img class='shared-hero-logo' alt='Explore Wales: Education &amp; Geography' "
         f"src='data:image/png;base64,{logo_b64}'>"
     )
 
@@ -3971,8 +3971,8 @@ def render_page_switcher(page: str) -> None:
         "<header class='site-header'>"
         + wales_logo_html()
         + "<div class='site-brand-copy'>"
-        "<div class='site-brand-name'>Explore Wales: Education &amp; Place</div>"
-        "<div class='site-brand-tagline'>Discover how schools and places "
+        "<div class='site-brand-name'>Explore Wales: Education &amp; Geography</div>"
+        "<div class='site-brand-tagline'>Discover how schools and areas "
         "connect across Wales.</div>"
         "</div></header>",
         unsafe_allow_html=True,
@@ -8894,7 +8894,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         st.markdown("## Explore administrative and statistical area relations")
         st.caption(
             "Choose a Welsh area and a qualitative spatial relationship, "
-            "then explore the matching places on the map."
+            "then explore the matching areas on the map."
         )
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -14216,11 +14216,12 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
     if natural_only:
         search_experience = st.container(key="natural_search_experience")
         with search_experience:
-            st.markdown("## Ask about Welsh places and schools")
+            st.markdown("## Ask about Welsh schools and areas")
             st.caption(
-                "Write a question in your own words. Search schools, LSOAs "
-                "and Welsh administrative areas, and combine place relations "
-                "with deprivation, school and transport conditions."
+                "Write a question in your own words. Search for schools, "
+                "Lower Layer Super Output Areas and Welsh administrative "
+                "areas. You can combine spatial relationships with "
+                "deprivation levels, school characteristics and transport access."
             )
             natural_search = st.container(key="unified_natural_search")
             with natural_search:
