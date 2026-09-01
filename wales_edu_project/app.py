@@ -52,7 +52,7 @@ BETWEEN_DEFAULT_MAX_HOPS = 6
 APP_DIR = Path(__file__).resolve().parent
 
 st.set_page_config(
-    page_title="Explore Wales: Education & Place",
+    page_title="Wales Education KG",
     page_icon=str(APP_DIR / "wales_education_kg.png"),
     layout="wide",
 )
@@ -3325,7 +3325,7 @@ def wales_logo_html() -> str:
         return ""
     logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     return (
-        "<img class='shared-hero-logo' alt='Explore Wales: Education &amp; Place' "
+        "<img class='shared-hero-logo' alt='Wales Education KG' "
         f"src='data:image/png;base64,{logo_b64}'>"
     )
 
@@ -3971,9 +3971,9 @@ def render_page_switcher(page: str) -> None:
         "<header class='site-header'>"
         + wales_logo_html()
         + "<div class='site-brand-copy'>"
-        "<div class='site-brand-name'>Explore Wales: Education &amp; Place</div>"
-        "<div class='site-brand-tagline'>Discover how schools and places "
-        "connect across Wales.</div>"
+        "<div class='site-brand-name'>Wales Education Knowledge Graph</div>"
+        "<div class='site-brand-tagline'>Ask about Welsh places and schools, "
+        "then explore the answers on the map.</div>"
         "</div></header>",
         unsafe_allow_html=True,
     )
