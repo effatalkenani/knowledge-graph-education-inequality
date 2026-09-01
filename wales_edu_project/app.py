@@ -3288,7 +3288,7 @@ def sidebar_config() -> Dict[str, str]:
     # analysis, but is not exposed in the delivered demonstrator.  Its page
     # function remains below for reproducibility, while the SCQ mapping stays
     # available through the SCQ Demonstrator.
-    pages = ["SCQ Demonstrator", "Map"]
+    pages = ["SCQ Demonstrator", "Map", "Natural Language"]
     if "page" not in st.session_state or st.session_state.page not in pages:
         st.session_state.page = "SCQ Demonstrator"
 
@@ -3297,14 +3297,15 @@ def sidebar_config() -> Dict[str, str]:
 
 
 def set_page(page_name: str) -> None:
-    """Switch between the two public experiences before the next rerun."""
+    """Switch between the three public experiences before the next rerun."""
     previous_page = st.session_state.get("page")
     if previous_page != page_name:
         # Cover the previous page while Streamlit reconciles the new keyed
         # page tree.  Without this, the browser can briefly paint both trees.
         st.session_state["page_transition_pending"] = True
-    if page_name == "Map" and st.session_state.get("page") != "Map":
+    if page_name in {"Map", "Natural Language"} and previous_page != page_name:
         st.session_state["map_has_run"] = False
+        st.session_state.pop("map_result_source", None)
     st.session_state.page = page_name
 
 
@@ -3368,7 +3369,7 @@ def dismiss_browser_loading_overlays() -> None:
 
 
 def render_page_switcher(page: str) -> None:
-    """Two centred tabs for the public SCQ and Map experiences."""
+    """Three task-level tabs for areas, schools and natural language."""
     st.markdown(
         """
         <style>
@@ -3787,6 +3788,10 @@ def render_page_switcher(page: str) -> None:
           -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m15 5-6-2-6 2v16l6-2 6 2 6-2V3l-6 2zm-5 .4 4 1.34v11.85l-4-1.33V5.4zm-5 1.04 3-1v11.82l-3 1V6.44zm14 11.12-3 1V6.74l3-1v11.82z'/%3E%3C/svg%3E")!important;
           mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m15 5-6-2-6 2v16l6-2 6 2 6-2V3l-6 2zm-5 .4 4 1.34v11.85l-4-1.33V5.4zm-5 1.04 3-1v11.82l-3 1V6.44zm14 11.12-3 1V6.74l3-1v11.82z'/%3E%3C/svg%3E")!important;
         }
+        .st-key-nav_switcher .st-key-nav_tab_natural button:before{
+          -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M9.5 3a6.5 6.5 0 1 0 3.98 11.64L18.84 20 20 18.84l-5.36-5.36A6.5 6.5 0 0 0 9.5 3zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm8.75-2 .58 1.42L20.25 5l-1.42.58L18.25 7l-.58-1.42L16.25 5l1.42-.58L18.25 3z'/%3E%3C/svg%3E")!important;
+          mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M9.5 3a6.5 6.5 0 1 0 3.98 11.64L18.84 20 20 18.84l-5.36-5.36A6.5 6.5 0 0 0 9.5 3zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm8.75-2 .58 1.42L20.25 5l-1.42.58L18.25 7l-.58-1.42L16.25 5l1.42-.58L18.25 3z'/%3E%3C/svg%3E")!important;
+        }
         .st-key-nav_switcher button:after{content:none!important;display:none!important}
         @media (max-width:640px){
           .site-header{min-height:94px;padding:.7rem .85rem;gap:.75rem}
@@ -3864,7 +3869,9 @@ def render_page_switcher(page: str) -> None:
         unsafe_allow_html=True,
     )
     nav_shell = st.container(key="nav_switcher")
-    scq, map_col, _nav_space = nav_shell.columns([1, 1, 2.8], gap="small")
+    scq, map_col, natural_col, _nav_space = nav_shell.columns(
+        [1, 1, 1, 1.8], gap="small"
+    )
     with scq:
         st.button("Explore Geographic areas", key="nav_tab_scq", use_container_width=True,
                   type="primary" if page == "SCQ Demonstrator" else "secondary",
@@ -3873,6 +3880,13 @@ def render_page_switcher(page: str) -> None:
         st.button("Explore Schools", key="nav_tab_map", use_container_width=True,
                   type="primary" if page == "Map" else "secondary",
                   on_click=set_page, args=("Map",))
+    with natural_col:
+        st.button(
+            "Ask in Natural Language", key="nav_tab_natural",
+            use_container_width=True,
+            type="primary" if page == "Natural Language" else "secondary",
+            on_click=set_page, args=("Natural Language",),
+        )
 
 
 def apply_dashboard_theme(dark_theme: bool = False) -> None:
@@ -8759,20 +8773,8 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         st.info("No geographic areas are available in the current graph.")
         return
 
-    guided_search_shell = st.container(key="guided_search_tabs")
-    guided, words = guided_search_shell.tabs(
-        ["Build a search", "Write in your own words"]
-    )
-    persist_search_tab("guided_search_tabs")
-    with words:
-        st.markdown("## Ask about places in your own words")
-        st.caption(
-            "Use an LSOA, Community, Ward or other available Welsh area, "
-            "then describe whether places touch, intersect, contain, lie "
-            "within, near or between one another. Ask in any language; "
-        )
-        render_guided_natural_search(cfg)
-
+    guided_search_shell = st.container(key="guided_search_builder")
+    guided = guided_search_shell.container()
     with guided:
         st.markdown("## Explore administrative and statistical area relations")
         st.caption(
@@ -13606,7 +13608,7 @@ def render_map_nl(
     return parsed
 
 
-def page_map(cfg: Dict[str, str]) -> None:
+def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
     st.markdown(
         "<style>.map-search-hero{width:100%;max-width:none;min-height:238px;margin:.15rem 0 1.15rem;"
         "display:flex;align-items:center;gap:2rem;text-align:left;"
@@ -13644,7 +13646,15 @@ def page_map(cfg: Dict[str, str]) -> None:
             "</style>",
             unsafe_allow_html=True,
         )
-    render_page_switcher("Map")
+    render_page_switcher("Natural Language" if natural_only else "Map")
+
+    if natural_only:
+        # The school builder still supplies safe defaults to the shared result
+        # pipeline, but it is not a second visible search interface here.
+        st.markdown(
+            "<style>.st-key-natural_hidden_builder{display:none!important}</style>",
+            unsafe_allow_html=True,
+        )
 
     la_opts = safe_options(cfg, """
     MATCH (s:School)
@@ -13677,10 +13687,10 @@ def page_map(cfg: Dict[str, str]) -> None:
     las = [("All", "All")] + la_opts
     phases = [("All", "All")] + phase_opts
 
-    search_shell = st.container(key="map_search_builder")
-    search_tabs = search_shell.tabs(["Build a search", "Write in your own words"])
-    persist_search_tab("map_search_builder")
-    controls = search_tabs[0].container()
+    search_shell = st.container(
+        key="natural_hidden_builder" if natural_only else "map_search_builder"
+    )
+    controls = search_shell.container()
     controls.markdown("## Find schools")
     controls.caption("Choose filters, then open the results on the map.")
     if st.session_state.pop("map_nl_clear", False):
@@ -14086,17 +14096,25 @@ def page_map(cfg: Dict[str, str]) -> None:
         branded_loading_overlay("Finding the schools and framing the result…")
         if build_run else None
     )
-    with search_tabs[1]:
-        st.markdown("## Ask for schools in your own words")
-        st.caption(
-            "Use a place, school phase, deprivation level, transport access, "
-            "FSM, attendance or Capped 9 condition. Ask in any language, "
-            "and keep Welsh place names or W-codes in their official form."
-        )
-        # Streamlit evaluates both tab bodies on every rerun.  A Build search
-        # must therefore silence and ignore the standing natural-language
-        # intent rather than letting hidden-tab state leak into the filters.
-        nl_map = render_map_nl(cfg, suppress_messages=build_run)
+    if natural_only:
+        natural_search = st.container(key="unified_natural_search")
+        with natural_search:
+            st.markdown("## Ask about Welsh places and schools")
+            st.caption(
+                "Ask for schools, LSOAs or administrative areas in any "
+                "language. You can combine spatial relationships with "
+                "deprivation, school phase, language medium, transport "
+                "access, FSM, attendance or Capped 9 conditions."
+            )
+            nl_map = render_map_nl(cfg, suppress_messages=build_run)
+    else:
+        nl_map = {
+            "conditions": [], "params": {}, "submitted": False,
+            "resolved_admin_scope": None, "admin_scope_failed": False,
+            "spatial_relation_failed": False,
+            "input_validation_failed": False, "unmatched": [],
+            "chips": [], "_loading_slot": None,
+        }
     natural_loading_slot = nl_map.pop("_loading_slot", None)
     active_loading_slot = natural_loading_slot or build_loading_slot
 
@@ -15528,12 +15546,19 @@ def main() -> None:
         # A keyed Streamlit container can remain in the browser until the
         # current rerun finishes.  Hide the inactive page explicitly so it
         # can never appear underneath or inside the active page meanwhile.
-        inactive_page_key = (
-            "page_map" if page == "SCQ Demonstrator"
-            else "page_scq_demonstrator"
-        )
+        page_keys = {
+            "SCQ Demonstrator": "page_scq_demonstrator",
+            "Map": "page_map",
+            "Natural Language": "page_natural_language",
+        }
+        inactive_page_keys = [
+            key for name, key in page_keys.items() if name != page
+        ]
         st.markdown(
-            f"<style>.st-key-{inactive_page_key}{{display:none!important}}</style>",
+            "<style>" + "".join(
+                f".st-key-{key}{{display:none!important}}"
+                for key in inactive_page_keys
+            ) + "</style>",
             unsafe_allow_html=True,
         )
         # Keep one visible page root. Replacing this placeholder prevents the
@@ -15546,6 +15571,8 @@ def main() -> None:
                     page_guided_spatial_search(cfg)
                 elif page == "Map":
                     page_map(cfg)
+                elif page == "Natural Language":
+                    page_map(cfg, natural_only=True)
         if transition_slot is not None:
             st.session_state["startup_view_ready"] = True
             # The page function has completed, so do not leave startup tied
@@ -15572,6 +15599,8 @@ def main() -> None:
                 page_guided_spatial_search(cfg)
             elif page == "Map":
                 page_map(cfg)
+            elif page == "Natural Language":
+                page_map(cfg, natural_only=True)
         if transition_slot is not None:
             st.session_state["startup_view_ready"] = True
             transition_slot.empty()
