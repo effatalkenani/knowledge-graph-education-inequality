@@ -3474,8 +3474,8 @@ def render_page_switcher(page: str) -> None:
           position:fixed!important;inset:0!important;z-index:999999!important;
           display:flex!important;align-items:center!important;justify-content:center!important;
           flex-direction:column!important;gap:.8rem!important;
-          background:rgba(255,250,247,.78)!important;
-          backdrop-filter:blur(10px) saturate(1.08)!important;
+          background:#fffaf6!important;
+          backdrop-filter:none!important;
           color:#4a2b25!important;font-weight:850!important;
         }
         div[data-testid="stSpinner"]:before{
@@ -3499,6 +3499,7 @@ def render_page_switcher(page: str) -> None:
           animation:page-enter .34s cubic-bezier(.22,.75,.24,1) both;
           transform-origin:50% 0;
           width:100%!important;
+          min-height:calc(100vh - .75rem)!important;
           padding:0 clamp(.35rem,.8vw,.8rem) clamp(.35rem,.8vw,.8rem)!important;
           background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%)!important;
           border:1px solid #f0cfc1!important;
@@ -3517,7 +3518,7 @@ def render_page_switcher(page: str) -> None:
         }
         .st-key-nav_switcher{
           width:min(1180px,94%)!important;
-          margin:-.72rem auto 1.1rem auto!important;
+          margin:-.35rem auto 1.35rem auto!important;
           position:relative;z-index:20;
         }
         .st-key-nav_switcher button{
@@ -3539,7 +3540,7 @@ def render_page_switcher(page: str) -> None:
             0 7px 16px rgba(95,49,39,.08)!important;
         }
         .site-header{
-          width:100%;min-height:108px;margin:0;padding:.8rem 1.35rem;
+          width:100%;min-height:148px;margin:0;padding:1.15rem 1.65rem 1.45rem;
           display:flex;align-items:center;gap:1.1rem;
           background:linear-gradient(118deg,#ff6575 0%,#ff8b6d 56%,#ffbd61 100%);
           color:#fff;border:1px solid rgba(255,255,255,.34);border-bottom:0;
@@ -3547,17 +3548,17 @@ def render_page_switcher(page: str) -> None:
           box-shadow:inset 0 1px 0 rgba(255,255,255,.46);
         }
         .site-header .shared-hero-logo{
-          width:94px!important;max-width:94px!important;height:82px!important;
-          max-height:82px!important;object-fit:contain!important;flex:0 0 94px!important;
+          width:104px!important;max-width:104px!important;height:96px!important;
+          max-height:96px!important;object-fit:contain!important;flex:0 0 104px!important;
           filter:drop-shadow(0 8px 14px rgba(75,36,25,.18))!important;
         }
-        .site-brand-copy{min-width:0;line-height:1.2}
+        .site-brand-copy{min-width:0;line-height:1.24}
         .site-brand-name{
           margin:0;color:#fff;font-size:clamp(1.72rem,2.8vw,2.35rem);
           font-weight:900;letter-spacing:-.025em;
         }
         .site-brand-tagline{
-          margin:.34rem 0 0;color:#fff8f3;font-size:1.06rem;
+          margin:.58rem 0 0;color:#fff8f3;font-size:1.06rem;
           font-weight:620;line-height:1.4;
         }
         .shared-hero-logo{
@@ -3619,7 +3620,8 @@ def render_page_switcher(page: str) -> None:
           min-height:100vh!important;max-height:none!important;z-index:2147483647;
           display:flex!important;
           flex-direction:column;align-items:center;justify-content:center;
-          background:#f6f8fb;backdrop-filter:none;
+          background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%);
+          backdrop-filter:none;
           color:#4a2b25;font-weight:850;text-align:center;overflow:hidden;
           transition:opacity .22s ease;
         }
@@ -3797,7 +3799,7 @@ def render_page_switcher(page: str) -> None:
         }
         .st-key-nav_switcher button:after{content:none!important;display:none!important}
         @media (max-width:640px){
-          .site-header{min-height:94px;padding:.7rem .85rem;gap:.75rem}
+          .site-header{min-height:118px;padding:.85rem .9rem 1.1rem;gap:.75rem}
           .site-header .shared-hero-logo{width:70px!important;max-width:70px!important;
             height:66px!important;max-height:66px!important;flex-basis:70px!important}
           .site-brand-name{font-size:1.48rem}
@@ -3916,8 +3918,13 @@ def apply_dashboard_theme(dark_theme: bool = False) -> None:
   --option-hover-text:#123b5d;
 }
 .stApp {
-  background:#f6f8fb !important;
+  background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%) !important;
   color:var(--ink) !important;
+}
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"] {
+  background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%) !important;
 }
 h1,h2,h3,h4,h5,h6,p,label {
   color:var(--ink);
@@ -5069,7 +5076,8 @@ def branded_loading_overlay(message: str) -> Any:
       bottom:0!important;left:0!important;width:100vw!important;height:100vh!important;
       min-height:100vh!important;max-height:none!important;z-index:2147483647;
       display:flex!important;flex-direction:column;
-      align-items:center;justify-content:center;background:#f6f8fb;
+      align-items:center;justify-content:center;
+      background:linear-gradient(180deg,#fffefa 0%,#fffaf6 100%);
       backdrop-filter:none;color:#172033;font-weight:750;
       text-align:center;overflow:hidden;isolation:isolate;contain:paint;
       pointer-events:all;transition:opacity .18s ease}
