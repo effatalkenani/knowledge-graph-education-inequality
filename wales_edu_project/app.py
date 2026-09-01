@@ -52,7 +52,7 @@ BETWEEN_DEFAULT_MAX_HOPS = 6
 APP_DIR = Path(__file__).resolve().parent
 
 st.set_page_config(
-    page_title="Wales Education KG",
+    page_title="Explore Wales: Education & Place",
     page_icon=str(APP_DIR / "wales_education_kg.png"),
     layout="wide",
 )
@@ -3325,7 +3325,7 @@ def wales_logo_html() -> str:
         return ""
     logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     return (
-        "<img class='shared-hero-logo' alt='Wales Education KG' "
+        "<img class='shared-hero-logo' alt='Explore Wales: Education &amp; Place' "
         f"src='data:image/png;base64,{logo_b64}'>"
     )
 
@@ -8881,25 +8881,9 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
     cfg_key = (cfg["uri"], cfg["user"], cfg["password"], cfg["database"])
     try:
         kinds = guided_entity_types(cfg_key)
-    except Exception as first_exc:
-        # A Streamlit redeploy can briefly leave an Aura connection from the
-        # previous process unusable. Rebuild the cached driver and retry the
-        # small opening query once before showing an error to the visitor.
-        try:
-            _cached_driver.clear()
-            _cached_read_query.clear()
-            guided_entity_types.clear()
-            kinds = guided_entity_types(cfg_key)
-        except Exception as retry_exc:
-            print(
-                "Place data load failed after reconnect: "
-                f"{type(first_exc).__name__}: {first_exc}; "
-                f"retry {type(retry_exc).__name__}: {retry_exc}"
-            )
-            st.error("The place data could not be loaded. Please try again.")
-            if st.button("Try again", key="retry_guided_place_data"):
-                st.rerun()
-            return
+    except Exception:
+        st.error("The place data could not be loaded. Please try again.")
+        return
     if not kinds:
         st.info("No geographic areas are available in the current graph.")
         return
