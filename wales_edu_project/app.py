@@ -3971,9 +3971,9 @@ def render_page_switcher(page: str) -> None:
         "<header class='site-header'>"
         + wales_logo_html()
         + "<div class='site-brand-copy'>"
-        "<div class='site-brand-name'>Wales Education Knowledge Graph</div>"
-        "<div class='site-brand-tagline'>Ask about Welsh places and schools, "
-        "then explore the answers on the map.</div>"
+        "<div class='site-brand-name'>Explore Wales: Education &amp; Place</div>"
+        "<div class='site-brand-tagline'>Discover how schools and places "
+        "connect across Wales.</div>"
         "</div></header>",
         unsafe_allow_html=True,
     )
