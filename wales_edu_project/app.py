@@ -3554,8 +3554,18 @@ def render_page_switcher(page: str) -> None:
         }
         .site-brand-copy{min-width:0;line-height:1.24}
         .site-brand-name{
-          margin:0;color:#fff;font-size:clamp(1.72rem,2.8vw,2.35rem);
-          font-weight:900;letter-spacing:-.025em;
+          margin:0;font-size:clamp(2rem,3.35vw,2.9rem);
+          font-weight:950;letter-spacing:-.035em;line-height:1.05;
+          color:#f4fff8;
+          background:linear-gradient(180deg,#ffffff 0%,#effff5 42%,#bfe8cc 100%);
+          -webkit-background-clip:text;background-clip:text;
+          -webkit-text-fill-color:transparent;
+          text-shadow:
+            0 1px 0 rgba(255,255,255,.82),
+            0 3px 0 rgba(31,112,75,.34),
+            0 7px 13px rgba(57,69,44,.26),
+            0 14px 24px rgba(77,42,31,.16);
+          filter:drop-shadow(0 1px 0 rgba(255,255,255,.22));
         }
         .site-brand-tagline{
           margin:.58rem 0 0;color:#fff8f3;font-size:1.06rem;
@@ -3893,7 +3903,7 @@ def render_page_switcher(page: str) -> None:
           .site-header{min-height:118px;padding:.85rem .9rem 1.1rem;gap:.75rem}
           .site-header .shared-hero-logo{width:70px!important;max-width:70px!important;
             height:66px!important;max-height:66px!important;flex-basis:70px!important}
-          .site-brand-name{font-size:1.48rem}
+          .site-brand-name{font-size:1.7rem}
           .site-brand-tagline{font-size:.86rem}
           .st-key-nav_switcher{padding-left:8px!important;padding-right:8px!important}
           .st-key-nav_switcher button{min-height:3.15rem!important;
