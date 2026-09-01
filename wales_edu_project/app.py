@@ -3806,23 +3806,29 @@ def render_page_switcher(page: str) -> None:
           box-shadow:0 22px 52px rgba(101,52,40,.11)!important;
         }
         .st-key-natural_search_experience h2{
-          text-align:center!important;margin:0!important;color:#172033!important;
+          text-align:center!important;margin:0!important;color:#176b46!important;
           font-size:clamp(2rem,3.2vw,3rem)!important;letter-spacing:-.035em!important;
         }
         .st-key-natural_search_experience [data-testid="stCaptionContainer"]{
           text-align:center!important;max-width:1080px!important;
           margin:.65rem auto 1.55rem!important;font-size:1rem!important;
         }
-        .st-key-unified_natural_search div[data-testid="stTextInput"] input{
+        .st-key-unified_natural_search div[data-testid="stTextInput"] div[data-baseweb="input"]{
           min-height:3.15rem!important;border-radius:15px!important;
-          border:1px solid #f3cbbc!important;background:#fffdfa!important;
-          padding:0 1.25rem!important;font-size:1.03rem!important;
-          box-shadow:0 10px 24px rgba(117,58,43,.09)!important;
+          border:1px solid #f3cbbc!important;
+          background:linear-gradient(180deg,#fffdfa 0%,#fff7f1 100%)!important;
+          box-shadow:0 7px 18px rgba(117,58,43,.07)!important;
         }
-        .st-key-unified_natural_search div[data-testid="stTextInput"] input:focus{
+        .st-key-unified_natural_search div[data-testid="stTextInput"] div[data-baseweb="input"]:focus-within{
           border-color:#ff846f!important;
           box-shadow:0 0 0 4px rgba(255,132,111,.14),
                      0 12px 28px rgba(117,58,43,.12)!important;
+        }
+        .st-key-unified_natural_search div[data-testid="stTextInput"] input{
+          min-height:3.05rem!important;padding:0 1.1rem!important;
+          border:0!important;border-radius:15px!important;
+          background:transparent!important;box-shadow:none!important;
+          font-size:1rem!important;
         }
         .st-key-unified_natural_search div[data-testid="stButton"] button{
           min-height:3.15rem!important;border-radius:14px!important;
@@ -3853,7 +3859,24 @@ def render_page_switcher(page: str) -> None:
         .st-key-guided_search_builder h2,
         .st-key-map_search_builder h2{
           text-align:center!important;margin-top:0!important;
+          color:#176b46!important;
           font-size:clamp(2rem,3.2vw,3rem)!important;letter-spacing:-.035em!important;
+        }
+        .st-key-natural_search_experience h2:after,
+        .st-key-guided_search_builder h2:after,
+        .st-key-map_search_builder h2:after{
+          content:"";display:block;width:76px;height:4px;margin:.65rem auto 0;
+          border-radius:999px;
+          background:linear-gradient(90deg,#176b46 0%,#65a56f 48%,#ff806f 100%);
+        }
+        .st-key-guided_search_builder label p,
+        .st-key-map_search_builder label p,
+        .st-key-natural_search_experience label p{
+          color:#63372f!important;font-weight:800!important;letter-spacing:.01em!important;
+        }
+        .st-key-guided_search_builder summary p,
+        .st-key-map_search_builder summary p{
+          color:#63372f!important;font-weight:750!important;
         }
         .st-key-guided_search_builder [data-testid="stCaptionContainer"],
         .st-key-map_search_builder [data-testid="stCaptionContainer"]{
