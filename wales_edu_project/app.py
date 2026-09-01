@@ -3797,6 +3797,55 @@ def render_page_switcher(page: str) -> None:
           -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M9.5 3a6.5 6.5 0 1 0 3.98 11.64L18.84 20 20 18.84l-5.36-5.36A6.5 6.5 0 0 0 9.5 3zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm8.75-2 .58 1.42L20.25 5l-1.42.58L18.25 7l-.58-1.42L16.25 5l1.42-.58L18.25 3z'/%3E%3C/svg%3E")!important;
           mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='M9.5 3a6.5 6.5 0 1 0 3.98 11.64L18.84 20 20 18.84l-5.36-5.36A6.5 6.5 0 0 0 9.5 3zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm8.75-2 .58 1.42L20.25 5l-1.42.58L18.25 7l-.58-1.42L16.25 5l1.42-.58L18.25 3z'/%3E%3C/svg%3E")!important;
         }
+        /* One centred search experience, with live catalogue context. */
+        .st-key-natural_search_experience{
+          width:min(1500px,96%)!important;margin:3.1rem auto 2rem!important;
+          padding:2.5rem clamp(1.1rem,3vw,3rem) 1.7rem!important;
+          background:linear-gradient(145deg,#fffdfa 0%,#fff7f1 100%)!important;
+          border:1px solid #efcbbc!important;border-radius:28px!important;
+          box-shadow:0 22px 52px rgba(101,52,40,.11)!important;
+        }
+        .st-key-natural_search_experience h2{
+          text-align:center!important;margin:0!important;color:#172033!important;
+          font-size:clamp(2rem,3.2vw,3rem)!important;letter-spacing:-.035em!important;
+        }
+        .st-key-natural_search_experience [data-testid="stCaptionContainer"]{
+          text-align:center!important;max-width:1080px!important;
+          margin:.65rem auto 1.55rem!important;font-size:1rem!important;
+        }
+        .st-key-unified_natural_search div[data-testid="stTextInput"] input{
+          min-height:4.25rem!important;border-radius:18px!important;
+          border:1.5px solid #efbda9!important;background:#fffefa!important;
+          padding:0 1.25rem!important;font-size:1.03rem!important;
+          box-shadow:0 10px 24px rgba(117,58,43,.09)!important;
+        }
+        .st-key-unified_natural_search div[data-testid="stTextInput"] input:focus{
+          border-color:#ff846f!important;
+          box-shadow:0 0 0 4px rgba(255,132,111,.14),
+                     0 12px 28px rgba(117,58,43,.12)!important;
+        }
+        .st-key-unified_natural_search div[data-testid="stButton"] button{
+          min-height:4.25rem!important;border-radius:18px!important;
+        }
+        .natural-catalogue-label{
+          margin:1.55rem 0 .8rem;text-align:center;color:#75483e;
+          font-size:.86rem;font-weight:820;letter-spacing:.08em;text-transform:uppercase;
+        }
+        .natural-catalogue{
+          display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+          gap:0;padding:1rem .4rem .45rem;border-top:1px solid #efd9cf;
+        }
+        .natural-catalogue-item{text-align:center;padding:.25rem .8rem;position:relative}
+        .natural-catalogue-item:not(:last-child):after{
+          content:"";position:absolute;right:0;top:10%;height:80%;width:1px;background:#ead3ca;
+        }
+        .natural-catalogue-number{
+          display:block;color:#4d2e28;font-size:clamp(1.45rem,2.2vw,2.15rem);
+          line-height:1.05;font-weight:900;letter-spacing:-.025em;
+        }
+        .natural-catalogue-name{
+          display:block;margin-top:.35rem;color:#7a655e;font-size:.88rem;line-height:1.25;
+        }
         .st-key-nav_switcher button:after{content:none!important;display:none!important}
         @media (max-width:640px){
           .site-header{min-height:118px;padding:.85rem .9rem 1.1rem;gap:.75rem}
@@ -3807,6 +3856,9 @@ def render_page_switcher(page: str) -> None:
           .st-key-nav_switcher{padding-left:8px!important;padding-right:8px!important}
           .st-key-nav_switcher button{min-height:3.15rem!important;
             padding:0 .35rem!important;font-size:.78rem!important}
+          .st-key-natural_search_experience{margin:1.5rem auto!important;padding:1.6rem .8rem 1rem!important}
+          .natural-catalogue{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:1rem}
+          .natural-catalogue-item:nth-child(2):after{display:none}
         }
         @keyframes page-enter{
           from{opacity:0;transform:translateY(10px) scale(.995)}
@@ -3887,7 +3939,7 @@ def render_page_switcher(page: str) -> None:
                   on_click=set_page, args=("Map",))
     with natural_col:
         st.button(
-            "Ask in Natural Language", key="nav_tab_natural",
+            "Ask in Your Own Words", key="nav_tab_natural",
             use_container_width=True,
             type="primary" if page == "Natural Language" else "secondary",
             on_click=set_page, args=("Natural Language",),
@@ -13385,9 +13437,7 @@ def render_map_nl(
     cfg: Dict[str, str], *, suppress_messages: bool = False
 ) -> Dict[str, Any]:
     """Question box for the map. Returns extra conditions for the query."""
-    st.markdown("### Search in your own words")
-
-    col_q, col_go, col_clear = st.columns([6, 1, 1])
+    col_q, col_go, col_clear = st.columns([6.4, 1.15, 1.15])
     with col_q:
         question = st.text_input(
             "Map question",
@@ -14112,16 +14162,40 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
         if build_run else None
     )
     if natural_only:
-        natural_search = st.container(key="unified_natural_search")
-        with natural_search:
+        search_experience = st.container(key="natural_search_experience")
+        with search_experience:
             st.markdown("## Ask about Welsh places and schools")
             st.caption(
-                "Ask for schools, LSOAs or administrative areas in any "
-                "language. You can combine spatial relationships with "
-                "deprivation, school phase, language medium, transport "
-                "access, FSM, attendance or Capped 9 conditions."
+                "Write a question in your own words. Search schools, LSOAs "
+                "and Welsh administrative areas, and combine place relations "
+                "with deprivation, school and transport conditions."
             )
-            nl_map = render_map_nl(cfg, suppress_messages=build_run)
+            natural_search = st.container(key="unified_natural_search")
+            with natural_search:
+                nl_map = render_map_nl(cfg, suppress_messages=build_run)
+            try:
+                graph_counts = cached_counts(
+                    cfg["uri"], cfg["user"], cfg["password"], cfg["database"]
+                )
+            except Exception:
+                graph_counts = {}
+            catalogue = (
+                ("School", "Schools"),
+                ("TransportStop", "Transport stops"),
+                ("AdminUnit", "Welsh administrative areas"),
+                ("LSOA", "Statistical areas (LSOAs)"),
+            )
+            catalogue_html = "".join(
+                "<div class='natural-catalogue-item'>"
+                f"<span class='natural-catalogue-number'>{int(graph_counts.get(key, 0)):,}</span>"
+                f"<span class='natural-catalogue-name'>{escape(label)}</span></div>"
+                for key, label in catalogue
+            )
+            st.markdown(
+                "<div class='natural-catalogue-label'>Search across the knowledge graph</div>"
+                f"<div class='natural-catalogue'>{catalogue_html}</div>",
+                unsafe_allow_html=True,
+            )
     else:
         nl_map = {
             "conditions": [], "params": {}, "submitted": False,
