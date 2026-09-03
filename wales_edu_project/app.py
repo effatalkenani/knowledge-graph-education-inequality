@@ -1,16 +1,14 @@
-"""
-Education Inequality Analysis with a Geospatial Knowledge Graph
-Task-aligned Streamlit demonstrator for the Wales YAGO2geo + LSOA project.
+"""Explore Wales: Education & Geography.
 
-This app is deliberately structured around the supervisor task plan:
-Task 0  Evaluation instrument
-Task 1  YAGO2geo administrative hierarchy
-Task 2  LSOA and statistics integration
-Task 3  Policy questions mapped to SCQs
-Task 4  SCQ demonstrator
-Task 5  Evaluation / coverage scorecards
-Task 6  Cross-hierarchy seam
-Task 7  Dissertation writing (not implemented in the app)
+Streamlit research demonstrator developed for the MSc dissertation
+"Education Inequality Spatial Analysis with Qualitative Place Knowledge
+Graphs" at Cardiff University.
+
+Student: Afaf Alhajjaji (c24106532)
+Supervisor: Dr Alia Abdelmoty
+
+The application provides guided spatial-relation searches, structured school
+filters, and LLM-assisted natural-language querying over the Welsh QPKG.
 """
 
 import base64
@@ -52,7 +50,7 @@ BETWEEN_DEFAULT_MAX_HOPS = 6
 APP_DIR = Path(__file__).resolve().parent
 
 st.set_page_config(
-    page_title="Explore Wales: Education & Geography",
+    page_title="Wales Education KG",
     page_icon=str(APP_DIR / "wales_education_kg.png"),
     layout="wide",
 )
@@ -1453,534 +1451,14 @@ TASK3_REFERENCES = [
 ]
 
 
-# =============================================================================
-# NATURAL-LANGUAGE QUERY ENGINE
-# =============================================================================
-# Rule-based rather than model-backed, and deliberately so. A spatial
-# competency question has an exact definition, and the scorecard measures that
-# definition; a parser that sometimes reads "near" as distance and sometimes
-# as two touches-steps would put noise inside the instrument. A rule table is
-# also deterministic, needs no API key, runs offline, and can be inspected by
-# a marker who has no credentials of ours.
-#
-# The engine reports what it matched, so the reader can see the reasoning
-# rather than trust it: which relation was recognised, on what evidence, and
-# what was left undecided.
-
-# Order matters. Negations and compound forms are tested before the simple
-# forms they contain: "not adjacent" before "adjacent", "near but not
-# intersecting" before "near", "intersect" before everything that mentions an
-# administrative unit.
-NL_RELATION_RULES: List[Tuple[str, List[str], str]] = [
-    (
-        "SCQ8",
-        [
-            "near but do not intersect", "near, but do not intersect",
-            "near but not intersect", "cross-near", "cross near",
-            "nearby administrative", "nearby but non-intersecting",
-            "nearby areas", "agos ond heb groestorri",
-        ],
-        "near(AdminUnit) AND NOT intersects",
-    ),
-    (
-        "SCQ4",
-        [
-            "not adjacent", "non-adjacent", "not share a boundary",
-            "do not share", "not border", "not touching", "nid yw'n ffinio",
-            "heb ffinio",
-        ],
-        "NOT touches(LSOA)",
-    ),
-    (
-        "SCQ7",
-        [
-            "intersect", "intersects", "intersecting", "cross-hierarchy",
-            "cross hierarchy", "croestorri",
-        ],
-        "intersects(AdminUnit, LSOA)",
-    ),
-    (
-        "SCQ3",
-        [
-            "between", "path between", "lie between", "lies between",
-            "shortest cycle-free", "cycle-free path", "rhwng",
-        ],
-        "between(LSOA, LSOA)",
-    ),
-    (
-        "SCQ6",
-        [
-            "contained within", "nested inside", "nested within",
-            "inside", "within", "what is in", "y tu mewn i",
-            "decomposed into", "which wards are contained",
-            "which communities are contained", "units inside",
-            "wedi'u cynnwys",
-        ],
-        "contains(AdminUnit -> child)",
-    ),
-    (
-        "SCQ5",
-        [
-            "parent contains", "administrative parent", "parent chain",
-            "which unitary authority contains", "which authority contains",
-            "contains the selected ward", "contains the selected community",
-            "rhiant gweinyddol",
-        ],
-        "within(child -> AdminUnit)",
-    ),
-    (
-        "SCQ2",
-        [
-            "graph-near", "graph near", "two steps", "two touches-steps",
-            "extended neighbour", "near the selected", "near a selected",
-            "yn agos at",
-        ],
-        "near(LSOA) = two touches-steps",
-    ),
-    (
-        "SCQ1",
-        [
-            "directly border", "direct adjacency", "border the selected",
-            "bordering", "adjacent", "neighbouring", "neighbours",
-            "touches", "next to", "yn ffinio", "cyfagos",
-        ],
-        "touches(LSOA, LSOA)",
-    ),
-]
-
-# What the question is asking ABOUT, once the relation is known. These do not
-# change which query runs - every SCQ answer already carries all four
-# variables - but they tell the reader which column to look at, and they are
-# what the warrant document calls the CONTENT half of a question.
-NL_FOCUS_RULES: List[Tuple[str, List[str], str]] = [
-    ("fsm", ["fsm", "free school meal", "prydau ysgol am ddim"],
-     "School FSM %"),
-    ("attendance", ["attendance", "absence", "presenoldeb"],
-     "School attendance %"),
-    ("performance", ["performance", "capped 9", "capped9", "attainment",
-                     "gcse", "secondary performance", "perfformiad"],
-     "Capped 9 (secondary only)"),
-    ("deprivation", ["deprivation", "deprived", "wimd", "poverty",
-                     "amddifadedd", "tlodi"],
-     "WIMD deprivation"),
-]
-
-_NL_CODE = re.compile(r"\bW\d{8}\b", re.IGNORECASE)
-
-
-# Which lens mode a phrase asks for. Order matters: the longest and most
-# specific phrases are tested first, so "not near" never matches "near".
-# Education thresholds are read SEPARATELY from the spatial form. A sentence
-# can carry both ("schools near Cathays with attendance below 90"), and the
-# two halves are answered by different machinery: the eight SCQ forms hold no
-# filter control at all, while the lens keys do. Reading them apart means a
-# threshold is never silently dropped and never silently invented.
-# Both languages are matched, because an Arabic sentence that is understood
-# and then routed to a form that cannot hold it is worse than one refused.
-_EDU_FILTER_RULES = [
-    ("Low attendance", (
-        r"attendance\s*(?:is\s*)?(?:be?llow|below|under|less than|<=?)\s*\d+",
-        r"low attendance", r"poor attendance", r"persistent absence",
-        r"حضور[\u0600-\u06ff\s]*(?:اقل|أقل|تحت|دون)[^0-9]{0,10}\d+",
-        r"(?:ضعف|انخفاض)\s*(?:ال)?حضور",
-        r"حضور\s*(?:منخفض|ضعيف)",
-    )),
-    ("High FSM", (
-        r"(?:fsm|free school meals?)\s*(?:is\s*)?(?:above|over|greater than|>=?)\s*\d+",
-        r"high fsm", r"high free school meals?", r"most fsm",
-        r"وجبات[\u0600-\u06ff\s]*مجاني",
-    )),
-    ("High deprivation", (
-        r"high(?:ly)? deprived", r"high deprivation", r"most deprived",
-        r"deprived areas?",
-        r"حرمان", r"محروم",
-    )),
-]
-
-
-# Negation reverses a question's meaning, and matching only the positive
-# phrase inside it would return the exact opposite of what was asked. Any
-# sentence carrying one of these is refused rather than half-understood.
-_NEGATION_WORDS = (
-    "not near", "not adjacent", "not touching", "not bordering",
-    "non-adjacent", "not neighbour", "not neighbor", "far from",
-    "outside", "except", "other than",
-    "\u0644\u064a\u0633", "\u063a\u064a\u0631", "\u0628\u0639\u064a\u062f",
-    "\u062e\u0627\u0631\u062c", "\u0645\u0627\u0639\u062f\u0627",
-)
-
-
-def has_negation(text):
-    low = (text or "").lower()
-    return any(w in low for w in _NEGATION_WORDS)
-
-
-def parse_threshold_value(text):
-    """The number the sentence actually names, if it names one.
-
-    Without this the app recognised "attendance below 85" and then applied
-    its own default of 90 \u2014 an answer to a question nobody asked.
-    """
-    m = re.search(
-        r"(?:below|under|less than|above|over|greater than|<=?|>=?|"
-        r"\u0627\u0642\u0644|\u0623\u0642\u0644|\u062a\u062d\u062a|"
-        r"\u0627\u0643\u062b\u0631|\u0623\u0643\u062b\u0631|"
-        r"\u0641\u0648\u0642)[^0-9]{0,12}(\d{1,3})",
-        (text or "").lower(),
-    )
-    if not m:
-        return None
-    try:
-        v = float(m.group(1))
-    except ValueError:
-        return None
-    return v if 0 < v <= 100 else None
-
-
-# School phase is a THIRD condition, independent of the spatial relation and
-# of the education threshold. It used to be dropped in silence: a question
-# asking for secondary schools got every phase back and said nothing.
-_PHASE_WORDS = {
-    "Secondary": ("secondary", "\u062b\u0627\u0646\u0648"),
-    "Primary": ("primary", "\u0627\u0628\u062a\u062f\u0627\u0626"),
-    "Special": ("special school", "\u062e\u0627\u0635"),
-    "All-age": ("all-age", "all age"),
-}
-
-
-def parse_school_phase(text):
-    low = (text or "").lower()
-    for label, words in _PHASE_WORDS.items():
-        if any(w in low for w in words):
-            return label
-    return None
-
-
-def parse_education_filter(text):
-    """Return the filter a sentence names, or None. Never guesses."""
-    low = (text or "").lower()
-    for label, patterns in _EDU_FILTER_RULES:
-        for pat in patterns:
-            if re.search(pat, low):
-                return label
-    return None
-
-
-# The eight spatial forms take no education filter; only the lens keys do.
-_FILTERABLE_FORMS = ("LENS", "SCHOOL_LENS")
-
-
-_LENS_MODE_PHRASES = [
-    ("not_touches", ("not touch", "does not touch", "do not touch",
-                     "not touching", "not adjacent", "non-adjacent",
-                     "does not border", "do not border")),
-    ("near",     ("near", "nearby", "close to", "two steps",
-                  "قريب", "القريب", "قريبة")),
-    ("touches",  ("touch", "touching", "border", "bordering", "adjacent",
-                  "neighbour", "neighbor", "next to",
-                  "بجوار", "مجاور", "المجاور", "المجاورة", "تلامس")),
-    ("inside",   ("inside", "within", "contained in", "in this", "in the",
-                  "داخل", "ضمن")),
-    ("contains", ("contains", "parent of", "which authority", "belongs to")),
-]
-
-
-# School markers in both languages. Testing only the English word sent
-# every Arabic question to an LSOA-anchored form that could not hold it.
-_SCHOOL_WORDS = ("school", "مدرسة", "مدارس", "المدارس", "المدرسة")
-
-
-# The kind-word a reader writes beside a place name ("Cathays community")
-# names the type of THAT place. Without reading it, the ranking below fell
-# back to a blanket preference for Ward, so a question about a Community was
-# answered for the Ward of the same name -- correct figures for a place the
-# reader never asked about. The same word must therefore not be reused as the
-# type of the NEIGHBOUR, which is the second half of the same defect.
-_UNIT_TYPE_WORDS = [
-    ("UnitaryAuthority", ("unitary authority", "unitary authorities",
-                          "county borough", "\u0633\u0644\u0637\u0629",
-                          "\u0645\u062d\u0627\u0641\u0638\u0629")),
-    ("Community", ("community", "communities",
-                   "\u0645\u062c\u062a\u0645\u0639",
-                   "\u0645\u062c\u062a\u0645\u0639\u0627\u062a")),
-    ("Ward", ("ward", "wards", "\u062f\u0627\u0626\u0631\u0629",
-              "\u062f\u0648\u0627\u0626\u0631")),
-]
-
-
-def _name_tokens(raw_name: str) -> List[str]:
-    """Each half of a bilingual name, so "Caerdydd - Cardiff" matches either.
-
-    Module level rather than nested, because the lens reads the same tokens
-    when deciding which kind-word belongs to the anchor.
-    """
-    pieces = re.split(r"[-/\u2013,]", raw_name)
-    return [
-        p.strip().lower()
-        for p in pieces
-        if len(p.strip()) >= 4
-    ] or [raw_name.strip().lower()]
-
-
-def _beside_patterns(name: str, word: str) -> Tuple[str, str]:
-    """The two orders a reader writes: "Cathays community", "community of Cathays"."""
-    esc, w = re.escape(name), re.escape(word)
-    return (
-        rf"\b{esc}\b[\s\-,'\u2019]*{w}\b",
-        rf"\b{w}\b[\s\-,'\u2019]*(?:of\s+|the\s+)?{esc}\b",
-    )
-
-
-def type_word_beside(low: str, name: str) -> str | None:
-    """The unit type named immediately beside `name`, or None.
-
-    Nothing is inferred from a kind-word elsewhere in the sentence, because
-    that one usually describes what is being asked FOR.
-    """
-    for utype, words in _UNIT_TYPE_WORDS:
-        for word in words:
-            if any(re.search(pat, low) for pat in _beside_patterns(name, word)):
-                return utype
-    return None
-
-
-def strip_anchor_type_words(low: str, tokens: List[str]) -> str:
-    """Remove only the kind-word attached to the anchor's own name.
-
-    Banning the whole type instead would lose the second, genuine mention:
-    "which communities touch Cathays community" names Community twice, once
-    for the anchor and once for what is being asked for.
-    """
-    out = low
-    for tok in tokens:
-        for _utype, words in _UNIT_TYPE_WORDS:
-            for word in words:
-                for pat in _beside_patterns(tok, word):
-                    out = re.sub(pat, tok, out, count=1)
-    return out
-
-
-def parse_lens_intent(text, admin_pair, require_school=True):
-    """Route a school question anchored on an administrative unit.
-
-    Returns a dict of pending lens settings, or None. It fires only when the
-    sentence asks about SCHOOLS and names an administrative unit, because
-    those are exactly the questions the eight spatial forms cannot hold: they
-    are anchored on LSOAs and carry no filter. Nothing here guesses a unit or
-    a relation that the sentence did not contain.
-    """
-    low = (text or "").lower()
-    if not admin_pair:
-        return None
-    if require_school and not any(w in low for w in _SCHOOL_WORDS):
-        return None
-    label = str(admin_pair[1])
-    parts = [p.strip() for p in label.split("|")]
-    atype = parts[1] if len(parts) > 1 else None
-    if not atype:
-        return None
-    mode = None
-    for name, phrases in _LENS_MODE_PHRASES:
-        if any(p in low for p in phrases):
-            mode = name
-            break
-    if mode is None:
-        mode = "direct"
-
-    # Any kind-word standing beside the anchor's own name describes the
-    # anchor. Reading it as the neighbour type was what turned "schools near
-    # Cathays community" into anchor=Ward with neighbour=Community, a pair no
-    # row can satisfy.
-    rest = strip_anchor_type_words(low, _name_tokens(parts[0]))
-
-    ntype = None
-    for utype, words in _UNIT_TYPE_WORDS:
-        if any(
-            re.search(r"\b" + re.escape(w) + r"\b", rest) for w in words
-        ):
-            ntype = utype
-            break
-
-    # Near is defined in the paper inside ONE division: disjoint regions
-    # joined by a path of two touches edges between regions of the same kind.
-    # A neighbour type different from the anchor's cannot be satisfied, so it
-    # is dropped here and reported, rather than silently returning nothing.
-    dropped = None
-    if mode == "near" and ntype and ntype != atype:
-        dropped, ntype = ntype, None
-
-    return {
-        "atype": atype,
-        "uri": admin_pair[0],
-        "mode": mode,
-        "ntype": ntype,
-        "dropped_ntype": dropped,
-    }
-
-
-def parse_spatial_question(
-    text: str,
-    lsoa_options: List[Tuple[str, str]] | None = None,
-    admin_options: List[Tuple[str, str]] | None = None,
-) -> Dict[str, Any]:
-    """Read one question and return what could be identified in it.
-
-    Nothing is guessed. A field the sentence does not determine is returned
-    empty, and the caller leaves the corresponding control untouched rather
-    than filling it with a default that the reader did not ask for.
-    """
-    raw = (text or "").strip()
-    low = raw.lower()
-    found: Dict[str, Any] = {
-        "text": raw,
-        "scq": None,
-        "relation": None,
-        "matched_phrase": None,
-        "focus": [],
-        "focus_labels": [],
-        "areas": [],
-        "admin": None,
-        "steps": [],
-        "unmatched": [],
-    }
-    if not raw:
-        return found
-
-    for scq_key, phrases, relation in NL_RELATION_RULES:
-        hit = next((p for p in phrases if p in low), None)
-        if hit:
-            found["scq"] = scq_key
-            found["relation"] = relation
-            found["matched_phrase"] = hit
-            found["steps"].append(
-                f"Recognised \u201c{hit}\u201d as the spatial form "
-                f"{scq_key}: {relation}."
-            )
-            break
-    if not found["scq"]:
-        found["unmatched"].append(
-            "No spatial relation was recognised. Name one of: border, near, "
-            "between, not adjacent, contains, within, intersect."
-        )
-
-    for key, phrases, label in NL_FOCUS_RULES:
-        if any(p in low for p in phrases):
-            found["focus"].append(key)
-            found["focus_labels"].append(label)
-    if found["focus_labels"]:
-        found["steps"].append(
-            "Reading focus: " + ", ".join(found["focus_labels"]) + "."
-        )
-
-    # An explicit LSOA code always wins over a name match.
-    codes = [c.upper() for c in _NL_CODE.findall(raw)]
-    for option in lsoa_options or []:
-        code, label = option[0], str(option[1])
-        if code in codes and code not in [a[0] for a in found["areas"]]:
-            found["areas"].append((code, label))
-    if not found["areas"]:
-        for option in lsoa_options or []:
-            code, label = option[0], str(option[1])
-            name = label.split("|")[-1].strip().lower()
-            if len(name) > 5 and name in low:
-                found["areas"].append((code, label))
-                if len(found["areas"]) == 2:
-                    break
-    if found["areas"]:
-        found["steps"].append(
-            "Area: " + "; ".join(a[1] for a in found["areas"]) + "."
-        )
-
-    # Taking the first name that appears anywhere in the sentence was wrong:
-    # "Cardiff" matched a community in an English district before it reached
-    # the unitary authority, so the question ran against a unit the reader
-    # never named. Candidates are now ranked, and a tie is reported rather
-    # than resolved silently.
-    # Welsh units carry bilingual names such as "Caerdydd - Cardiff", so
-    # requiring the whole name to appear in the sentence never matched: a
-    # reader writes "Cardiff", not both halves. Each half is tested on its
-    # own, as a whole word.
-    # Only the two containment forms use an administrative unit. Reporting a
-    # match for the others put "Blaenau Gwent | UnitaryAuthority" beside a
-    # question about neighbouring LSOAs, which reads as though the unit had
-    # been used when it had not.
-    admin_relevant = found["scq"] in {None, "SCQ5", "SCQ6"}
-
-    candidates: List[Tuple[int, str, Tuple[str, str]]] = []
-    for option in (admin_options or []) if admin_relevant else []:
-        uri, label = option[0], str(option[1])
-        parts = [p.strip() for p in label.split("|")]
-        name = parts[0].lower()
-        unit_type = (parts[1] if len(parts) > 1 else "").lower()
-        tokens = _name_tokens(parts[0])
-        hit_token = next(
-            (
-                tok for tok in tokens
-                if re.search(r"\b" + re.escape(tok) + r"\b", low)
-            ),
-            None,
-        )
-        if not hit_token:
-            continue
-        name = hit_token
-        # A kind-word written beside the name settles the type outright; the
-        # blanket preference below applies only when the reader gave none.
-        # Cardiff has a Ward, a Community and a Unitary Authority of the same
-        # name, so guessing here silently answers a different question.
-        score = 40
-        beside = type_word_beside(low, name)
-        if beside:
-            score += 80 if beside.lower() == unit_type else -40
-        elif "unitaryauthority" in unit_type:
-            score += 20
-        elif "ward" in unit_type:
-            score += 10
-        score += min(len(name), 20)
-        candidates.append((score, name, (uri, label)))
-
-    if not candidates and found["scq"] in {"SCQ5", "SCQ6"}:
-        found["unmatched"].append(
-            "No administrative unit in the question was recognised, so the "
-            "unit selected below was left as it was. Name the unit, or "
-            "choose it from the list."
-        )
-    if candidates:
-        candidates.sort(key=lambda item: -item[0])
-        best = candidates[0]
-        rivals = [c for c in candidates[1:] if c[0] == best[0]]
-        found["admin"] = best[2]
-        found["steps"].append(f"Administrative unit: {best[2][1]}.")
-        if rivals:
-            found["unmatched"].append(
-                "More than one unit matches that name equally well ("
-                + ", ".join(str(c[2][1]) for c in [best] + rivals[:3])
-                + "). The first was used; choose it from the list below to "
-                "be certain."
-            )
-
-    return found
-
-
-# The project description registered in PATS names "potential LLM integration
-# for query understanding", so a model path belongs in the system. It is not
-# the default: the rule table is deterministic, needs no key and runs offline,
-# which are the properties an instrument needs. The model is offered as a
-# comparison so the choice can be evidenced rather than asserted.
+# Natural-language questions are interpreted by the configured LLM. The model
+# name and compatible API endpoint remain deployment settings so credentials
+# and provider-specific values are not hard-coded.
 
 NL_LLM_MODEL = "gemini-3.6-flash"
 NL_LLM_CALL_CAP = 500         # per browser session; the prepaid credit and
                               # the project spend cap are the real ceiling,
                               # this only stops a runaway loop on one tab
-
-
-def nl_llm_available() -> bool:
-    """True when a key is configured. Absence is a normal state, not an error."""
-    try:
-        if st.secrets.get("OPENAI_API_KEY"):
-            return True
-    except Exception:
-        pass
-    return bool(os.environ.get("OPENAI_API_KEY"))
 
 
 def _nl_llm_key() -> str | None:
@@ -1997,9 +1475,8 @@ def _nl_json(payload: str) -> Dict[str, Any]:
     """Read the JSON object out of a model reply.
 
     Replies arrive wrapped in fences, prefaced with a sentence, or cut short
-    when the model spends its budget before finishing. Taking the outermost
-    braces recovers the usable cases; the rest raise and fall back to the
-    rule table.
+    before completion. Taking the outermost braces recovers a complete JSON
+    object when possible; otherwise interpretation fails safely.
     """
     text = (payload or "").replace("```json", "").replace("```", "").strip()
     try:
@@ -2051,406 +1528,16 @@ def _nl_llm_error(exc: Exception) -> str:
         or "unavailable" in text_lower
         or "high demand" in text_lower
     ):
-        return (
-            "Gemini is temporarily unavailable because of high demand. "
-            "The rule-based parser was used instead."
-        )
+        return "Gemini is temporarily unavailable because of high demand."
 
     if (
         "429" in text
         or "resource_exhausted" in text_lower
         or "quota" in text_lower
     ):
-        return (
-            "The Gemini request allowance has been reached. "
-            "The rule-based parser was used instead."
-        )
+        return "The Gemini request allowance has been reached."
 
-    return (
-        "Gemini could not be reached. "
-        "The rule-based parser was used instead."
-    )
-
-def llm_parse_question(
-    text: str,
-    lsoa_options: List[Tuple[str, str]] | None = None,
-    admin_options: List[Tuple[str, str]] | None = None,
-) -> Dict[str, Any]:
-    """Ask a model for the same structure the rule table produces.
-
-    The model is constrained to the eight forms and asked for JSON only, and
-    its answer is validated against the same vocabulary; anything outside it
-    is discarded rather than trusted. On any failure the rule table answers,
-    so the interface never depends on the network.
-    """
-    used = st.session_state.get("nl_llm_calls", 0)
-    if used >= NL_LLM_CALL_CAP:
-        fallback = parse_spatial_question(text, lsoa_options, admin_options)
-        fallback["parser"] = "rule-based (LLM call cap reached)"
-        return fallback
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=_nl_llm_key(), base_url=_nl_llm_base_url())
-        system = (
-            "You map an education-geography question onto exactly one of "
-            "eight spatial competency forms and return JSON only, with no "
-            "prose and no code fence.\n"
-            "The question may be in any language or a mixture of languages. "
-            "Detect the language automatically and interpret its spatial "
-            "meaning without asking the user to translate it. Keep "
-            "official Welsh place names and LSOA W-codes exact. Do not "
-            "require an entity type when a stored name or code identifies "
-            "the entity. Return every JSON value, place-name normalisation, "
-            "and explanatory reason in English only, regardless of the "
-            "question language.\n"
-            "SCQ1 touches: which regions directly border a region.\n"
-            "SCQ2 near: regions reachable in two touches-steps, disjoint.\n"
-            "SCQ3 between: regions on a cycle-free path linking two regions.\n"
-            "SCQ4 not-adjacent: regions that share no boundary.\n"
-            "SCQ5 contains: which administrative parent contains a unit.\n"
-            "SCQ6 within: which units are inside an administrative unit.\n"
-            "SCQ7 intersects: administrative units intersecting an LSOA.\n"
-            "SCQ8 cross-near: administrative units near but not intersecting.\n"
-            'Return {"scq": "SCQ1".."SCQ8" or null, '
-            '"focus": subset of ["fsm","attendance","performance",'
-            '"deprivation"], "codes": [LSOA codes like W01001440], '
-            '"place": free text place name or null, '
-            '"reason": one short sentence}.'
-        )
-        response = client.chat.completions.create(
-            model=_nl_llm_model(),
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": text},
-            ],
-            temperature=0,
-            max_tokens=1200,
-        )
-        st.session_state["nl_llm_calls"] = used + 1
-        payload = response.choices[0].message.content or ""
-        data = _nl_json(payload)
-    except Exception as exc:
-        fallback = parse_spatial_question(text, lsoa_options, admin_options)
-        fallback["parser"] = "rule-based (model unavailable)"
-        fallback["unmatched"].append(_nl_llm_error(exc))
-        return fallback
-
-    valid = {f"SCQ{i}" for i in range(1, 9)}
-    scq = data.get("scq") if data.get("scq") in valid else None
-    focus = [
-        f for f in (data.get("focus") or [])
-        if f in {"fsm", "attendance", "performance", "deprivation"}
-    ]
-    labels = {
-        "fsm": "School FSM %", "attendance": "School attendance %",
-        "performance": "Capped 9 (secondary only)",
-        "deprivation": "WIMD deprivation",
-    }
-    result: Dict[str, Any] = {
-        "text": text,
-        "parser": f"LLM ({_nl_llm_model()})",
-        "scq": scq,
-        "relation": (
-            dict((k, r) for k, _p, r in NL_RELATION_RULES).get(scq)
-            if scq else None
-        ),
-        "matched_phrase": None,
-        "focus": focus,
-        "focus_labels": [labels[f] for f in focus],
-        "areas": [],
-        "admin": None,
-        "steps": [],
-        "unmatched": [],
-        "raw_model_output": data,
-    }
-    if data.get("reason"):
-        result["steps"].append(str(data["reason"]))
-    if not scq:
-        result["unmatched"].append("The model returned no recognised form.")
-
-    # Names and codes are resolved locally, and by the same ranked matcher
-    # the rule table uses. The model only says which form the question takes;
-    # letting it also choose the unit put "Ashchurch with Walton Cardiff
-    # Ward" in place of Cardiff, because that name contains the word.
-    resolver_text = " ".join(
-        [text, str(data.get("place") or "")]
-        + [str(c) for c in (data.get("codes") or [])]
-    )
-    resolved = parse_spatial_question(
-        resolver_text, lsoa_options, admin_options
-    )
-    result["areas"] = resolved["areas"]
-    if scq in {"SCQ5", "SCQ6"}:
-        result["admin"] = resolved["admin"]
-    result["steps"].extend(resolved["steps"][1:] if resolved["steps"] else [])
-    result["unmatched"].extend(
-        u for u in resolved["unmatched"]
-        if "No spatial relation" not in u
-    )
-
-    return result
-
-
-NL_EXAMPLES = [
-    "Which LSOAs directly border Blaenau Gwent 001A?",
-    "Which neighbouring LSOAs have the highest school FSM levels?",
-    "Which LSOAs are graph-near the selected LSOA?",
-    "Which LSOAs lie between W01001840 and W01001777?",
-    "Which LSOAs are not adjacent to the selected LSOA?",
-    "Which administrative parent contains the selected Ward?",
-    "Which Wards are contained within Cardiff?",
-    "Which Wards or Communities intersect the selected LSOA?",
-    "Which Wards are near, but do not intersect, the selected LSOA?",
-]
-
-
-def render_nl_search(
-    lsoa_options: List[Tuple[str, str]] | None,
-    admin_options: List[Tuple[str, str]] | None,
-) -> None:
-    """A question box that drives the controls below it.
-
-    The box sets the selectors rather than running its own query, so the
-    answer a reader sees is always produced by the same code path as the
-    manual route. Nothing is hidden behind the sentence.
-    """
-    st.markdown("### Search in your own words")
-
-    col_input, col_go = st.columns([6, 1])
-    with col_input:
-        question = st.text_input(
-            "Question",
-            key="nl_question",
-            placeholder=(
-                "Try: Which Communities touch Cathays Community?"
-            ),
-            label_visibility="collapsed",
-        )
-    with col_go:
-        asked = st.button("Search", type="primary", use_container_width=True)
-
-    if st.session_state.pop("nl_autorun", False):
-        asked = True
-
-    mode = "Rule-based"
-
-    if not (asked and question):
-        return
-
-    rule_parsed = parse_spatial_question(question, lsoa_options, admin_options)
-    rule_parsed["parser"] = "rule-based"
-
-    if mode == "LLM":
-        parsed = llm_parse_question(question, lsoa_options, admin_options)
-    else:
-        parsed = rule_parsed
-
-    st.session_state.nl_last = parsed
-
-    # Setting the widget state before the widget is drawn is what makes the
-    # sentence move the controls; the query itself is left to the normal path.
-    changed = []
-    if parsed["scq"]:
-        st.session_state["scq_select"] = parsed["scq"]
-        changed.append(parsed["scq"])
-    scq = parsed["scq"]
-    if scq and parsed["areas"]:
-        if scq == "SCQ3" and len(parsed["areas"]) >= 2:
-            # SCQ3 names its two endpoint widgets in lower case.
-            st.session_state["scq3_lsoa_a"] = parsed["areas"][0]
-            st.session_state["scq3_lsoa_b"] = parsed["areas"][1]
-            changed.append("both endpoints")
-        else:
-            st.session_state[f"{scq}_lsoa"] = parsed["areas"][0]
-            changed.append(parsed["areas"][0][1])
-    if scq and parsed["admin"]:
-        st.session_state[f"{scq}_admin"] = parsed["admin"]
-        changed.append(parsed["admin"][1])
-
-    # A cross-hierarchy question that names an administrative unit and no
-    # LSOA has to start from the administrative side. Without this the form
-    # opens on its LSOA direction and then asks for an LSOA the sentence
-    # never mentioned, which reads as a failure even though the answer was
-    # available from the other direction over the same stored facts.
-    if scq in ("SCQ7", "SCQ8"):
-        if parsed["admin"] and not parsed["areas"]:
-            st.session_state[f"{scq}_direction"] = "admin"
-            changed.append("started from the administrative unit")
-        elif parsed["areas"]:
-            st.session_state[f"{scq}_direction"] = "lsoa"
-    # A threshold in the sentence is carried to the controls that can hold
-    # one, and reported plainly when the chosen form cannot. Dropping it in
-    # silence would let a reader believe a filter had been applied.
-    edu = parse_education_filter(parsed.get("text", ""))
-    if edu:
-        st.session_state["LENS_filter"] = edu
-        st.session_state["SLENS_filter"] = edu
-        if scq in _FILTERABLE_FORMS:
-            changed.append(f"education filter: {edu}")
-        else:
-            changed.append(
-                f"education filter recognised ({edu}) but this form has no "
-                f"filter \u2014 it is ready in Education lens and From a school"
-            )
-
-    # A school question anchored on an administrative unit belongs to the
-    # lens, not to one of the eight forms: the eight are LSOA-anchored and
-    # hold no filter, so answering there would answer a different question.
-    # The settings are parked rather than written, because the option lists
-    # they must match are only known once the branch queries the graph.
-    # The question's own answer is parked here, complete and independent of
-    # the manual panel. It carries everything the query needs, so the answer
-    # can be produced without a single widget being created.
-    _question_low = (parsed.get("text") or "").lower()
-    _lens = parse_lens_intent(parsed.get("text", ""), parsed.get("admin"))
-    if not _lens and has_negation(parsed.get("text", "")):
-        _candidate_lens = parse_lens_intent(
-            parsed.get("text", ""), parsed.get("admin"),
-            require_school=False,
-        )
-        if (_candidate_lens or {}).get("mode") == "not_touches":
-            _lens = _candidate_lens
-    if (
-        has_negation(parsed.get("text", ""))
-        and (_lens or {}).get("mode") != "not_touches"
-    ):
-        st.session_state["nl_answer"] = {"kind": None}
-        st.session_state["nl_negated"] = True
-        changed.append(
-            "the sentence is negated, so no form was run \u2014 the eight "
-            "forms match a relation, not its complement, and answering the "
-            "positive half would invert your question"
-        )
-        st.session_state["nl_controls_set"] = changed
-        st.rerun()
-
-    # A question that names an administrative unit and no LSOA cannot be
-    # answered by an LSOA-anchored form: SCQ1, SCQ2 and SCQ4 all require a
-    # statistical anchor and there is no administrative variant of them.
-    # The lens holds the same relations over the administrative graph, so
-    # the question goes there instead of dying in a form that cannot take
-    # it. Whether the answer is units or schools is decided by the sentence.
-    _want_units = bool(
-        _lens and not any(w in _question_low for w in _SCHOOL_WORDS)
-    )
-    if (
-        not _lens
-        and parsed.get("admin")
-        and not parsed.get("areas")
-        and scq in (None, "SCQ1", "SCQ2", "SCQ3", "SCQ4")
-    ):
-        # A question that names a unit and no LSOA cannot be answered by an
-        # LSOA-anchored form, and a question that names a unit but matches no
-        # form at all used to produce nothing whatever. Both go to the lens,
-        # read by the same rules as a school question so that the anchor type
-        # and the neighbour type are separated identically.
-        _lens = parse_lens_intent(
-            parsed.get("text", ""), parsed.get("admin"), require_school=False
-        )
-        _want_units = not any(
-            w in (parsed.get("text") or "").lower() for w in _SCHOOL_WORDS
-        )
-
-    st.session_state["nl_answer"] = {
-        "want": "units" if _want_units else "schools",
-        "kind": "LENS" if _lens else scq,
-        "mode": (_lens or {}).get("mode"),
-        "ntype": (_lens or {}).get("ntype"),
-        "admin": (
-            (_lens or {}).get("uri")
-            or (parsed["admin"][0] if parsed.get("admin") else None)
-        ),
-        "areas": [a[0] for a in (parsed.get("areas") or [])],
-        "filter": edu,
-        "value": parse_threshold_value(parsed.get("text", "")),
-        "phase": parse_school_phase(parsed.get("text", "")),
-        "text": parsed.get("text", ""),
-        "admin_label": (parsed["admin"][1] if parsed.get("admin") else None),
-    }
-    if _lens:
-        _lens["filter"] = edu or "None"
-        st.session_state["LENS_pending"] = _lens
-        st.session_state["scq_select"] = "LENS"
-        scq = "LENS"
-        changed = [
-            c for c in changed
-            if not str(c).startswith("SCQ")
-        ]
-        changed.insert(0, "Education lens")
-        changed.append(f"start from {_lens['atype']}")
-        changed.append(f"relation: {LENS_MODES[_lens['mode']][0]}")
-        if _lens["ntype"]:
-            changed.append(f"related unit type: {_lens['ntype']}")
-        if _lens.get("dropped_ntype"):
-            changed.append(
-                f"the kind you named ({_lens['dropped_ntype']}) was not "
-                "applied \u2014 near is defined inside one division"
-            )
-
-    if scq:
-        st.session_state[f"scq_ran_{scq}"] = True
-
-    st.session_state["nl_controls_set"] = changed
-    _resolved = bool(parsed.get("areas")) or bool(parsed.get("admin"))
-    if changed and not _resolved:
-        # A form was matched but no place in the sentence could be resolved.
-        # Opening the panel here would demand a value the reader never gave
-        # and make a naming problem look like a broken question.
-        st.session_state["nl_unresolved"] = True
-    if changed:
-        st.rerun()
-
-
-def render_nl_understanding() -> None:
-    """Show what the last question was read as, beneath the controls."""
-    parsed = st.session_state.get("nl_last")
-    if not parsed or not parsed.get("text"):
-        return
-
-    chips = []
-    if parsed["relation"]:
-        chips.append(
-            f"<span class='nl-chip nl-chip-rel'>{escape(parsed['relation'])}"
-            "</span>"
-        )
-    for label in parsed["focus_labels"]:
-        chips.append(
-            f"<span class='nl-chip nl-chip-focus'>{escape(label)}</span>"
-        )
-    for _code, label in parsed["areas"]:
-        chips.append(f"<span class='nl-chip nl-chip-area'>{escape(label)}</span>")
-    if parsed["admin"]:
-        chips.append(
-            f"<span class='nl-chip nl-chip-area'>"
-            f"{escape(str(parsed['admin'][1]))}</span>"
-        )
-
-    steps = "".join(f"<li>{escape(s)}</li>" for s in parsed["steps"])
-    warn = "".join(
-        f"<div class='nl-warn'>{escape(u)}</div>" for u in parsed["unmatched"]
-    )
-    # Which engine read the sentence is part of the answer, not a detail: a
-    # reader should never have to guess whether a model was involved.
-    source = str(parsed.get("parser") or "rule-based")
-    badge_class = "nl-src-llm" if source.startswith("LLM") else "nl-src-rule"
-    detail = (
-        "deterministic, offline, no key"
-        if badge_class == "nl-src-rule"
-        else "model output validated against the same vocabulary"
-    )
-    st.markdown(
-        "<div class='nl-read'>"
-        f"<div class='nl-src {badge_class}'>Parsed by {escape(source)} "
-        f"&middot; {detail}</div>"
-        "<div class='nl-read-title'>Read as</div>"
-        f"<div class='nl-chips'>{''.join(chips) or '&mdash;'}</div>"
-        + (f"<ol class='nl-steps'>{steps}</ol>" if steps else "")
-        + warn
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-
+    return "Gemini could not be reached."
 
 def render_scq_evidence(scq_key: str) -> None:
     """Show the Task 3 warrant for one question, then the questions it answers.
@@ -3325,7 +2412,7 @@ def wales_logo_html() -> str:
         return ""
     logo_b64 = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     return (
-        "<img class='shared-hero-logo' alt='Explore Wales: Education &amp; Geography' "
+        "<img class='shared-hero-logo' alt='Wales Education KG' "
         f"src='data:image/png;base64,{logo_b64}'>"
     )
 
@@ -3971,9 +3058,9 @@ def render_page_switcher(page: str) -> None:
         "<header class='site-header'>"
         + wales_logo_html()
         + "<div class='site-brand-copy'>"
-        "<div class='site-brand-name'>Explore Wales: Education &amp; Geography</div>"
-        "<div class='site-brand-tagline'>Discover how schools and areas "
-        "connect across Wales.</div>"
+        "<div class='site-brand-name'>Wales Education Knowledge Graph</div>"
+        "<div class='site-brand-tagline'>Ask about Welsh places and schools, "
+        "then explore the answers on the map.</div>"
         "</div></header>",
         unsafe_allow_html=True,
     )
@@ -8894,7 +7981,7 @@ def page_guided_spatial_search(cfg: Dict[str, str]) -> None:
         st.markdown("## Explore administrative and statistical area relations")
         st.caption(
             "Choose a Welsh area and a qualitative spatial relationship, "
-            "then explore the matching areas on the map."
+            "then explore the matching places on the map."
         )
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -9248,28 +8335,6 @@ def page_scq_demonstrator(
         ),
         "Complete",
     )
-
-    # The question box comes first: a reader who knows what they want to ask
-    # should not have to work out which of eight forms it corresponds to.
-    # Both helpers take a mode. The touch list is the widest LSOA set and the
-    # parent list is the widest administrative one, which is all the parser
-    # needs: it only has to recognise a name, not decide what can answer.
-    try:
-        nl_lsoas = lsoa_options(cfg, "lsoa_touch")
-    except Exception:
-        nl_lsoas = []
-    try:
-        nl_admin = nl_admin_options(cfg)
-    except Exception:
-        nl_admin = []
-    # The deterministic panel is the instrument: every figure reported in
-    # the dissertation was produced by it. The sentence box is a
-    # demonstration of query understanding, and it misroutes often enough
-    # that it should not be the first thing a reader meets. So it is folded,
-    # and the eight forms are open.
-    with st.expander("Ask a question in your own words", expanded=False):
-        render_nl_search(nl_lsoas, nl_admin)
-        render_nl_understanding()
 
     # The panel is the other route, so the sentence's answer is dropped
     # BEFORE it is drawn, not after. Clearing it afterwards left the old
@@ -11591,23 +10656,6 @@ def page_cross_hierarchy(cfg: Dict[str, str]) -> None:
 # staying exact; property questions are exploration over the same graph and
 # must not be able to move a measured answer.
 
-MAP_NL_RULES: List[Tuple[str, List[str]]] = [
-    ("dep_high", ["most deprived", "highly deprived", "high deprivation",
-                  "high-deprivation", "deprived areas", "amddifadedd uchel"]),
-    ("dep_low", ["least deprived", "low deprivation", "low-deprivation",
-                 "affluent", "amddifadedd isel"]),
-    ("dep_medium", ["medium deprivation", "medium-deprivation"]),
-    ("primary", ["primary", "cynradd"]),
-    ("secondary", ["secondary", "high school", "uwchradd"]),
-    ("special", ["special school", "special schools"]),
-    ("welsh_medium", ["welsh medium", "welsh-medium", "cyfrwng cymraeg"]),
-    ("english_medium", ["english medium", "english-medium"]),
-    ("transport_near", ["near transport", "close to transport",
-                        "within 800", "has a transport stop",
-                        "agos at drafnidiaeth"]),
-    ("transport_far", ["no transport", "far from transport",
-                       "without a transport stop"]),
-]
 
 _ADMIN_TYPE_WORDS = {
     "community ward": "CommunityWard",
@@ -12941,221 +11989,30 @@ def _admin_component_target_wkts(component: Dict[str, Any]) -> List[str]:
         .dropna().astype(str).drop_duplicates().tolist()
     )
 
-_MAP_RANGE = re.compile(
-    r"(fsm|free school meal|attendance|capped\s*9|capped9|performance|"
-    r"budget|pupils?)[^0-9]{0,24}(between\s*)?(\d+(?:\.\d+)?)"
-    r"\s*(?:%|)\s*(?:and|to|-|\u2013)\s*(\d+(?:\.\d+)?)",
-    re.IGNORECASE,
-)
-_MAP_CMP = re.compile(
-    r"(fsm|free school meal|attendance|capped\s*9|capped9|performance|"
-    r"budget|pupils?)[^0-9]{0,24}(above|over|greater than|more than|>|"
-    r"below|under|less than|fewer than|<)\s*(\d+(?:\.\d+)?)",
-    re.IGNORECASE,
-)
-
-_MAP_FIELD = {
-    "fsm": "s.fsm_pct", "free school meal": "s.fsm_pct",
-    "attendance": "s.attendance_pct",
-    "capped 9": "s.capped9_score", "capped9": "s.capped9_score",
-    "performance": "s.capped9_score",
-    "budget": "s.budget_per_pupil_gbp",
-    "pupil": "coalesce(s.pupils_2025, s.pupils)",
-    "pupils": "coalesce(s.pupils_2025, s.pupils)",
-}
 
 
-def parse_map_question(text: str) -> Dict[str, Any]:
-    """Turn a school-property question into extra Cypher conditions.
 
-    Every condition is parameterised. Nothing from the sentence is ever
-    concatenated into the query text, so a question cannot become an
-    injection.
-    """
-    raw = (text or "").strip()
-    low = raw.lower()
-    out: Dict[str, Any] = {
-        "text": raw, "conditions": [], "params": {},
-        "chips": [], "unmatched": [], "parser": "rule-based",
-        "admin_scope": _map_spatial_hint(raw),
+
+def _empty_map_intent(text: str, message: str | None = None) -> Dict[str, Any]:
+    """Return a safe, non-executable intent when interpretation fails."""
+    return {
+        "text": text,
+        "conditions": [],
+        "params": {},
+        "chips": [],
+        "unmatched": [message] if message else [],
+        "parser": "LLM",
+        "admin_scope": None,
+        "admin_scopes": [],
+        "admin_operator": "AND",
+        "result_kind": "Schools",
+        "spatial_only": False,
         "spatial_relation_failed": False,
     }
-    if not raw:
-        return out
-
-    # A same-level LSOA request with no named administrative anchor is still
-    # validated against the class-pair table. This prevents phrases such as
-    # "LSOA inside LSOA" from falling through to an all-schools map.
-    if len(re.findall(r"\blsoas?\b", low)) >= 2:
-        relation = _map_explicit_relation(raw)
-        table_relation = {
-            "not_touches": "disjoint", "inside": "within"
-        }.get(relation, relation)
-        possible = _possible_pair_relations("LSOA", "LSOA")
-        if table_relation not in possible and relation != "graph_near":
-            out["spatial_relation_failed"] = True
-            out["unmatched"].append(
-                f"{relation.replace('_', ' ').upper()} is not possible for "
-                "LSOA → LSOA. Available topological relations are "
-                "DISJOINT and TOUCHES; GRAPH_NEAR is additionally derived "
-                "from two LSOA_TOUCHES steps."
-            )
-            return out
-
-    hits = {name for name, phrases in MAP_NL_RULES
-            if any(p in low for p in phrases)}
-
-    dep = next(
-        (d for d in ("dep_high", "dep_medium", "dep_low") if d in hits), None
-    )
-    if dep:
-        level = dep.split("_")[1] + "_deprivation"
-        out["conditions"].append(
-            "coalesce(l.deprivation, s.deprivation) = $nl_dep"
-        )
-        out["params"]["nl_dep"] = level
-        out["chips"].append(f"deprivation = {level.split('_')[0]}")
-
-    phases = [p for p in ("primary", "secondary", "special") if p in hits]
-    if phases:
-        out["conditions"].append(
-            "ANY(p IN $nl_phases WHERE "
-            "toLower(coalesce(s.phase_group, s.phase, s.school_type)) "
-            "CONTAINS p)"
-        )
-        out["params"]["nl_phases"] = phases
-        out["chips"].append("phase = " + " / ".join(phases))
-
-    if "welsh_medium" in hits or "english_medium" in hits:
-        want = "welsh" if "welsh_medium" in hits else "english"
-        out["conditions"].append(
-            "toLower(coalesce(s.language_medium, '')) CONTAINS $nl_medium"
-        )
-        out["params"]["nl_medium"] = want
-        out["chips"].append(f"language medium = {want}")
-
-    if "transport_near" in hits:
-        out["conditions"].append(
-            "EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
-        )
-        out["chips"].append("transport stop within 800m")
-    elif "transport_far" in hits:
-        out["conditions"].append(
-            "NOT EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
-        )
-        out["chips"].append("no transport stop within 800m")
-
-    used = 0
-    for match in _MAP_RANGE.finditer(low):
-        field = _MAP_FIELD.get(match.group(1).strip().replace("  ", " "))
-        if not field:
-            continue
-        lo, hi = float(match.group(3)), float(match.group(4))
-        lo, hi = min(lo, hi), max(lo, hi)
-        a, b = f"nl_lo{used}", f"nl_hi{used}"
-        out["conditions"].append(f"{field} >= ${a} AND {field} <= ${b}")
-        out["params"][a], out["params"][b] = lo, hi
-        out["chips"].append(f"{match.group(1)} between {lo:g} and {hi:g}")
-        used += 1
-
-    for match in _MAP_CMP.finditer(low):
-        field = _MAP_FIELD.get(match.group(1).strip().replace("  ", " "))
-        if not field:
-            continue
-        op = ">=" if match.group(2) in {
-            "above", "over", "greater than", "more than", ">"
-        } else "<="
-        name = f"nl_cmp{used}"
-        out["conditions"].append(f"{field} {op} ${name}")
-        out["params"][name] = float(match.group(3))
-        out["chips"].append(f"{match.group(1)} {op} {match.group(3)}")
-        used += 1
-
-    if not out["conditions"] and not out.get("admin_scope"):
-        out["unmatched"].append(
-            "Nothing was recognised. Try naming a deprivation level, a "
-            "phase, a language medium, transport access, or a metric range "
-            "such as \u201cFSM between 20 and 40\u201d."
-        )
-    return out
-
-
-# The map answers a different kind of question from the demonstrator: not
-# which regions stand in a spatial relation, but which schools satisfy a
-# description. Grouping by the property being described keeps that distinction
-# visible, and mirrors the eight groups on the demonstrator without pretending
-# the two libraries are interchangeable.
-MAP_QUESTION_LIBRARY: Dict[str, Dict[str, Any]] = {
-    "Deprivation": {
-        "colour": "ql-scq1",
-        "note": "The deprivation level of the LSOA each school sits in.",
-        "questions": [
-            "Which schools are in high-deprivation LSOAs?",
-            "Which schools are in medium-deprivation LSOAs?",
-            "Which schools are in low-deprivation LSOAs?",
-            "Secondary schools in high-deprivation areas",
-        ],
-    },
-    "School type": {
-        "colour": "ql-scq5",
-        "note": "Phase, language medium and other school characteristics.",
-        "questions": [
-            "Which primary schools are in high-deprivation areas?",
-            "Which secondary schools are in low-deprivation areas?",
-            "Which special schools are in high-deprivation areas?",
-            "Welsh medium schools in low-deprivation areas",
-            "English medium primary schools with FSM above 30",
-        ],
-    },
-    "Free school meals": {
-        "colour": "ql-scq7",
-        "note": "FSM is the deprivation proxy used throughout the study.",
-        "questions": [
-            "Which schools have FSM between 30 and 60?",
-            "Which schools have FSM above 40?",
-            "Which schools have FSM below 10?",
-            "Primary schools with FSM between 20 and 35",
-        ],
-    },
-    "Attendance": {
-        "colour": "ql-scq2",
-        "note": "90% is the official persistent-absence line in Wales.",
-        "questions": [
-            "Which schools have attendance between 85 and 90?",
-            "Which schools have attendance below 90?",
-            "Which schools have attendance above 95?",
-            "Secondary schools with attendance below 92",
-        ],
-    },
-    "Performance": {
-        "colour": "ql-scq6",
-        "note": (
-            "Capped 9 is recorded for secondary schools only, so these "
-            "questions return a subset of 204 schools."
-        ),
-        "questions": [
-            "Which secondary schools have Capped 9 between 300 and 380?",
-            "Which secondary schools have Capped 9 above 380?",
-            "Which secondary schools have Capped 9 below 320?",
-        ],
-    },
-    "Transport": {
-        "colour": "ql-scq3",
-        "note": (
-            "A metric threshold of 800m, and a third notion of proximity "
-            "kept outside the completeness scoring."
-        ),
-        "questions": [
-            "Which schools have a transport stop within 800m?",
-            "Which schools have no transport stop within 800m?",
-            "High-deprivation schools with no transport stop within 800m",
-        ],
-    },
-}
 
 
 def llm_parse_map_question(text: str) -> Dict[str, Any]:
-    """Model reading of a school-property question, rebuilt locally.
+    """Interpret a natural-language question through the configured LLM.
 
     The model is asked only to name properties and numbers. Every condition
     is then constructed here from a fixed field map and bound as a parameter,
@@ -13164,9 +12021,10 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
     """
     used = st.session_state.get("nl_llm_calls", 0)
     if used >= NL_LLM_CALL_CAP:
-        out = parse_map_question(text)
-        out["parser"] = "rule-based (LLM call cap reached)"
-        return out
+        return _empty_map_intent(
+            text,
+            "The natural-language request limit has been reached for this session.",
+        )
     try:
         from openai import OpenAI
 
@@ -13243,10 +12101,7 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         payload = (response.choices[0].message.content or "")
         data = _nl_json(payload)
     except Exception as exc:
-        out = parse_map_question(text)
-        out["parser"] = "rule-based (model unavailable)"
-        out["unmatched"].append(_nl_llm_error(exc))
-        return out
+        return _empty_map_intent(text, _nl_llm_error(exc))
 
     fields = {
         "fsm": "s.fsm_pct",
@@ -13536,10 +12391,9 @@ def render_map_nl(
         if asked else None
     )
 
-    # Interpret once per submitted question.  Keeping the validated intent in
-    # session state prevents a Gemini call on every Streamlit rerun caused by
-    # a row selection, map click or tab change.  If the model is unavailable,
-    # llm_parse_map_question falls back to the deterministic parser.
+    # Interpret once per submitted question. Keeping the validated intent in
+    # session state prevents another Gemini call when Streamlit reruns after a
+    # row selection, map click, or tab change.
     cached_text = st.session_state.get("map_nl_parsed_text")
     cached_intent = st.session_state.get("map_nl_parsed_intent")
     graph_hint: Dict[str, Any] | None = None
@@ -13565,7 +12419,7 @@ def render_map_nl(
         )
     ) if asked else None
     if asked and input_error:
-        parsed = parse_map_question(question)
+        parsed = _empty_map_intent(question)
         parsed["input_validation_failed"] = True
         parsed["input_validation_message"] = input_error
         parsed["conditions"] = []
@@ -13592,9 +12446,8 @@ def render_map_nl(
     elif cached_text == question and isinstance(cached_intent, dict):
         parsed = cached_intent
     else:
-        # Before Search is pressed, use the local reader only to keep the form
-        # responsive. It cannot execute until submitted below.
-        parsed = parse_map_question(question)
+        # No interpretation or query is performed until Search is pressed.
+        parsed = _empty_map_intent(question)
     if asked:
         st.session_state["map_nl_parsed_text"] = question
         st.session_state["map_nl_parsed_intent"] = parsed
@@ -13631,8 +12484,8 @@ def render_map_nl(
             if message not in parsed["unmatched"]:
                 parsed["unmatched"].append(message)
 
-    # The model/rules identify only a constrained intent. Neo4j resolves the
-    # exact unit and executes one of three fixed parameterised graph paths.
+    # The model identifies only a constrained intent. Neo4j resolves the exact
+    # unit and executes an approved parameterised graph path.
     parsed["resolved_admin_scope"] = None
     parsed["admin_scope_failed"] = False
     requested_scopes = parsed.get("admin_scopes") or (
@@ -14216,12 +13069,11 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
     if natural_only:
         search_experience = st.container(key="natural_search_experience")
         with search_experience:
-            st.markdown("## Ask about Welsh schools and areas")
+            st.markdown("## Ask about Welsh places and schools")
             st.caption(
-                "Write a question in your own words. Search for schools, "
-                "Lower Layer Super Output Areas and Welsh administrative "
-                "areas. You can combine spatial relationships with "
-                "deprivation levels, school characteristics and transport access."
+                "Write a question in your own words. Search schools, LSOAs "
+                "and Welsh administrative areas, and combine place relations "
+                "with deprivation, school and transport conditions."
             )
             natural_search = st.container(key="unified_natural_search")
             with natural_search:
