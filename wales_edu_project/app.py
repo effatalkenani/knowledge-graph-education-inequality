@@ -4284,6 +4284,13 @@ def branded_loading_overlay(message: str) -> Any:
             + logo_b64 + "')!important;}"
         )
     overlay_css = """
+    /* A transformed or paint-contained Streamlit ancestor changes the
+       containing block of a fixed child and can clip the loading cover to
+       one section of the page.  Relax those ancestors only while the cover
+       exists, so the overlay is fixed to the full application viewport. */
+    body:has(.result-loading-overlay) *:has(.result-loading-overlay){
+      overflow:visible!important;transform:none!important;filter:none!important;
+      perspective:none!important;contain:none!important;clip-path:none!important}
     .result-loading-overlay{position:fixed!important;top:0!important;right:0!important;
       bottom:0!important;left:0!important;width:100vw!important;height:100vh!important;
       min-height:100vh!important;max-height:none!important;z-index:2147483647;
