@@ -2405,6 +2405,23 @@ def clear_map_spatial_selection() -> None:
     )
 
 
+def clear_map_filter_result() -> None:
+    """Invalidate a filter result until Show results on map is pressed again.
+
+    Streamlit reruns after every widget change.  The previous implementation
+    kept ``map_has_run`` true, so changing a filter after the first search
+    could execute a new database query and rebuild the map before the user
+    pressed the submit button.  Clearing only the filter-result state keeps
+    the controls responsive without changing the submitted natural-language
+    workflow or any query semantics.
+    """
+    st.session_state["map_has_run"] = False
+    st.session_state.pop("map_result_source", None)
+    st.session_state.pop("map_filter_submit_phase", None)
+    st.session_state.pop("map_selected_school_codes", None)
+    clear_map_spatial_selection()
+
+
 def wales_logo_html() -> str:
     """Embed the project mark so both public heroes use the same asset."""
     logo_path = Path(__file__).with_name("wales_education_kg.png")
@@ -3736,6 +3753,10 @@ def bng_to_wgs84(east, north):
     return math.degrees(math.atan2(y2, x2)), math.degrees(phi)
 
 
+# Boundary strings recur across reruns, result tables and map layers.  Cache
+# their pure Python conversion so the same WKT is not parsed again whenever a
+# selection or page interaction causes Streamlit to rerun the script.
+@st.cache_data(show_spinner=False, max_entries=4096)
 def _wkt_rings(wkt_text: Any) -> List[List[List[float]]]:
     """Turn a POLYGON / MULTIPOLYGON WKT string into deck.gl ring lists.
 
@@ -12910,6 +12931,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
             "Deprivation",
             dep_options,
             format_func=lambda x: x[1],
+            on_change=clear_map_filter_result,
         )
     dep = dep_choice[0]
     dep_label = dep_choice[1]
@@ -12928,13 +12950,16 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
             "questions use, and deliberately outside the completeness "
             "scoring."
         ),
+        on_change=clear_map_filter_result,
     )
     school_filters = controls.expander("More school filters", expanded=False)
     la = school_filters.selectbox(
-        "Local authority", las, format_func=lambda x: x[1]
+        "Local authority", las, format_func=lambda x: x[1],
+        on_change=clear_map_filter_result,
     )
     phase = school_filters.selectbox(
-        "School phase", phases, format_func=lambda x: x[1]
+        "School phase", phases, format_func=lambda x: x[1],
+        on_change=clear_map_filter_result,
     )
     school_option_filters = []
     school_option_params: Dict[str, Any] = {}
@@ -12977,6 +13002,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
             "Open the list and type part of the school name to search, "
             "or keep All matching schools."
         ),
+        on_change=clear_map_filter_result,
     )
     fsm_min = fsm_max = None
     attendance_min = attendance_max = None
@@ -12990,6 +13016,7 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
                 "Choose a measure first. Its available range will appear "
                 "from the data currently loaded in the graph."
             ),
+            on_change=clear_map_filter_result,
         )
         metric_specs = {
             "FSM": ("FSM %", 0.0, 71.8, 0.5, "m_fsm"),
@@ -13008,12 +13035,14 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
                     f"{label} from", min_value=data_min, max_value=data_max,
                     value=None, step=step, placeholder=f"Min {data_min:g}",
                     key=f"{metric_key}_from",
+                    on_change=clear_map_filter_result,
                 )
             with high_col:
                 high_value = st.number_input(
                     f"{label} to", min_value=data_min, max_value=data_max,
                     value=None, step=step, placeholder=f"Max {data_max:g}",
                     key=f"{metric_key}_to",
+                    on_change=clear_map_filter_result,
                 )
             if metric_filter == "FSM":
                 fsm_min, fsm_max = low_value, high_value
