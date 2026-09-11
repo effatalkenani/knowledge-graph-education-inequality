@@ -5927,17 +5927,13 @@ def render_answer_map(
         },
     }
     st.markdown(PYDECK_TOOLTIP_CSS, unsafe_allow_html=True)
-    # SCQ7 and SCQ8 fix the administrative side, so the anchor is a ward or
-    # community rather than an LSOA and never appeared on this map: the focus
-    # list only ever held LSOA codes. It is drawn on top, dark and outlined,
-    # so the unit the question was asked about is visible beside its answer.
+    # For SCQ7 and SCQ8, draw the administrative anchor above the LSOA result
+    # layer so that the query area and the returned areas remain visible.
     map_layers = [layer]
 
-    # Schools are evidence attached to the spatial answer, not a condition
-    # for deciding which LSOAs belong to it.  Fetch them only after the full
-    # answer set has been resolved, then draw them above the polygons.  This
-    # restores the school pins without dropping answer regions that contain
-    # no school.
+    # Fetch school points after resolving the complete spatial answer set.
+    # Schools provide contextual evidence and do not determine which LSOAs
+    # are returned.
     try:
         school_points = run_cypher(
             cfg,
@@ -5945,7 +5941,8 @@ def render_answer_map(
             MATCH (l:LSOA)<-[:LOCATED_IN]-(s:School)
             WHERE l.code IN $codes
               AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
-            OPTIONAL MATCH (s)-[near:DISTANCE_NEAR]->(:TransportStop)
+            OPTIONAL MATCH (s)-[near:DISTANCE_NEAR]->(t:TransportStop)
+            WHERE toLower(coalesce(t.status, '')) = 'active'
             WITH l, s, min(near.distance_m) AS nearest_stop_distance_m
             RETURN DISTINCT
                    coalesce(s.name, s.school_name, s.code) AS school,
@@ -12296,9 +12293,8 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         out["params"]["nl_phases"] = phases
         out["chips"].append("phase = " + " / ".join(phases))
 
-    # The manual sidebar has always had a Local authority filter; the parser
-    # schema did not, so a question naming a place parsed to nothing and the
-    # map fell back to all 1,444 schools. Bound as a parameter like the rest.
+    # Apply an optional local-authority condition unless an administrative
+    # spatial scope has already been resolved. The value is parameterised.
     authority = str(data.get("authority") or "").strip()
     if out["admin_scopes"]:
         authority = ""
@@ -12319,14 +12315,18 @@ def llm_parse_map_question(text: str) -> Dict[str, Any]:
         out["chips"].append(f"language medium = {medium}")
 
     transport = str(data.get("transport") or "").lower()
+    # Transport-access conditions consider active stops only; inactive source
+    # records remain in the QPKG to preserve the imported data and provenance.
     if transport == "near":
         out["conditions"].append(
-            "EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
+            "EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop) "
+            "WHERE toLower(coalesce(t.status, '')) = 'active' }"
         )
         out["chips"].append("transport stop within 800m")
     elif transport == "far":
         out["conditions"].append(
-            "NOT EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) }"
+            "NOT EXISTS { MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop) "
+            "WHERE toLower(coalesce(t.status, '')) = 'active' }"
         )
         out["chips"].append("no transport stop within 800m")
 
@@ -13462,16 +13462,19 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
         add_range_condition("fsm_pct", fsm_min, fsm_max)
         add_range_condition("attendance_pct", attendance_min, attendance_max)
         add_range_condition("capped9_score", capped9_min, capped9_max)
+    # User-facing transport access is based only on stops marked active.
     if using_build_search and transport == "Distance-near (within 800m)":
         conditions.append(
             "EXISTS { "
-            "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
+            "MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop) "
+            "WHERE toLower(coalesce(t.status, '')) = 'active' "
             "}"
         )
     elif using_build_search and transport == "Distance-far (no stop within 800m)":
         conditions.append(
             "NOT EXISTS { "
-            "MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop) "
+            "MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop) "
+            "WHERE toLower(coalesce(t.status, '')) = 'active' "
             "}"
         )
     cluster_df = pd.DataFrame()
@@ -13882,7 +13885,8 @@ ORDER BY cluster_size DESC, cluster_id
         count(DISTINCT s) AS total_schools,
         count(DISTINCT CASE
             WHEN EXISTS {{
-                MATCH (s)-[:DISTANCE_NEAR]->(:TransportStop)
+                MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop)
+                WHERE toLower(coalesce(t.status, '')) = 'active'
             }}
             THEN s
         END) AS near_transport_schools,
@@ -13895,7 +13899,8 @@ ORDER BY cluster_size DESC, cluster_id
     OPTIONAL MATCH (s)-[:LOCATED_IN]->(l:LSOA)
     WITH s, l
     WHERE {where}
-    OPTIONAL MATCH (s)-[near_rel:DISTANCE_NEAR]->(:TransportStop)
+    OPTIONAL MATCH (s)-[near_rel:DISTANCE_NEAR]->(t:TransportStop)
+    WHERE toLower(coalesce(t.status, '')) = 'active'
     WITH
         s,
         l,
