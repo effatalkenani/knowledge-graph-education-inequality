@@ -12946,12 +12946,12 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
         "Transport access",
         [
             "All",
-            "Distance-near (within 800m)",
-            "Distance-far (no stop within 800m)",
+            "Distance-near (active stop within 800m)",
+            "Distance-far (no active stop within 800m)",
         ],
         index=0,
         help=(
-            "A metric threshold: whether a transport stop lies within 800m of "
+            "A metric threshold: whether an active transport stop lies within 800m of "
             "the school. This is a planning proxy and a third notion of "
             "proximity, kept apart from the graph proximity the SCQ "
             "questions use, and deliberately outside the completeness "
@@ -13463,14 +13463,14 @@ def page_map(cfg: Dict[str, str], *, natural_only: bool = False) -> None:
         add_range_condition("attendance_pct", attendance_min, attendance_max)
         add_range_condition("capped9_score", capped9_min, capped9_max)
     # User-facing transport access is based only on stops marked active.
-    if using_build_search and transport == "Distance-near (within 800m)":
+    if using_build_search and transport == "Distance-near (active stop within 800m)":
         conditions.append(
             "EXISTS { "
             "MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop) "
             "WHERE toLower(coalesce(t.status, '')) = 'active' "
             "}"
         )
-    elif using_build_search and transport == "Distance-far (no stop within 800m)":
+    elif using_build_search and transport == "Distance-far (no active stop within 800m)":
         conditions.append(
             "NOT EXISTS { "
             "MATCH (s)-[:DISTANCE_NEAR]->(t:TransportStop) "
