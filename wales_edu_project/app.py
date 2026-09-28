@@ -202,17 +202,6 @@ TASKS = [
         ],
         "status": "Complete",
     },
-    {
-        "id": "Task 7",
-        "title": "Dissertation Writing",
-        "keyword_sentence": "Write the methodology, implementation, evaluation, and findings in your own words after the demonstrator tasks are closed.",
-        "subtasks": [
-            ("7.1", "Methodology", "Explain data, modelling, provenance, and query design."),
-            ("7.2", "Evaluation", "Write model vs demonstrator coverage findings."),
-            ("7.3", "Related Work", "Expand policy and literature question evidence."),
-        ],
-        "status": "Dissertation phase",
-    },
 ]
 
 
@@ -251,11 +240,6 @@ TASK_SOLUTIONS = {
         "answer": "The administrative–statistical seam is evaluated through INTERSECTS and GRAPH_NEAR; SCQ7 and SCQ8 are answerable in the demonstrator but not native YAGO2geo coverage.",
         "evidence": "INTERSECTS, GRAPH_NEAR and LOCATED_IN counts plus sample SCQ7/SCQ8 answers",
         "app_section": "Cross-hierarchy",
-    },
-    "Task 7": {
-        "answer": "Deferred: writing starts after the artifact is closed.",
-        "evidence": "Not implemented in the app",
-        "app_section": "Dissertation document",
     },
 }
 
@@ -1456,9 +1440,7 @@ TASK3_REFERENCES = [
 # and provider-specific values are not hard-coded.
 
 NL_LLM_MODEL = "gemini-3.6-flash"
-NL_LLM_CALL_CAP = 500         # per browser session; the prepaid credit and
-                              # the project spend cap are the real ceiling,
-                              # this only stops a runaway loop on one tab
+NL_LLM_CALL_CAP = 500  # Maximum LLM requests per browser session.
 
 
 def _nl_llm_key() -> str | None:
@@ -5191,7 +5173,7 @@ def visual_project_pipeline() -> None:
     <div class="task-step"><div class="step-num step-purple">4</div><div class="step-title2">Demonstrator</div><div class="step-text">Run Cypher, show rows, parameters and provenance.</div></div>
     <div class="task-step"><div class="step-num step-teal">5–6</div><div class="step-title2">Evaluation + Seam</div><div class="step-text">Separate native coverage from geometry-assisted capability.</div></div>
   </div>
-  <div class="visual-note"><b>Purpose:</b> this pipeline tells the examiner where each implementation decision is evidenced in the app, without adding decorative content.</div>
+  <div class="visual-note"><b>Purpose:</b> This pipeline links each implementation stage to its supporting evidence in the application.</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -13822,8 +13804,7 @@ ORDER BY cluster_size DESC, cluster_id
                     st.warning(
                         "APOC is not available on this database, so clusters "
                         f"were built with a {int(cluster_depth)}-step bound "
-                        "and very large components may be split. Record this "
-                        "in the research log if these figures are used."
+                        "and very large components may be split."
                     )
                     cluster_cypher = fallback_cypher
                 except Exception as exc:
