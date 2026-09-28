@@ -214,7 +214,6 @@ The following sensitive or generated files should not be shared publicly:
 *.backup
 ```
 
-Before submitting or sharing the project, confirm that no passwords, database credentials or API keys are included.
 
 ## Deployment Availability
 
