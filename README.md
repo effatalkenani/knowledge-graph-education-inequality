@@ -137,7 +137,7 @@ When deploying through Streamlit Community Cloud, enter these values in the appl
 https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 
-If Gemini is unavailable, the application reports the service condition to the user.
+If Gemini cannot be reached, the application displays an error message and does not execute the natural-language request.
 
 ## Data Loading
 
