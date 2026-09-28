@@ -6,7 +6,19 @@ A Neo4j knowledge graph and Streamlit demonstrator for exploring educational ine
 
 The deployed Streamlit demonstrator is available at:
 
-[Open the Wales Education Geospatial Knowledge Graph demonstrator](https://knowledge-graph-education-inequality-j2pdrhnemloecnkg3bherf.streamlit.app/)
+[Open the Wales Education Knowledge Graph demonstrator](https://knowledge-graph-education-inequality-j2pdrhnemloecnkg3bherf.streamlit.app/)
+
+## Service Availability
+
+The demonstrator uses Streamlit Community Cloud and a Neo4j Aura database. If either service has been paused after a period of inactivity, the application may take a minute or two to start. During this time, it may display a loading message or report that the database is not connected.
+
+If the application does not load:
+
+1. Confirm that the Neo4j Aura instance is running.
+2. Open or reboot the application through Streamlit Community Cloud.
+3. Wait one or two minutes, then refresh the application.
+
+A temporary loading or connection message does not indicate that the project data are missing.
 
 ## Project Contents
 
