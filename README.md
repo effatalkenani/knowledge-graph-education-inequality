@@ -2,54 +2,48 @@
 
 A Neo4j knowledge graph and Streamlit demonstrator for exploring educational inequality across Welsh administrative and statistical geographies.
 
+## Live Demonstrator
+
+The deployed Streamlit demonstrator is available at:
+
+[Open the Wales Education Geospatial Knowledge Graph demonstrator](https://knowledge-graph-education-inequality-j2pdrhnemloecnkg3bherf.streamlit.app/)
+
 ## Project Contents
 
-* `app.py` — Streamlit demonstrator, SCQ interface, map explorer and natural-language parser.
-* `load_to_neo4j.py` — source-data preparation, geometry processing and Neo4j loading.
-* `data/` — directory expected by the loader for the source datasets. Large source files are supplied separately through Microsoft Teams.
-* `requirements.txt` — required Python packages.
-* `.env.example` — environment-variable template.
-* `education-inequality-project.dump` — Neo4j database dump supplied separately through Microsoft Teams.
-
-## Separately Supplied Files
-
-The complete `QPKG-Project-Files` folder is supplied separately through Microsoft Teams. It contains:
-
-* the Neo4j database dump and backup;
-* the complete source datasets;
-* the large YAGO2geo Turtle (`.ttl`) and N-Triples (`.nt`) files;
-* the larger spreadsheet and geospatial source files; and
-* copies of the implementation files.
-
-These files are not committed to this repository because some exceed GitHub’s web-upload or repository file-size limits. The GitHub repository contains the application code, loader, configuration template, requirements file and documentation needed to understand and run the project.
+- `app.py` — Streamlit demonstrator containing the spatial query interface, map explorer, school exploration workflow and natural-language parser.
+- `load_to_neo4j.py` — source-data preparation, geometry processing and Neo4j loading script.
+- `data/` — source datasets used to construct the knowledge graph.
+- `database/education-inequality-project.dump` — Neo4j database dump containing the constructed QPKG.
+- `scraping/` — scripts and supporting files used to collect additional school attributes from My Local School.
+- `requirements.txt` — required Python packages.
+- `.env.example` — environment-variable configuration template.
+- `README.md` — project setup and execution instructions.
 
 ## Database
 
-* Neo4j Aura source version: `5.27-aura`
-* Local restored version: `2026.07.1`
-* Database name: `education-inequality-project`
-* Nodes: `49,486`
-* Relationships: `271,835`
+- Neo4j Aura source version: `5.27-aura`
+- Local restored version: `2026.07.1`
+- Database name: `education-inequality-project`
+- Nodes: `49,486`
+- Relationships: `271,835`
 
 ## Local Setup
 
-### 1. Restore the database
+### 1. Restore the Database
 
-Obtain `education-inequality-project.dump` from the separately supplied `QPKG-Project-Files/database` folder.
-
-Create a Neo4j Desktop instance compatible with Neo4j `2026.07.1`, then restore:
+Create a compatible Neo4j Desktop instance and restore the database from:
 
 ```text
-education-inequality-project.dump
+database/education-inequality-project.dump
 ```
 
-Use this database name:
+Use the following database name:
 
 ```text
 education-inequality-project
 ```
 
-### 2. Install the Python packages
+### 2. Install the Python Packages
 
 From the project directory, run:
 
@@ -57,9 +51,9 @@ From the project directory, run:
 python -m pip install -r requirements.txt
 ```
 
-### 3. Configure the environment
+### 3. Configure the Environment
 
-Copy:
+Create a copy of:
 
 ```text
 .env.example
@@ -79,11 +73,13 @@ LOCAL_NEO4J_PASSWORD=PUT_YOUR_LOCAL_NEO4J_PASSWORD_HERE
 OPENAI_API_KEY=PUT_YOUR_GEMINI_API_KEY_HERE
 ```
 
-The Neo4j password is the password created for the local Neo4j instance. The Gemini key must be supplied for the target deployment.
+`LOCAL_NEO4J_PASSWORD` must contain the password created for the local Neo4j instance.
 
-The completed `.env` file is excluded from version control.
+`OPENAI_API_KEY` must contain a valid Gemini API key used through the OpenAI-compatible endpoint.
 
-### 4. Run the application
+The completed `.env` file should not be shared because it contains credentials.
+
+### 4. Run the Application
 
 Start the Neo4j database, then run:
 
@@ -91,19 +87,33 @@ Start the Neo4j database, then run:
 python -m streamlit run app.py
 ```
 
-Open:
+Open the following address in a web browser:
 
 ```text
 http://localhost:8501
 ```
 
-## Switching between Local and Cloud
+## Switching Between Local and Cloud Modes
 
-> **Important:** The database connection mode is controlled by the `APP_MODE` environment variable. To use the restored Neo4j Desktop database, set `APP_MODE=LOCAL`. To connect to Neo4j Aura, change it to `APP_MODE=CLOUD`. No changes to `app.py` or `load_to_neo4j.py` are required.
+The database connection mode is controlled by the `APP_MODE` environment variable.
+
+For the restored Neo4j Desktop database, use:
+
+```env
+APP_MODE=LOCAL
+```
+
+To connect to Neo4j Aura, use:
+
+```env
+APP_MODE=CLOUD
+```
+
+No changes to `app.py` or `load_to_neo4j.py` are required when switching modes.
 
 ## Cloud Configuration
 
-To connect the application to Neo4j Aura, set:
+For Neo4j Aura, configure:
 
 ```env
 APP_MODE=CLOUD
@@ -114,40 +124,94 @@ NEO4J_DATABASE=
 OPENAI_API_KEY=
 ```
 
-For Streamlit Community Cloud, add these values under the application’s **Secrets** settings rather than committing them to GitHub.
+When deploying through Streamlit Community Cloud, enter these values in the application's **Secrets** settings. Do not place credentials directly in the source code.
 
 ## Natural-Language Parser
 
-* Provider: Google Gemini through its OpenAI-compatible endpoint
-* Model: `gemini-3.6-flash`
-* Fallback: deterministic rule-based parser
-* Endpoint:
+- Provider: Google Gemini through its OpenAI-compatible endpoint
+- Model: `gemini-3.6-flash`
+- Fallback: deterministic rule-based parser
+- Endpoint:
 
 ```text
 https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 
-If Gemini is temporarily unavailable, the application reports the service condition and uses the rule-based parser.
+If Gemini is unavailable, the application reports the service condition and uses the deterministic rule-based parser.
 
 ## Data Loading
 
-The complete graph can be restored directly from the database dump supplied through Microsoft Teams.
+The completed graph can be restored directly from:
 
-To reconstruct the graph from the source data instead, copy the separately supplied source datasets into the project’s `data/` directory, configure the database connection, and run:
+```text
+database/education-inequality-project.dump
+```
+
+To reconstruct the graph from the source datasets instead, place the required files in the `data/` directory, configure the database connection and run:
 
 ```bash
 python load_to_neo4j.py
 ```
 
-The loader uses `MERGE` to prevent duplicate nodes and relationships when a loading stage is rerun.
+The loader uses `MERGE` operations to prevent duplicate nodes and relationships when a loading stage is rerun.
+
+## School Data Collection
+
+The `scraping/` directory contains the scripts and supporting files used to collect the additional school attributes from My Local School.
+
+Run the following commands from the project directory.
+
+First, move into the scraping directory:
+
+```bash
+cd scraping
+```
+
+Then extract the school list from the saved search-results page:
+
+```bash
+python extract_school_list.py
+```
+
+This script reads:
+
+```text
+search_page.html
+```
+
+and produces:
+
+```text
+school_list.json
+```
+
+Next, run the school-detail scraper:
+
+```bash
+python mls_ultimate_scraper.py
+```
+
+The scraper reads `school_list.json`, collects the corresponding school pages and produces:
+
+```text
+mls_output/schools.jsonl
+mls_output/welsh_schools_data_full.csv
+```
+
+The `schools.jsonl` file acts as a checkpoint, allowing an interrupted collection process to resume. During execution, individual school pages may also be stored in `mls_output/html_cache/`. This cache is optional and does not need to be included in the submitted project files because missing pages can be downloaded again.
+
+The cleaned final school dataset used by the graph-loading process is included in the main `data/` directory.
 
 ## Security
 
-Credentials and API keys are read from environment variables or Streamlit Secrets. The following files are excluded from version control:
+Database credentials and API keys are read from environment variables or Streamlit Secrets. They are not stored directly in the source code.
+
+The following sensitive or generated files should not be shared publicly:
 
 ```text
 .env
 .streamlit/secrets.toml
 *.backup
-*.dump
 ```
+
+Before submitting or sharing the project, confirm that no passwords, database credentials or API keys are included.
