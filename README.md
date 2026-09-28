@@ -8,18 +8,6 @@ The deployed Streamlit demonstrator is available at:
 
 [Open the Wales Education Knowledge Graph demonstrator](https://knowledge-graph-education-inequality-j2pdrhnemloecnkg3bherf.streamlit.app/)
 
-## Service Availability
-
-The demonstrator uses Streamlit Community Cloud and a Neo4j Aura database. If either service has been paused after a period of inactivity, the application may take a minute or two to start. During this time, it may display a loading message or report that the database is not connected.
-
-If the application does not load:
-
-1. Confirm that the Neo4j Aura instance is running.
-2. Open or reboot the application through Streamlit Community Cloud.
-3. Wait one or two minutes, then refresh the application.
-
-A temporary loading or connection message does not indicate that the project data are missing.
-
 ## Project Contents
 
 - `app.py` — Streamlit demonstrator containing the spatial query interface, map explorer, school exploration workflow and natural-language parser.
@@ -227,3 +215,11 @@ The following sensitive or generated files should not be shared publicly:
 ```
 
 Before submitting or sharing the project, confirm that no passwords, database credentials or API keys are included.
+
+## Deployment Availability
+
+The live demonstrator depends on Streamlit Community Cloud and a Neo4j Aura database managed by the project owner. If the cloud services become inactive after a period of inactivity, the application may display a loading message or report that the database is not connected.
+
+In this case, the Neo4j Aura instance must be resumed by the project owner before the Streamlit application is restarted. The application may then require a short time before it becomes available.
+
+This affects only the availability of the live deployment. The submitted source code, datasets and Neo4j database dump remain available for local restoration and execution using the instructions provided above.
