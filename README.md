@@ -17,6 +17,7 @@ The deployed Streamlit demonstrator is available at:
 - `scraping/` — scripts and supporting files used to collect additional school attributes from My Local School.
 - `requirements.txt` — required Python packages.
 - `.env.example` — environment-variable configuration template.
+- `.gitignore` — files and file types excluded from version control.
 - `README.md` — project setup and execution instructions.
 
 ## Database
@@ -130,14 +131,13 @@ When deploying through Streamlit Community Cloud, enter these values in the appl
 
 - Provider: Google Gemini through its OpenAI-compatible endpoint
 - Model: `gemini-3.6-flash`
-- Fallback: deterministic rule-based parser
 - Endpoint:
 
 ```text
 https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 
-If Gemini is unavailable, the application reports the service condition and uses the deterministic rule-based parser.
+If Gemini is unavailable, the application reports the service condition to the user.
 
 ## Data Loading
 
