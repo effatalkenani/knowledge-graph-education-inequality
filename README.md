@@ -1,4 +1,4 @@
-# Wales Education Geospatial Knowledge Graph
+# Education Inequality Spatial Analysis with Qualitative Place Knowledge Graphs
 
 A Neo4j knowledge graph and Streamlit demonstrator for exploring educational inequality across Welsh administrative and statistical geographies.
 
